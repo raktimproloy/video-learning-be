@@ -68,25 +68,50 @@ class VideoProcessor {
             const keyInfoContent = `${keyUri}\n${path.resolve(keyPath)}`;
             fs.writeFileSync(keyInfoPath, keyInfoContent);
 
-            // 4. Determine Compression Settings
-            // Default to H.264 for web compatibility unless strictly overridden
-            // Although H.265 is better for size, many browsers (Chrome/Firefox) do not support it in MSE without flags/hardware.
-            // Safe bet: H.264
-            let codec = 'libx264'; 
-            // If the user *really* wants h265 and we know the risks:
-            if (task.codec_preference === 'h265_forced') { 
+            // 4. Analyze Input Video (FFprobe)
+            const metadata = await new Promise((resolve, reject) => {
+                ffmpeg.ffprobe(sourcePath, (err, data) => {
+                    if (err) return reject(err);
+                    resolve(data);
+                });
+            });
+
+            const videoStream = metadata.streams.find(s => s.codec_type === 'video');
+            const audioStream = metadata.streams.find(s => s.codec_type === 'audio');
+            
+            if (!videoStream) {
+                throw new Error('No video stream found in input file');
+            }
+
+            const origWidth = videoStream.width;
+            const origHeight = videoStream.height;
+            console.log(`Original Video: ${origWidth}x${origHeight}. Audio: ${audioStream ? 'Yes' : 'No'}`);
+
+            // 5. Determine Compression Settings
+            // Logic:
+            // - If task.codec_preference is 'h265', use libx265, CRF 26 (Pro/Low Storage).
+            // - If task.codec_preference is 'h264' (or default), use libx264, CRF 28 (100% Support).
+            
+            let codec = 'libx264';
+            let crf = 28; // Default "Professional Safe" CRF for H.264
+            
+            if (task.codec_preference === 'h265') {
                 codec = 'libx265';
+                crf = 26; // Default "Professional Low Storage" CRF for H.265
+            } else {
+                // Default fallback or explicit h264
+                codec = 'libx264';
+                crf = 28;
+            }
+
+            // Allow override if specifically provided in task (e.g. for testing)
+            if (task.crf) {
+                crf = task.crf;
             }
             
-            // Default CRFs: H.264 -> 23, H.265 -> 28
-            let crf = task.crf;
-            if (!crf) {
-                crf = codec === 'libx265' ? 28 : 23;
-            }
+            const preset = 'slow'; // Professional grade compression
             
-            const preset = 'slow'; 
-            
-            // 5. Determine Resolutions
+            // 6. Determine Resolutions
             // Parse resolutions or default to source-like
             let resolutions = task.resolutions || ['720p'];
             // Normalize resolutions to [{w, h, name}]
@@ -100,14 +125,33 @@ class VideoProcessor {
             const targetResolutions = [];
             for (const res of resolutions) {
                 if (resolutionMap[res]) {
+                    // UPSCALING PREVENTION:
+                    // If target height > original height, skip it.
+                    if (resolutionMap[res].h > origHeight) {
+                        console.log(`Skipping ${res} (Target height ${resolutionMap[res].h} > Original ${origHeight})`);
+                        continue;
+                    }
                     targetResolutions.push(resolutionMap[res]);
                 }
             }
+            
+            // Fallback: If all requested resolutions were skipped (e.g. input is 240p but we asked for 720p),
+            // add the original resolution or the closest valid one.
             if (targetResolutions.length === 0) {
-                targetResolutions.push(resolutionMap['720p']);
+                console.log('All requested resolutions skipped due to upscale prevention. Using original resolution.');
+                // Create a custom entry for original resolution
+                // Round dimensions to even numbers (ffmpeg requirement for yuv420p sometimes)
+                const safeW = origWidth % 2 === 0 ? origWidth : origWidth - 1;
+                const safeH = origHeight % 2 === 0 ? origHeight : origHeight - 1;
+                targetResolutions.push({
+                    w: safeW,
+                    h: safeH,
+                    name: 'original',
+                    bandwidth: 2000000 // Estimation
+                });
             }
 
-            // 6. Process each resolution
+            // 7. Process each resolution
             const variants = [];
 
             for (const res of targetResolutions) {
@@ -124,7 +168,6 @@ class VideoProcessor {
                 await new Promise((resolve, reject) => {
                     let command = ffmpeg(sourcePath)
                         .videoCodec(codec)
-                        .audioCodec('aac')
                         .size(`${res.w}x${res.h}`)
                         .outputOptions([
                             `-crf ${crf}`,
@@ -134,6 +177,12 @@ class VideoProcessor {
                             `-hls_key_info_file ${keyInfoPath}`,
                             '-hls_segment_filename', path.join(resDir, 'segment_%03d.ts')
                         ]);
+                    
+                    if (audioStream) {
+                        command
+                            .audioCodec('aac')
+                            .audioBitrate('96k');
+                    }
                     
                     // Add specific params for x265 if needed
                     if (codec === 'libx265') {
@@ -156,15 +205,20 @@ class VideoProcessor {
                         .run();
                 });
 
+                let codecs = codec === 'libx265' ? 'hvc1.1.4.L93.B0' : 'avc1.4d401f';
+                if (audioStream) {
+                    codecs += ',mp4a.40.2';
+                }
+
                 variants.push({
                     bandwidth: res.bandwidth,
                     resolution: `${res.w}x${res.h}`,
                     path: `${res.name}/${playlistName}`, // Relative path for master playlist
-                    codecs: codec === 'libx265' ? 'hvc1.1.4.L93.B0' : 'avc1.4d401f' // Rough estimate for High/Main profile
+                    codecs: codecs
                 });
             }
 
-            // 7. Create Master Playlist
+            // 8. Create Master Playlist
             const masterPlaylistPath = path.join(outputDir, 'master.m3u8');
             let masterContent = '#EXTM3U\n#EXT-X-VERSION:3\n';
             
@@ -176,7 +230,7 @@ class VideoProcessor {
             fs.writeFileSync(masterPlaylistPath, masterContent);
             console.log('Master playlist created at:', masterPlaylistPath);
 
-            // 8. Update DB (completed)
+            // 9. Update DB (completed)
             const totalSize = getDirSize(outputDir);
             await db.query(
                 `UPDATE video_processing_tasks 

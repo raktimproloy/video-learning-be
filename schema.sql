@@ -1,8 +1,28 @@
--- Basic Users table (Assumed as dependency for user_permissions)
+-- Basic Users table
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
+    role TEXT DEFAULT 'student',
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Courses table
+CREATE TABLE IF NOT EXISTS courses (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title TEXT NOT NULL,
+    description TEXT,
+    teacher_id UUID REFERENCES users(id),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Lessons table
+CREATE TABLE IF NOT EXISTS lessons (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    description TEXT,
+    "order" INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -14,6 +34,8 @@ CREATE TABLE IF NOT EXISTS videos (
     signing_secret TEXT NOT NULL, -- A unique random string for this video
     is_live BOOLEAN DEFAULT false,
     owner_id UUID REFERENCES users(id),
+    lesson_id UUID REFERENCES lessons(id) ON DELETE SET NULL,
+    "order" INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT NOW(),
     size_bytes BIGINT DEFAULT 0
 );
@@ -39,4 +61,12 @@ CREATE TABLE IF NOT EXISTS video_processing_tasks (
     error_message TEXT,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Course Enrollments table (Purchases)
+CREATE TABLE IF NOT EXISTS course_enrollments (
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
+    enrolled_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (user_id, course_id)
 );

@@ -13,11 +13,23 @@ class VideoService {
      * Checks if a user has permission to access a video.
      */
     async checkPermission(userId, videoId) {
-        const result = await db.query(
+        // Check direct video permission
+        const directPermission = await db.query(
             'SELECT 1 FROM user_permissions WHERE user_id=$1 AND video_id=$2 AND expires_at > NOW()',
             [userId, videoId]
         );
-        return result.rows.length > 0;
+        if (directPermission.rows.length > 0) return true;
+
+        // Check course enrollment permission
+        const courseEnrollment = await db.query(
+            `SELECT 1 
+             FROM course_enrollments ce
+             JOIN lessons l ON ce.course_id = l.course_id
+             JOIN videos v ON l.id = v.lesson_id
+             WHERE ce.user_id = $1 AND v.id = $2`,
+            [userId, videoId]
+        );
+        return courseEnrollment.rows.length > 0;
     }
 
     /**
@@ -36,13 +48,15 @@ class VideoService {
      */
     async getAvailableVideos(userId) {
         const query = `
-            SELECT 
+            SELECT DISTINCT
                 v.id, 
                 v.title, 
                 true as has_access
             FROM videos v
-            JOIN user_permissions up ON v.id = up.video_id
-            WHERE up.user_id = $1 AND up.expires_at > NOW()
+            LEFT JOIN user_permissions up ON v.id = up.video_id AND up.user_id = $1 AND up.expires_at > NOW()
+            LEFT JOIN lessons l ON v.lesson_id = l.id
+            LEFT JOIN course_enrollments ce ON l.course_id = ce.course_id AND ce.user_id = $1
+            WHERE (up.video_id IS NOT NULL) OR (ce.course_id IS NOT NULL)
             ORDER BY v.title ASC
         `;
         const result = await db.query(query, [userId]);
@@ -65,6 +79,25 @@ class VideoService {
             ORDER BY v.created_at DESC
         `;
         const result = await db.query(query, [ownerId]);
+        return result.rows;
+    }
+
+    async getVideosByLesson(lessonId) {
+        const query = `
+            SELECT 
+                v.*,
+                (
+                    SELECT status 
+                    FROM video_processing_tasks 
+                    WHERE video_id = v.id 
+                    ORDER BY created_at DESC 
+                    LIMIT 1
+                ) as processing_status
+            FROM videos v
+            WHERE v.lesson_id = $1 
+            ORDER BY v."order" ASC, v.created_at ASC
+        `;
+        const result = await db.query(query, [lessonId]);
         return result.rows;
     }
 

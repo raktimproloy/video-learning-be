@@ -29,6 +29,8 @@ router.post(
     upload.single('video'), // Expect a field named 'video'
     [
         check('title', 'Title is required').not().isEmpty(),
+        check('lesson_id', 'Lesson ID must be a UUID').optional().isUUID(),
+        check('order', 'Order must be an integer').optional().isInt(),
         // storage_path is no longer required from client, we'll generate it
     ],
     adminController.addVideo

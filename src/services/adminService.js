@@ -6,12 +6,12 @@ const path = require('path');
 const KEYS_ROOT_DIR = process.env.KEYS_ROOT_DIR || path.join(__dirname, '../../keys');
 
 class AdminService {
-    async createVideo(title, storagePath, ownerId) {
+    async createVideo(title, storagePath, ownerId, lessonId = null, order = 0) {
         const signingSecret = crypto.randomBytes(32).toString('hex');
         
         const result = await db.query(
-            'INSERT INTO videos (title, storage_path, signing_secret, owner_id) VALUES ($1, $2, $3, $4) RETURNING *',
-            [title, storagePath, signingSecret, ownerId]
+            'INSERT INTO videos (title, storage_path, signing_secret, owner_id, lesson_id, "order") VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+            [title, storagePath, signingSecret, ownerId, lessonId, order]
         );
         
         const video = result.rows[0];

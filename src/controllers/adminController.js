@@ -15,12 +15,12 @@ class AdminController {
         }
 
         try {
-            const { title } = req.body;
+            const { title, lesson_id, order } = req.body;
             // req.user is populated by verifyToken middleware
             const ownerId = req.user.id; 
             
             // 1. Create video with placeholder path
-            const video = await adminService.createVideo(title, 'pending_creation', ownerId);
+            const video = await adminService.createVideo(title, 'pending_creation', ownerId, lesson_id, order);
             
             // 2. Define final storage path
             // e.g. public/videos/<uuid>/
@@ -44,6 +44,22 @@ class AdminController {
 
             // 5. Calculate file size and update (optional, but good practice)
             // We could update size_bytes here if we wanted.
+
+            // 6. Create Processing Task Automatically
+            // Default settings for automated upload
+            const codecPreference = 'h264';
+            const resolutions = ['360p', '720p', '1080p'];
+            const crf = 28;
+            const compress = false;
+
+            await adminService.createProcessingTask(
+                ownerId, 
+                video.id, 
+                codecPreference, 
+                resolutions, 
+                crf, 
+                compress
+            );
 
             res.status(201).json(updatedVideo);
         } catch (error) {

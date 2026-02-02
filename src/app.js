@@ -8,6 +8,8 @@ require('dotenv').config();
 const videoRoutes = require('./routes/videoRoutes');
 const authRoutes = require('./routes/authRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const courseRoutes = require('./routes/courseRoutes');
+const lessonRoutes = require('./routes/lessonRoutes');
 
 const app = express();
 
@@ -31,6 +33,8 @@ app.use('/videos', express.static(path.join(__dirname, '../public/videos')));
 app.use('/v1/auth', authRoutes);
 app.use('/v1/video', videoRoutes);
 app.use('/v1/admin', adminRoutes);
+app.use('/v1/courses', courseRoutes);
+app.use('/v1/lessons', lessonRoutes);
 
 // Health Check
 app.get('/health', (req, res) => {
