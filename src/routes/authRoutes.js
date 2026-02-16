@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { check } = require('express-validator');
 const authController = require('../controllers/authController');
+const verifyToken = require('../middleware/authMiddleware');
 
 router.post(
     '/register',
@@ -19,6 +20,28 @@ router.post(
         check('password', 'Password is required').exists()
     ],
     authController.login
+);
+
+router.post(
+    '/join-teacher',
+    verifyToken,
+    authController.joinTeacher
+);
+
+router.post(
+    '/switch-role',
+    verifyToken,
+    [
+        check('role', 'Role is required').notEmpty(),
+        check('role', 'Role must be "student" or "teacher"').isIn(['student', 'teacher'])
+    ],
+    authController.switchRole
+);
+
+router.get(
+    '/me',
+    verifyToken,
+    authController.getCurrentUser
 );
 
 module.exports = router;

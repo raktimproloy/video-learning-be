@@ -11,10 +11,34 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS courses (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title TEXT NOT NULL,
-    description TEXT,
+    description TEXT, -- For backward compatibility
+    short_description TEXT,
+    full_description TEXT,
     teacher_id UUID REFERENCES users(id),
-    created_at TIMESTAMP DEFAULT NOW()
+    category TEXT,
+    subcategory TEXT,
+    tags JSONB DEFAULT '[]'::jsonb,
+    language TEXT DEFAULT 'English',
+    subtitle TEXT,
+    level TEXT,
+    course_type TEXT CHECK (course_type IN ('lesson-based', 'video-based')),
+    thumbnail_path TEXT,
+    intro_video_path TEXT,
+    price DECIMAL(10, 2),
+    discount_price DECIMAL(10, 2),
+    currency TEXT DEFAULT 'USD',
+    has_live_class BOOLEAN DEFAULT false,
+    has_assignments BOOLEAN DEFAULT false,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
 );
+
+-- Create indexes for better query performance
+CREATE INDEX IF NOT EXISTS idx_courses_category ON courses(category);
+CREATE INDEX IF NOT EXISTS idx_courses_level ON courses(level);
+CREATE INDEX IF NOT EXISTS idx_courses_course_type ON courses(course_type);
+CREATE INDEX IF NOT EXISTS idx_courses_teacher_id ON courses(teacher_id);
+CREATE INDEX IF NOT EXISTS idx_courses_created_at ON courses(created_at DESC);
 
 -- Lessons table
 CREATE TABLE IF NOT EXISTS lessons (
@@ -24,7 +48,10 @@ CREATE TABLE IF NOT EXISTS lessons (
     description TEXT,
     "order" INTEGER DEFAULT 0,
     is_live BOOLEAN DEFAULT false,
+    is_preview BOOLEAN DEFAULT false,
     video_url TEXT,
+    notes JSONB DEFAULT '[]'::jsonb,
+    assignments JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -75,3 +102,20 @@ CREATE TABLE IF NOT EXISTS course_enrollments (
     enrolled_at TIMESTAMP DEFAULT NOW(),
     PRIMARY KEY (user_id, course_id)
 );
+
+-- Teacher Profiles table
+CREATE TABLE IF NOT EXISTS teacher_profiles (
+    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT,
+    bio TEXT,
+    location TEXT,
+    avatar TEXT,
+    specialization JSONB DEFAULT '[]'::jsonb,
+    experience TEXT,
+    certifications JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Create index for faster lookups
+CREATE INDEX IF NOT EXISTS idx_teacher_profiles_user_id ON teacher_profiles(user_id);

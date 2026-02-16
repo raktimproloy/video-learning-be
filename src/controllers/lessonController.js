@@ -7,6 +7,87 @@ const fs = require('fs');
 const path = require('path');
 
 const STAGING_DIR = path.resolve(__dirname, '../../staging');
+const UPLOADS_LESSONS = path.resolve(__dirname, '../../uploads/lessons');
+
+function parseNotesAndAssignments(body) {
+    let notes = [];
+    let assignments = [];
+    try {
+        notes = body.notes ? (typeof body.notes === 'string' ? JSON.parse(body.notes) : body.notes) : [];
+    } catch (e) {
+        notes = [];
+    }
+    try {
+        assignments = body.assignments ? (typeof body.assignments === 'string' ? JSON.parse(body.assignments) : body.assignments) : [];
+    } catch (e) {
+        assignments = [];
+    }
+    return { notes, assignments };
+}
+
+async function processLessonFiles(req, notes, assignments, lessonId, courseId, teacherId) {
+    const files = req.files || (req.file ? [req.file] : []);
+    const noteFiles = {};
+    const assignmentFiles = {};
+    files.forEach((f) => {
+        const m = f.fieldname?.match(/^note_file_(\d+)$/);
+        if (m) noteFiles[parseInt(m[1], 10)] = f;
+        const m2 = f.fieldname?.match(/^assignment_file_(\d+)$/);
+        if (m2) assignmentFiles[parseInt(m2[1], 10)] = f;
+    });
+
+    const outNotes = [...notes];
+    for (let i = 0; i < outNotes.length; i++) {
+        const note = outNotes[i];
+        if (note.type === 'file' && noteFiles[i]) {
+            const f = noteFiles[i];
+            const buffer = f.buffer || (f.path ? fs.readFileSync(f.path) : null);
+            if (buffer) {
+                if (r2Storage.isConfigured && r2Storage.uploadLessonMedia) {
+                    const r2Key = await r2Storage.uploadLessonMedia(teacherId, courseId, lessonId, buffer, f.originalname, 'notes');
+                    note.filePath = r2Key;
+                    note.fileName = f.originalname;
+                } else {
+                    const dir = path.join(UPLOADS_LESSONS, lessonId, 'notes');
+                    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                    const ext = path.extname(f.originalname);
+                    const fileName = `note-${Date.now()}-${i}${ext}`;
+                    const filePath = path.join(dir, fileName);
+                    fs.writeFileSync(filePath, buffer);
+                    note.filePath = `/uploads/lessons/${lessonId}/notes/${fileName}`;
+                    note.fileName = f.originalname;
+                }
+            }
+        }
+    }
+
+    const outAssignments = [...assignments];
+    for (let i = 0; i < outAssignments.length; i++) {
+        const a = outAssignments[i];
+        if (a.type === 'file' && assignmentFiles[i]) {
+            const f = assignmentFiles[i];
+            const buffer = f.buffer || (f.path ? fs.readFileSync(f.path) : null);
+            if (buffer) {
+                if (r2Storage.isConfigured && r2Storage.uploadLessonMedia) {
+                    const r2Key = await r2Storage.uploadLessonMedia(teacherId, courseId, lessonId, buffer, f.originalname, 'assignments');
+                    a.filePath = r2Key;
+                    a.fileName = f.originalname;
+                } else {
+                    const dir = path.join(UPLOADS_LESSONS, lessonId, 'assignments');
+                    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                    const ext = path.extname(f.originalname);
+                    const fileName = `assignment-${Date.now()}-${i}${ext}`;
+                    const filePath = path.join(dir, fileName);
+                    fs.writeFileSync(filePath, buffer);
+                    a.filePath = `/uploads/lessons/${lessonId}/assignments/${fileName}`;
+                    a.fileName = f.originalname;
+                }
+            }
+        }
+    }
+
+    return { notes: outNotes, assignments: outAssignments };
+}
 
 class LessonController {
     async createLesson(req, res) {
@@ -14,18 +95,38 @@ class LessonController {
             if (req.user.role !== 'teacher') {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
-            const { courseId, title, description, order } = req.body;
-            
-            // Verify course ownership
+            const { courseId, title, description, order, isPreview } = req.body;
+            const { notes, assignments } = parseNotesAndAssignments(req.body);
+
             const course = await courseService.getCourseById(courseId);
             if (!course) return res.status(404).json({ error: 'Course not found' });
             if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
 
-            const lesson = await lessonService.createLesson(courseId, title, description, order);
+            const lessonData = {
+                title: (title || '').trim(),
+                description: (description || '').trim(),
+                order: parseInt(order, 10) || 0,
+                isPreview: isPreview === 'true' || isPreview === true,
+                notes,
+                assignments,
+            };
+
+            let lesson = await lessonService.createLesson(courseId, lessonData);
+            const { notes: finalNotes, assignments: finalAssignments } = await processLessonFiles(
+                req,
+                notes,
+                assignments,
+                lesson.id,
+                courseId,
+                req.user.id
+            );
+            if (finalNotes.length > 0 || finalAssignments.length > 0) {
+                lesson = await lessonService.updateLesson(lesson.id, { notes: finalNotes, assignments: finalAssignments });
+            }
             res.status(201).json(lesson);
         } catch (error) {
             console.error('Create lesson error:', error);
-            res.status(500).json({ error: 'Internal server error' });
+            res.status(500).json({ error: error.message || 'Internal server error' });
         }
     }
 
@@ -57,19 +158,44 @@ class LessonController {
             if (req.user.role !== 'teacher') {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
-            const { title, description, order } = req.body;
-            
+            const { title, description, order, isPreview } = req.body;
+            const { notes, assignments } = parseNotesAndAssignments(req.body);
+
             const existingLesson = await lessonService.getLessonById(req.params.id);
             if (!existingLesson) return res.status(404).json({ error: 'Lesson not found' });
 
             const course = await courseService.getCourseById(existingLesson.course_id);
             if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
 
-            const lesson = await lessonService.updateLesson(req.params.id, title, description, order);
+            let finalNotes = notes.length > 0 ? notes : existingLesson.notes || [];
+            let finalAssignments = assignments.length > 0 ? assignments : existingLesson.assignments || [];
+            const hasFiles = req.files?.length > 0 || req.file;
+            if (hasFiles) {
+                const processed = await processLessonFiles(
+                    req,
+                    finalNotes,
+                    finalAssignments,
+                    req.params.id,
+                    existingLesson.course_id,
+                    req.user.id
+                );
+                finalNotes = processed.notes;
+                finalAssignments = processed.assignments;
+            }
+
+            const lessonData = {};
+            if (title !== undefined) lessonData.title = title.trim();
+            if (description !== undefined) lessonData.description = description.trim();
+            if (order !== undefined) lessonData.order = parseInt(order, 10) || 0;
+            if (isPreview !== undefined) lessonData.isPreview = isPreview === 'true' || isPreview === true;
+            if (notes.length > 0 || hasFiles) lessonData.notes = finalNotes;
+            if (assignments.length > 0 || hasFiles) lessonData.assignments = finalAssignments;
+
+            const lesson = await lessonService.updateLesson(req.params.id, lessonData);
             res.json(lesson);
         } catch (error) {
             console.error('Update lesson error:', error);
-            res.status(500).json({ error: 'Internal server error' });
+            res.status(500).json({ error: error.message || 'Internal server error' });
         }
     }
 
@@ -241,6 +367,34 @@ class LessonController {
         } catch (error) {
             console.error('Save live recording error:', error);
             res.status(500).json({ error: error.message || 'Internal server error' });
+        }
+    }
+
+    async streamLessonMedia(req, res) {
+        try {
+            const key = req.params.key;
+            if (!key || !r2Storage.isConfigured) {
+                return res.status(404).send('Media not found');
+            }
+            const exists = await r2Storage.objectExists(key);
+            if (!exists) return res.status(404).send('Media not found');
+
+            const ext = key.split('.').pop().toLowerCase();
+            let contentType = 'application/octet-stream';
+            if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+                contentType = ext === 'png' ? 'image/png' : ext === 'gif' ? 'image/gif' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+            } else if (ext === 'pdf') contentType = 'application/pdf';
+
+            const stream = await r2Storage.getObjectStream(key);
+            res.set('Content-Type', contentType);
+            res.set('Cache-Control', 'public, max-age=31536000');
+            stream.pipe(res);
+        } catch (error) {
+            console.error('Stream lesson media error:', error);
+            if (error.name === 'NoSuchKey' || error.$metadata?.httpStatusCode === 404) {
+                return res.status(404).send('Media not found');
+            }
+            res.status(500).send('Internal server error');
         }
     }
 }

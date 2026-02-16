@@ -28,6 +28,9 @@ app.use(express.json());
 // Local video files (when storage_provider = 'local'). R2 videos are streamed via /v1/video/:id/stream/*
 app.use('/videos', express.static(path.join(__dirname, '../public/videos')));
 
+// Static file serving for uploads (course thumbnails, intro videos, etc.)
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
 // Routes
 app.use('/v1/auth', authRoutes);
 app.use('/v1/video', videoRoutes);
