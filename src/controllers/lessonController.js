@@ -1,6 +1,12 @@
 const lessonService = require('../services/lessonService');
 const courseService = require('../services/courseService');
 const agoraService = require('../services/agoraService');
+const adminService = require('../services/adminService');
+const r2Storage = require('../services/r2StorageService');
+const fs = require('fs');
+const path = require('path');
+
+const STAGING_DIR = path.resolve(__dirname, '../../staging');
 
 class LessonController {
     async createLesson(req, res) {
@@ -173,6 +179,68 @@ class LessonController {
         } catch (error) {
             console.error('Delete lesson error:', error);
             res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    /**
+     * Save live stream recording. Teacher only; creates an encrypted video (same pipeline as uploaded videos).
+     */
+    async saveLiveRecording(req, res) {
+        try {
+            if (req.user.role !== 'teacher') {
+                return res.status(403).json({ error: 'Access denied. Teachers only.' });
+            }
+            const lessonId = req.params.id;
+            if (!req.file || !req.file.buffer) {
+                return res.status(400).json({ error: 'No recording file uploaded.' });
+            }
+            if (req.file.buffer.length < 1000) {
+                return res.status(400).json({ error: 'Recording is too short or invalid. Record for at least a few seconds before saving.' });
+            }
+
+            const lesson = await lessonService.getLessonById(lessonId);
+            if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
+
+            const course = await courseService.getCourseById(lesson.course_id);
+            if (!course) return res.status(404).json({ error: 'Course not found' });
+            if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized to save recording for this lesson.' });
+
+            const ownerId = req.user.id;
+            const title = `Live: ${lesson.title}`;
+            const useR2 = r2Storage.isConfigured;
+
+            const video = await adminService.createVideo(
+                title,
+                'staging_placeholder',
+                ownerId,
+                lessonId,
+                0,
+                { storageProvider: useR2 ? 'r2' : 'local', r2Key: null }
+            );
+
+            const stagingVideoDir = path.join(STAGING_DIR, video.id);
+            if (!fs.existsSync(STAGING_DIR)) fs.mkdirSync(STAGING_DIR, { recursive: true });
+            if (!fs.existsSync(stagingVideoDir)) fs.mkdirSync(stagingVideoDir, { recursive: true });
+
+            const inputPath = path.join(stagingVideoDir, 'input.webm');
+            fs.writeFileSync(inputPath, req.file.buffer);
+
+            await adminService.updateVideoStoragePath(video.id, stagingVideoDir);
+            if (useR2) {
+                const r2Prefix = r2Storage.getVideoKeyPrefix(ownerId, course.id, lessonId, video.id);
+                await adminService.updateVideoR2(video.id, r2Prefix);
+            }
+
+            await adminService.createProcessingTask(ownerId, video.id, 'h264', ['360p', '720p', '1080p'], 28, false);
+
+            res.status(201).json({
+                message: 'Recording saved. It will be encrypted and processed like other lesson videos.',
+                video_id: video.id,
+                lesson_id: lessonId,
+            });
+        } catch (error) {
+            console.error('Save live recording error:', error);
+            res.status(500).json({ error: error.message || 'Internal server error' });
         }
     }
 }

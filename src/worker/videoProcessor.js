@@ -56,7 +56,10 @@ class VideoProcessor {
             if (useR2) {
                 sourcePath = video.storage_path;
                 if (fs.existsSync(sourcePath) && fs.statSync(sourcePath).isDirectory()) {
-                    sourcePath = path.join(sourcePath, 'input.mp4');
+                    const dir = sourcePath;
+                    const mp4 = path.join(dir, 'input.mp4');
+                    const webm = path.join(dir, 'input.webm');
+                    sourcePath = fs.existsSync(mp4) ? mp4 : fs.existsSync(webm) ? webm : mp4;
                 }
                 if (!fs.existsSync(sourcePath)) throw new Error(`Staging file not found at ${sourcePath}`);
                 workDir = path.join(os.tmpdir(), `video-${task.id}`);
@@ -66,7 +69,10 @@ class VideoProcessor {
             } else {
                 sourcePath = video.storage_path;
                 if (fs.existsSync(sourcePath) && fs.statSync(sourcePath).isDirectory()) {
-                    sourcePath = path.join(sourcePath, 'input.mp4');
+                    const dir = sourcePath;
+                    const mp4 = path.join(dir, 'input.mp4');
+                    const webm = path.join(dir, 'input.webm');
+                    sourcePath = fs.existsSync(mp4) ? mp4 : fs.existsSync(webm) ? webm : mp4;
                 }
                 if (!fs.existsSync(sourcePath)) throw new Error(`Source file not found at ${sourcePath}`);
                 outputDir = path.dirname(sourcePath);
@@ -87,6 +93,27 @@ class VideoProcessor {
             // Format: URI\nKeyPath\nIV(optional)
             const keyInfoContent = `${keyUri}\n${path.resolve(keyPath)}`;
             fs.writeFileSync(keyInfoPath, keyInfoContent);
+
+            // 3b. Remux WebM to MP4 if needed (MediaRecorder WebM can be malformed for ffprobe)
+            const isWebm = sourcePath.toLowerCase().endsWith('.webm');
+            if (isWebm) {
+                const dir = path.dirname(sourcePath);
+                const remuxedPath = path.join(dir, 'input_remuxed.mp4');
+                try {
+                    await new Promise((resolve, reject) => {
+                        ffmpeg(sourcePath)
+                            .outputOptions(['-c copy', '-movflags', '+faststart'])
+                            .output(remuxedPath)
+                            .on('end', () => resolve())
+                            .on('error', (err) => reject(err))
+                            .run();
+                    });
+                    sourcePath = remuxedPath;
+                } catch (remuxErr) {
+                    console.error('WebM remux failed:', remuxErr);
+                    throw new Error('Recording file is invalid or incomplete. Try recording for a few seconds before saving.');
+                }
+            }
 
             // 4. Analyze Input Video (FFprobe)
             const metadata = await new Promise((resolve, reject) => {

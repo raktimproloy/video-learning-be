@@ -97,44 +97,48 @@ class AdminService {
     }
 
     async deleteVideo(videoId, ownerId) {
-        // 1. Check ownership and get storage path
+        // 1. Check ownership and get video row
         const videoRes = await db.query(
             'SELECT * FROM videos WHERE id = $1 AND owner_id = $2',
             [videoId, ownerId]
         );
-        
+
         if (videoRes.rows.length === 0) {
             throw new Error('Video not found or access denied');
         }
-        
+
         const video = videoRes.rows[0];
 
-        // 2. Delete from DB
-        // Must delete permissions first because no CASCADE
-        await db.query('DELETE FROM user_permissions WHERE video_id = $1', [videoId]);
-        
-        // Videos delete will cascade to video_processing_tasks
-        await db.query('DELETE FROM videos WHERE id = $1', [videoId]);
-
-        // 3. Delete from storage (R2 or local)
-        try {
-            if (video.storage_provider === 'r2' && video.r2_key && r2Storage.isConfigured) {
+        // 2. Delete from Cloudflare R2 first (so DB is only removed after R2 is cleared)
+        if (video.r2_key && r2Storage.isConfigured) {
+            try {
                 await r2Storage.deletePrefix(video.r2_key);
-            } else if (video.storage_path && fs.existsSync(video.storage_path)) {
+            } catch (err) {
+                console.error(`Failed to delete video ${videoId} from R2:`, err);
+                throw new Error('Failed to delete video from storage. Please try again.');
+            }
+        }
+
+        // 3. Delete local staging / keys (best-effort)
+        try {
+            if (video.storage_path && fs.existsSync(video.storage_path)) {
                 fs.rmSync(video.storage_path, { recursive: true, force: true });
-            } else {
-                const fallbackPath = path.join(__dirname, '../../public/videos', videoId);
-                if (fs.existsSync(fallbackPath)) {
-                    fs.rmSync(fallbackPath, { recursive: true, force: true });
-                }
+            }
+            const fallbackPath = path.join(__dirname, '../../public/videos', videoId);
+            if (fs.existsSync(fallbackPath)) {
+                fs.rmSync(fallbackPath, { recursive: true, force: true });
             }
             const keyDir = path.join(KEYS_ROOT_DIR, videoId);
             if (fs.existsSync(keyDir)) {
                 fs.rmSync(keyDir, { recursive: true, force: true });
             }
         } catch (err) {
-            console.error(`Failed to cleanup files for video ${videoId}:`, err);
+            console.error(`Failed to cleanup local files for video ${videoId}:`, err);
         }
+
+        // 4. Delete from DB only after R2 (and local) cleanup
+        await db.query('DELETE FROM user_permissions WHERE video_id = $1', [videoId]);
+        await db.query('DELETE FROM videos WHERE id = $1', [videoId]);
 
         return { message: 'Video deleted successfully' };
     }
