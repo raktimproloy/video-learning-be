@@ -2,28 +2,33 @@ const db = require('../../db');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const r2Storage = require('./r2StorageService');
 
 const KEYS_ROOT_DIR = process.env.KEYS_ROOT_DIR || path.join(__dirname, '../../keys');
 
 class AdminService {
-    async createVideo(title, storagePath, ownerId, lessonId = null, order = 0) {
+    /**
+     * Create video record. Use storagePath for local, or pass storageProvider='r2' and r2Key for R2.
+     */
+    async createVideo(title, storagePath, ownerId, lessonId = null, order = 0, options = {}) {
         const signingSecret = crypto.randomBytes(32).toString('hex');
-        
+        const storageProvider = options.storageProvider || 'local';
+        const r2Key = options.r2Key || null;
+
         const result = await db.query(
-            'INSERT INTO videos (title, storage_path, signing_secret, owner_id, lesson_id, "order") VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-            [title, storagePath, signingSecret, ownerId, lessonId, order]
+            `INSERT INTO videos (title, storage_path, signing_secret, owner_id, lesson_id, "order", storage_provider, r2_key)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+            [title, storagePath, signingSecret, ownerId, lessonId, order, storageProvider, r2Key]
         );
-        
         const video = result.rows[0];
 
-        // Generate and save encryption key
         try {
             const keyDir = path.join(KEYS_ROOT_DIR, video.id);
             if (!fs.existsSync(keyDir)) {
                 fs.mkdirSync(keyDir, { recursive: true });
             }
             const keyPath = path.join(keyDir, 'enc.key');
-            const key = crypto.randomBytes(16); // 128-bit key
+            const key = crypto.randomBytes(16);
             fs.writeFileSync(keyPath, key);
             console.log(`Generated key for video ${video.id} at ${keyPath}`);
         } catch (err) {
@@ -37,6 +42,20 @@ class AdminService {
         const result = await db.query(
             'UPDATE videos SET storage_path = $1 WHERE id = $2 RETURNING *',
             [newPath, videoId]
+        );
+        return result.rows[0];
+    }
+
+    async updateVideoR2(videoId, r2Key, sizeBytes = null) {
+        const updates = ['storage_provider = $1', 'r2_key = $2'];
+        const values = ['r2', r2Key, videoId];
+        if (sizeBytes != null) {
+            updates.push('size_bytes = $4');
+            values.push(sizeBytes);
+        }
+        const result = await db.query(
+            `UPDATE videos SET ${updates.join(', ')} WHERE id = $3 RETURNING *`,
+            values
         );
         return result.rows[0];
     }
@@ -97,29 +116,24 @@ class AdminService {
         // Videos delete will cascade to video_processing_tasks
         await db.query('DELETE FROM videos WHERE id = $1', [videoId]);
 
-        // 3. Delete files
+        // 3. Delete from storage (R2 or local)
         try {
-            // Delete video directory
-            if (video.storage_path && fs.existsSync(video.storage_path)) {
+            if (video.storage_provider === 'r2' && video.r2_key && r2Storage.isConfigured) {
+                await r2Storage.deletePrefix(video.r2_key);
+            } else if (video.storage_path && fs.existsSync(video.storage_path)) {
                 fs.rmSync(video.storage_path, { recursive: true, force: true });
             } else {
-                // If storage_path was relative or not absolute, try to construct it
-                // Based on createVideo, it's usually absolute. 
-                // Fallback check in public/videos just in case
                 const fallbackPath = path.join(__dirname, '../../public/videos', videoId);
                 if (fs.existsSync(fallbackPath)) {
                     fs.rmSync(fallbackPath, { recursive: true, force: true });
                 }
             }
-
-            // Delete key directory
             const keyDir = path.join(KEYS_ROOT_DIR, videoId);
             if (fs.existsSync(keyDir)) {
                 fs.rmSync(keyDir, { recursive: true, force: true });
             }
         } catch (err) {
             console.error(`Failed to cleanup files for video ${videoId}:`, err);
-            // Don't throw here, as DB is already cleaned
         }
 
         return { message: 'Video deleted successfully' };

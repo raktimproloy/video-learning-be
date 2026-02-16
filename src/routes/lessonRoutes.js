@@ -3,8 +3,12 @@ const router = express.Router();
 const lessonController = require('../controllers/lessonController');
 const authMiddleware = require('../middleware/authMiddleware');
 
-// Public/Authenticated routes
+// Public/Authenticated routes (specific before generic :id)
+router.get('/live/now', authMiddleware, lessonController.getLiveLessons);
+router.get('/teacher/live', authMiddleware, lessonController.getTeacherLiveLessons);
 router.get('/course/:courseId', authMiddleware, lessonController.getLessonsByCourse);
+router.get('/:id/live/token', authMiddleware, lessonController.getLiveToken);
+router.put('/:id/live', authMiddleware, lessonController.setLiveAndGetToken);
 router.get('/:id', authMiddleware, lessonController.getLessonById);
 
 // Teacher only routes

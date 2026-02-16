@@ -25,8 +25,7 @@ app.use(morgan('combined'));
 // Body Parser Middleware
 app.use(express.json());
 
-// Serve Static Files (Public Videos)
-// This serves d:\Encryption Learning Platfrom\Site\backend\public\videos at /videos
+// Local video files (when storage_provider = 'local'). R2 videos are streamed via /v1/video/:id/stream/*
 app.use('/videos', express.static(path.join(__dirname, '../public/videos')));
 
 // Routes

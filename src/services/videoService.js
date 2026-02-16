@@ -1,11 +1,8 @@
 const db = require('../../db');
 const fs = require('fs');
 const path = require('path');
-const { generateSecurePath } = require('../utils/nginxSigner');
+const r2Storage = require('./r2StorageService');
 
-// Root directory where keys are stored. 
-// In production, this might be /var/www/keys
-// We'll fallback to a local 'keys' folder for dev
 const KEYS_ROOT_DIR = process.env.KEYS_ROOT_DIR || path.join(__dirname, '../../keys');
 
 class VideoService {
@@ -122,16 +119,11 @@ class VideoService {
             throw new Error('Access denied');
         }
 
-        // Construct public URL
-        // We serve 'public/videos' at '/videos' endpoint
-        const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
-        const manifestUrl = `${baseUrl}/videos/${video.id}/master.m3u8`;
-        
-        // Return the direct URL. 
-        // We are skipping Nginx secure link generation for this implementation 
-        // as we are using Express static serving.
-        // The protection relies on the Key encryption.
-        return manifestUrl;
+        const baseUrl = process.env.BASE_URL || 'http://localhost:5000';
+        if (video.storage_provider === 'r2' && video.r2_key && r2Storage.isConfigured) {
+            return `${baseUrl}/v1/video/${video.id}/stream/master.m3u8`;
+        }
+        return `${baseUrl}/videos/${video.id}/master.m3u8`;
     }
 
     /**

@@ -1,7 +1,12 @@
 const adminService = require('../services/adminService');
+const lessonService = require('../services/lessonService');
+const videoService = require('../services/videoService');
+const r2Storage = require('../services/r2StorageService');
 const { validationResult } = require('express-validator');
 const fs = require('fs');
 const path = require('path');
+
+const STAGING_DIR = path.resolve(__dirname, '../../staging');
 
 class AdminController {
     async addVideo(req, res) {
@@ -9,71 +14,70 @@ class AdminController {
         if (!errors.isEmpty()) {
             return res.status(400).json({ errors: errors.array() });
         }
-
         if (!req.file) {
             return res.status(400).json({ error: 'No video file uploaded' });
         }
 
+        const ownerId = req.user.id;
+        const { title, lesson_id, order } = req.body;
+        const useR2 = r2Storage.isConfigured;
+
         try {
-            const { title, lesson_id, order } = req.body;
-            // req.user is populated by verifyToken middleware
-            const ownerId = req.user.id; 
-            
-            // 1. Create video with placeholder path
-            const video = await adminService.createVideo(title, 'pending_creation', ownerId, lesson_id, order);
-            
-            // 2. Define final storage path
-            // e.g. public/videos/<uuid>/
-            const publicVideosDir = path.join(__dirname, '../../public/videos');
-            const videoDir = path.join(publicVideosDir, video.id);
-            
-            if (!fs.existsSync(videoDir)) {
-                fs.mkdirSync(videoDir, { recursive: true });
+            let courseId = null;
+            if (lesson_id) {
+                const lesson = await lessonService.getLessonById(lesson_id);
+                if (lesson) courseId = lesson.course_id;
+            }
+            if (!courseId && lesson_id) {
+                return res.status(400).json({ error: 'Lesson not found' });
+            }
+            const effectiveCourseId = courseId || 'unknown';
+            const effectiveLessonId = lesson_id || 'unknown';
+
+            if (useR2) {
+                const video = await adminService.createVideo(title, 'staging_placeholder', ownerId, lesson_id, order ?? 0, {
+                    storageProvider: 'r2',
+                    r2Key: null,
+                });
+                const r2Prefix = r2Storage.getVideoKeyPrefix(ownerId, effectiveCourseId, effectiveLessonId, video.id);
+                const stagingVideoDir = path.join(STAGING_DIR, video.id);
+                if (!fs.existsSync(STAGING_DIR)) fs.mkdirSync(STAGING_DIR, { recursive: true });
+                if (!fs.existsSync(stagingVideoDir)) fs.mkdirSync(stagingVideoDir, { recursive: true });
+                const inputPath = path.join(stagingVideoDir, 'input.mp4');
+                const uploadedPath = path.isAbsolute(req.file.path) ? req.file.path : path.resolve(process.cwd(), req.file.path);
+                if (!fs.existsSync(uploadedPath)) throw new Error(`Uploaded file not found at ${uploadedPath}. Ensure uploads directory exists.`);
+                fs.renameSync(uploadedPath, inputPath);
+                await adminService.updateVideoStoragePath(video.id, stagingVideoDir);
+                await adminService.updateVideoR2(video.id, r2Prefix);
+                const codecPreference = 'h264';
+                const resolutions = ['360p', '720p', '1080p'];
+                await adminService.createProcessingTask(ownerId, video.id, codecPreference, resolutions, 28, false);
+                const updated = await videoService.getVideoById(video.id);
+                return res.status(201).json(updated);
             }
 
-            // 3. Move uploaded file to video directory
+            const video = await adminService.createVideo(title, 'pending_creation', ownerId, lesson_id, order ?? 0);
+            const publicVideosDir = path.join(__dirname, '../../public/videos');
+            const videoDir = path.join(publicVideosDir, video.id);
+            if (!fs.existsSync(videoDir)) fs.mkdirSync(videoDir, { recursive: true });
             const inputFilePath = path.join(videoDir, 'input.mp4');
-            fs.renameSync(req.file.path, inputFilePath);
-
-            // 4. Update video storage path in DB
-            // Store the absolute path or relative path? 
-            // The system seems to use absolute paths based on schema comments, but relative is more portable.
-            // videoService uses path.posix.join(video.storage_path, 'master.m3u8')
-            // If we use absolute path here, it should work.
+            const uploadedPath = path.isAbsolute(req.file.path) ? req.file.path : path.resolve(process.cwd(), req.file.path);
+            if (!fs.existsSync(uploadedPath)) throw new Error(`Uploaded file not found at ${uploadedPath}. Ensure uploads directory exists.`);
+            fs.renameSync(uploadedPath, inputFilePath);
             const updatedVideo = await adminService.updateVideoStoragePath(video.id, videoDir);
-
-            // 5. Calculate file size and update (optional, but good practice)
-            // We could update size_bytes here if we wanted.
-
-            // 6. Create Processing Task Automatically
-            // Default settings for automated upload
             const codecPreference = 'h264';
             const resolutions = ['360p', '720p', '1080p'];
-            const crf = 28;
-            const compress = false;
-
-            await adminService.createProcessingTask(
-                ownerId, 
-                video.id, 
-                codecPreference, 
-                resolutions, 
-                crf, 
-                compress
-            );
-
+            await adminService.createProcessingTask(ownerId, video.id, codecPreference, resolutions, 28, false);
             res.status(201).json(updatedVideo);
         } catch (error) {
             console.error('Add Video Error:', error);
-            // Cleanup uploaded file if it exists and wasn't moved
-            if (req.file && fs.existsSync(req.file.path)) {
-                try { fs.unlinkSync(req.file.path); } catch (e) {}
+            const cleanupPath = req.file && (path.isAbsolute(req.file.path) ? req.file.path : path.resolve(process.cwd(), req.file.path));
+            if (req.file && cleanupPath && fs.existsSync(cleanupPath)) {
+                try { fs.unlinkSync(cleanupPath); } catch (e) {}
             }
-            
-            if (error.code === '23503') { // Foreign key violation
-                 return res.status(400).json({ error: 'Invalid user ID (owner_id). Please relogin.' });
-            }
-
-            res.status(500).json({ error: 'Internal Server Error' });
+            if (error.code === '23503') return res.status(400).json({ error: 'Invalid user ID (owner_id). Please relogin.' });
+            const message = error.message || 'Internal Server Error';
+            res.status(500).json({ error: message });
         }
     }
 

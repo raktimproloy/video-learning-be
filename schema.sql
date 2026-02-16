@@ -23,19 +23,24 @@ CREATE TABLE IF NOT EXISTS lessons (
     title TEXT NOT NULL,
     description TEXT,
     "order" INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT NOW()
+    is_live BOOLEAN DEFAULT false,
+    video_url TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
 );
 
 -- Videos table
 CREATE TABLE IF NOT EXISTS videos (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title TEXT NOT NULL,
-    storage_path TEXT NOT NULL, -- e.g., /var/www/videos/course_1/lesson_1/
-    signing_secret TEXT NOT NULL, -- A unique random string for this video
+    storage_path TEXT NOT NULL,
+    signing_secret TEXT NOT NULL,
     is_live BOOLEAN DEFAULT false,
     owner_id UUID REFERENCES users(id),
     lesson_id UUID REFERENCES lessons(id) ON DELETE SET NULL,
     "order" INTEGER DEFAULT 0,
+    storage_provider TEXT NOT NULL DEFAULT 'local' CHECK (storage_provider IN ('local', 'r2')),
+    r2_key TEXT,
     created_at TIMESTAMP DEFAULT NOW(),
     size_bytes BIGINT DEFAULT 0
 );

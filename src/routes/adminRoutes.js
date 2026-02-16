@@ -1,24 +1,28 @@
 const express = require('express');
 const router = express.Router();
+const fs = require('fs');
 const { check } = require('express-validator');
 const adminController = require('../controllers/adminController');
 const verifyToken = require('../middleware/authMiddleware');
 const multer = require('multer');
 const path = require('path');
 
-// Configure Multer for file upload
+const UPLOADS_DIR = path.resolve(__dirname, '../../uploads');
+if (!fs.existsSync(UPLOADS_DIR)) {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        cb(null, 'uploads/'); // Make sure this directory exists
+        cb(null, UPLOADS_DIR);
     },
     filename: function (req, file, cb) {
-        // Use timestamp + original name to avoid collisions
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         cb(null, uniqueSuffix + path.extname(file.originalname));
     }
 });
 
-const upload = multer({ storage: storage });
+const upload = multer({ storage });
 
 // Protect admin routes with JWT 
 // (In a real app, you'd check for an 'admin' role too)

@@ -1,7 +1,9 @@
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const ffmpeg = require('fluent-ffmpeg');
 const db = require('../../db');
+const r2Storage = require('../services/r2StorageService');
 
 const KEYS_ROOT_DIR = process.env.KEYS_ROOT_DIR || path.join(__dirname, '../../keys');
 
@@ -20,37 +22,55 @@ const getDirSize = (dirPath) => {
     return size;
 };
 
+async function uploadDirToR2(localDir, r2KeyPrefix) {
+    const entries = fs.readdirSync(localDir, { withFileTypes: true });
+    for (const e of entries) {
+        const localPath = path.join(localDir, e.name);
+        const relativePath = path.relative(localDir, localPath).split(path.sep).join('/');
+        const r2Key = r2KeyPrefix ? `${r2KeyPrefix}/${relativePath}` : relativePath;
+        if (e.isDirectory()) {
+            await uploadDirToR2(localPath, r2KeyPrefix ? `${r2KeyPrefix}/${e.name}` : e.name);
+        } else {
+            const ext = path.extname(e.name).toLowerCase();
+            const contentType = ext === '.m3u8' ? 'application/vnd.apple.mpegurl' : ext === '.ts' ? 'video/mp2t' : 'application/octet-stream';
+            await r2Storage.uploadFromPath(localPath, r2Key, contentType);
+        }
+    }
+}
+
 class VideoProcessor {
     async processTask(task) {
         console.log(`Starting task ${task.id} for video ${task.video_id}`);
-        
+        let workDir = null;
+
         try {
-            // 1. Fetch video details
             const videoRes = await db.query('SELECT * FROM videos WHERE id = $1', [task.video_id]);
-            if (videoRes.rows.length === 0) {
-                throw new Error('Video not found');
-            }
+            if (videoRes.rows.length === 0) throw new Error('Video not found');
             const video = videoRes.rows[0];
-            let sourcePath = video.storage_path;
+            const useR2 = video.storage_provider === 'r2' && video.r2_key && r2Storage.isConfigured;
 
-            if (fs.existsSync(sourcePath) && fs.statSync(sourcePath).isDirectory()) {
-                sourcePath = path.join(sourcePath, 'input.mp4');
-            }
+            let sourcePath;
+            let outputDir;
+            let stagingDirToDelete = null;
 
-            if (!fs.existsSync(sourcePath)) {
-                throw new Error(`Source file not found at ${sourcePath}`);
-            }
-
-            // 2. Prepare Output Directory
-            // We'll create a folder for the video, and subfolders for each resolution if needed
-            // If sourcePath was a directory, outputDir is effectively that directory.
-            // If sourcePath was a file, outputDir is the directory containing it.
-            // But wait, if sourcePath is .../uuid/input.mp4, path.dirname is .../uuid.
-            // If sourcePath is .../uuid, outputDir logic below needs care.
-            
-            const outputDir = path.dirname(sourcePath);
-            if (!fs.existsSync(outputDir)) {
-                fs.mkdirSync(outputDir, { recursive: true });
+            if (useR2) {
+                sourcePath = video.storage_path;
+                if (fs.existsSync(sourcePath) && fs.statSync(sourcePath).isDirectory()) {
+                    sourcePath = path.join(sourcePath, 'input.mp4');
+                }
+                if (!fs.existsSync(sourcePath)) throw new Error(`Staging file not found at ${sourcePath}`);
+                workDir = path.join(os.tmpdir(), `video-${task.id}`);
+                fs.mkdirSync(workDir, { recursive: true });
+                outputDir = workDir;
+                stagingDirToDelete = path.dirname(sourcePath);
+            } else {
+                sourcePath = video.storage_path;
+                if (fs.existsSync(sourcePath) && fs.statSync(sourcePath).isDirectory()) {
+                    sourcePath = path.join(sourcePath, 'input.mp4');
+                }
+                if (!fs.existsSync(sourcePath)) throw new Error(`Source file not found at ${sourcePath}`);
+                outputDir = path.dirname(sourcePath);
+                if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
             }
 
             // 3. Prepare Encryption Key Info
@@ -166,27 +186,33 @@ class VideoProcessor {
                 const playlistPath = path.join(resDir, playlistName);
 
                 await new Promise((resolve, reject) => {
+                    const outputOpts = [
+                        '-map', '0:v:0',
+                        '-map', '0:a:0?',
+                        `-crf ${crf}`,
+                        `-preset ${preset}`,
+                        '-hls_time 6',
+                        '-hls_playlist_type vod',
+                        `-hls_key_info_file ${keyInfoPath}`,
+                        '-hls_segment_filename', path.join(resDir, 'segment_%03d.ts')
+                    ];
                     let command = ffmpeg(sourcePath)
                         .videoCodec(codec)
                         .size(`${res.w}x${res.h}`)
-                        .outputOptions([
-                            `-crf ${crf}`,
-                            `-preset ${preset}`,
-                            '-hls_time 6',
-                            '-hls_playlist_type vod',
-                            `-hls_key_info_file ${keyInfoPath}`,
-                            '-hls_segment_filename', path.join(resDir, 'segment_%03d.ts')
-                        ]);
+                        .outputOptions(outputOpts);
                     
                     if (audioStream) {
                         command
                             .audioCodec('aac')
-                            .audioBitrate('96k');
+                            .audioChannels(2)
+                            .audioFrequency(44100)
+                            .audioBitrate('128k');
+                    } else {
+                        command.outputOptions('-an');
                     }
                     
-                    // Add specific params for x265 if needed
                     if (codec === 'libx265') {
-                        command.outputOptions('-tag:v hvc1'); // Help Apple devices recognize HEVC
+                        command.outputOptions('-tag:v hvc1');
                     }
 
                     command
@@ -230,22 +256,25 @@ class VideoProcessor {
             fs.writeFileSync(masterPlaylistPath, masterContent);
             console.log('Master playlist created at:', masterPlaylistPath);
 
-            // 9. Update DB (completed)
             const totalSize = getDirSize(outputDir);
+
+            if (useR2) {
+                await uploadDirToR2(outputDir, video.r2_key);
+                if (workDir && fs.existsSync(workDir)) {
+                    fs.rmSync(workDir, { recursive: true, force: true });
+                }
+                if (stagingDirToDelete && fs.existsSync(stagingDirToDelete)) {
+                    fs.rmSync(stagingDirToDelete, { recursive: true, force: true });
+                }
+                await db.query('UPDATE videos SET storage_path = $1 WHERE id = $2', ['r2_only', task.video_id]);
+            }
+
             await db.query(
                 `UPDATE video_processing_tasks 
                  SET status = 'completed', updated_at = NOW() 
                  WHERE id = $1`,
                 [task.id]
             );
-
-            // Update video size and master playlist path (if we were storing the playlist path, currently we store source path)
-            // But we might want to update storage_path to point to the master playlist folder or file?
-            // The original code kept storage_path as the source file usually, but for streaming we usually serve the master.m3u8.
-            // Let's assume the frontend knows how to find it or we update a field.
-            // The user asked "then everyting do what created in backend after teacher upload a video".
-            
-            // Let's update the video size at least.
             await db.query('UPDATE videos SET size_bytes = $1 WHERE id = $2', [totalSize, task.video_id]);
 
             console.log(`Task ${task.id} completed successfully.`);
