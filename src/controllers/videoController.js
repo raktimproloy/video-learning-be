@@ -1,4 +1,5 @@
 const videoService = require('../services/videoService');
+const lessonService = require('../services/lessonService');
 const r2Storage = require('../services/r2StorageService');
 
 function contentTypeForPath(subpath) {
@@ -8,6 +9,45 @@ function contentTypeForPath(subpath) {
 }
 
 class VideoController {
+    async getVideoDetails(req, res) {
+        try {
+            const { videoId } = req.params;
+            const userId = req.user.id;
+            const role = req.user.role;
+
+            const video = await videoService.getVideoById(videoId);
+            if (!video) {
+                return res.status(404).json({ error: 'Video not found' });
+            }
+
+            const isOwner = video.owner_id === userId;
+            const hasPermission = isOwner || await videoService.checkPermission(userId, videoId);
+            if (!hasPermission) {
+                return res.status(403).json({ error: 'Access denied' });
+            }
+
+            const result = { ...video };
+            result.isPreview = result.is_preview ?? false;
+            if (result.notes && typeof result.notes === 'string') {
+                try { result.notes = JSON.parse(result.notes); } catch { result.notes = []; }
+            }
+            if (result.assignments && typeof result.assignments === 'string') {
+                try { result.assignments = JSON.parse(result.assignments); } catch { result.assignments = []; }
+            }
+
+            // For students, check if video is locked
+            if (role === 'student') {
+                const isLocked = await videoService.isVideoLockedForStudent(userId, videoId);
+                result.isLocked = isLocked;
+            }
+
+            res.json(result);
+        } catch (error) {
+            console.error('Get video details error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
     async listVideos(req, res) {
         try {
             const userId = req.user.id;
@@ -21,7 +61,26 @@ class VideoController {
                 // For now, if teacher -> check ownership of course/lesson (skipped for brevity, assuming UI handles it or strict middleware later)
                 // If student -> check permissions (TODO: check if student has access to course)
                 // For MVP, just return videos by lesson
-                videos = await videoService.getVideosByLesson(lessonId);
+                // Pass userId for students to check lock status
+                const userIdForLockCheck = role === 'student' ? userId : null;
+                let lessonIsLocked = false;
+                
+                // For students, check if the lesson itself is locked
+                if (userIdForLockCheck) {
+                    const lesson = await lessonService.getLessonById(lessonId);
+                    if (lesson) {
+                        // Get all lessons in the course to check if this lesson is locked
+                        const allLessons = await lessonService.getLessonsByCourse(lesson.course_id, userIdForLockCheck);
+                        const currentLesson = allLessons.find(l => l.id === lessonId);
+                        lessonIsLocked = currentLesson?.isLocked === true;
+                    }
+                }
+                
+                videos = await videoService.getVideosByLesson(lessonId, userIdForLockCheck, lessonIsLocked);
+                // Filter out processing videos for students
+                if (role === 'student') {
+                    videos = videos.filter(v => v.status !== 'processing');
+                }
             } else if (role === 'teacher') {
                  // Teacher sees videos they own
                  videos = await videoService.getManagedVideos(userId);
@@ -59,7 +118,17 @@ class VideoController {
         try {
             const vid = req.query.vid || req.query.id;
             const userId = req.user.id;
+            const role = req.user.role;
             if (!vid) return res.status(400).json({ error: 'Missing video ID (vid or id)' });
+            
+            // For students, check if video is locked before providing key
+            if (role === 'student') {
+                const isLocked = await videoService.isVideoLockedForStudent(userId, vid);
+                if (isLocked) {
+                    return res.status(403).send('Video is locked. Complete the required assignment from the previous video/lesson to unlock.');
+                }
+            }
+            
             const key = await videoService.getVideoKey(userId, vid);
             res.set('Content-Type', 'application/octet-stream');
             res.send(key);
@@ -76,6 +145,7 @@ class VideoController {
             const videoId = req.params.videoId;
             const subpath = req.params.path || req.params[0] || 'master.m3u8';
             const userId = req.user.id;
+            const role = req.user.role;
 
             const video = await videoService.getVideoById(videoId);
             if (!video) return res.status(404).send('Video not found');
@@ -85,6 +155,14 @@ class VideoController {
 
             let hasAccess = video.owner_id === userId || await videoService.checkPermission(userId, videoId);
             if (!hasAccess) return res.status(403).send('Access denied');
+
+            // For students, check if video is locked
+            if (role === 'student') {
+                const isLocked = await videoService.isVideoLockedForStudent(userId, videoId);
+                if (isLocked) {
+                    return res.status(403).send('Video is locked. Complete the required assignment from the previous video/lesson to unlock.');
+                }
+            }
 
             const r2Key = `${video.r2_key}/${subpath}`;
             const stream = await r2Storage.getObjectStream(r2Key);

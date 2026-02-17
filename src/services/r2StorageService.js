@@ -69,6 +69,13 @@ function getLessonMediaKeyPrefix(teacherId, courseId, lessonId, type) {
 }
 
 /**
+ * R2 key prefix for video notes and assignments.
+ */
+function getVideoMediaKeyPrefix(teacherId, courseId, lessonId, videoId, type) {
+  return `teachers/${teacherId}/courses/${courseId}/lessons/${lessonId}/videos/${videoId}/${type}`;
+}
+
+/**
  * Upload course thumbnail or intro video DIRECTLY to R2.
  * No transcoding, no resolution/bitrate processing, no encryption.
  * Files are stored as-is for fast upload and immediate playback.
@@ -120,6 +127,26 @@ async function uploadLessonMedia(teacherId, courseId, lessonId, fileBuffer, orig
   const ext = require('path').extname(originalFilename);
   const filename = `${type}-${timestamp}${ext}`;
   const key = getLessonMediaKeyPrefix(teacherId, courseId, lessonId, type) + '/' + filename;
+  let contentType = 'application/octet-stream';
+  const extLower = ext.toLowerCase();
+  if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].some((e) => extLower === e)) {
+    contentType = extLower === '.png' ? 'image/png' : extLower === '.gif' ? 'image/gif' : extLower === '.webp' ? 'image/webp' : 'image/jpeg';
+  } else if (['.pdf'].includes(extLower)) contentType = 'application/pdf';
+  await uploadFile(key, fileBuffer, contentType);
+  return key;
+}
+
+/**
+ * Upload video note or assignment file to R2.
+ */
+async function uploadVideoMedia(teacherId, courseId, lessonId, videoId, fileBuffer, originalFilename, type = 'notes') {
+  if (!r2Config.isConfigured) {
+    throw new Error('R2 is not configured');
+  }
+  const timestamp = Date.now();
+  const ext = require('path').extname(originalFilename);
+  const filename = `${type}-${timestamp}${ext}`;
+  const key = getVideoMediaKeyPrefix(teacherId, courseId, lessonId, videoId, type) + '/' + filename;
   let contentType = 'application/octet-stream';
   const extLower = ext.toLowerCase();
   if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].some((e) => extLower === e)) {
@@ -288,7 +315,9 @@ module.exports = {
   getRecordingKeyPrefix,
   getCourseMediaKeyPrefix,
   getLessonMediaKeyPrefix,
+  getVideoMediaKeyPrefix,
   uploadLessonMedia,
+  uploadVideoMedia,
   uploadFile,
   uploadStream,
   uploadFromPath,

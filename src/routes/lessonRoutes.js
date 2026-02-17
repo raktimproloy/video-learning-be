@@ -25,6 +25,7 @@ router.get(/^\/media\/(.+)$/, (req, res, next) => {
     req.params.key = decodeURIComponent(req.params[0]);
     return lessonController.streamLessonMedia(req, res, next);
 });
+router.get('/:id/videos', authMiddleware, lessonController.getLessonVideos);
 router.get('/:id/live/token', authMiddleware, lessonController.getLiveToken);
 router.put('/:id/live', authMiddleware, lessonController.setLiveAndGetToken);
 router.post('/:id/live/save-recording', authMiddleware, uploadRecording, lessonController.saveLiveRecording);

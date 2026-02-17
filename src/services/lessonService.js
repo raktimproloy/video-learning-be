@@ -27,18 +27,68 @@ class LessonService {
         return result.rows[0];
     }
 
-    async getLessonsByCourse(courseId) {
+    async getLessonsByCourse(courseId, userId = null) {
         const result = await db.query(
-            'SELECT * FROM lessons WHERE course_id = $1 ORDER BY "order" ASC, created_at ASC',
+            `SELECT l.*,
+                    (SELECT COUNT(*)::int FROM videos v WHERE v.lesson_id = l.id) AS video_count,
+                    (SELECT COALESCE(SUM(v.duration_seconds), 0) FROM videos v WHERE v.lesson_id = l.id) AS total_duration_seconds
+             FROM lessons l
+             WHERE l.course_id = $1
+             ORDER BY l."order" ASC, l.created_at ASC`,
             [courseId]
         );
-        return result.rows.map((row) => {
+        const lessons = result.rows.map((row) => {
             const lesson = { ...row };
             if (lesson.notes) lesson.notes = typeof lesson.notes === 'string' ? JSON.parse(lesson.notes) : lesson.notes;
             if (lesson.assignments) lesson.assignments = typeof lesson.assignments === 'string' ? JSON.parse(lesson.assignments) : lesson.assignments;
             lesson.isPreview = lesson.is_preview;
+            lesson.videoCount = lesson.video_count ?? 0;
+            lesson.duration = (lesson.total_duration_seconds ?? 0) / 60; // minutes for frontend
             return lesson;
         });
+
+        // If userId is provided, check lock status for each lesson
+        if (userId) {
+            const assignmentService = require('./assignmentService');
+            const lessonsWithLockStatus = [];
+            for (let i = 0; i < lessons.length; i++) {
+                const lesson = lessons[i];
+                let isLocked = false;
+
+                // First lesson is never locked
+                if (i > 0) {
+                    // Check if previous lesson has required assignments that aren't completed
+                    const previousLesson = lessons[i - 1];
+                    
+                    // Check lesson-level required assignments
+                    const lessonCompleted = await assignmentService.hasCompletedLessonAssignments(userId, previousLesson.id);
+                    if (!lessonCompleted) {
+                        isLocked = true;
+                    } else {
+                        // Check all videos in previous lesson for required assignments
+                        const videos = await db.query(
+                            'SELECT id FROM videos WHERE lesson_id = $1 ORDER BY "order" ASC',
+                            [previousLesson.id]
+                        );
+                        for (const videoRow of videos.rows) {
+                            const videoCompleted = await assignmentService.hasCompletedVideoAssignments(userId, videoRow.id);
+                            if (!videoCompleted) {
+                                isLocked = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                lessonsWithLockStatus.push({
+                    ...lesson,
+                    isLocked
+                });
+            }
+            return lessonsWithLockStatus;
+        }
+
+        return lessons;
     }
 
     async getLessonById(id) {

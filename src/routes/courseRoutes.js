@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const courseController = require('../controllers/courseController');
 const authMiddleware = require('../middleware/authMiddleware');
+const optionalAuth = require('../middleware/optionalAuthMiddleware');
 const { requireRole } = require('../middleware/roleMiddleware');
 
 // Configure multer for course file uploads
@@ -63,9 +64,10 @@ router.get(/^\/media\/(.+)$/, (req, res, next) => {
     return courseController.streamCourseMedia(req, res, next);
 });
 
-// Public/Authenticated routes
-router.get('/', authMiddleware, courseController.getAllCourses);
-router.get('/:id', authMiddleware, courseController.getCourseById);
+// Public/Authenticated routes - optionalAuth allows public access but sets req.user if authenticated
+router.get('/', optionalAuth, courseController.getAllCourses);
+router.get('/:id/details', optionalAuth, courseController.getCourseDetails);
+router.get('/:id', optionalAuth, courseController.getCourseById);
 
 // Teacher only routes
 router.get('/teacher/my-courses', authMiddleware, requireRole(['teacher']), courseController.getMyCourses);

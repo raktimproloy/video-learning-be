@@ -1,5 +1,7 @@
 const lessonService = require('../services/lessonService');
 const courseService = require('../services/courseService');
+const { isImage, compressImage } = require('../utils/imageCompress');
+const videoService = require('../services/videoService');
 const agoraService = require('../services/agoraService');
 const adminService = require('../services/adminService');
 const r2Storage = require('../services/r2StorageService');
@@ -41,7 +43,8 @@ async function processLessonFiles(req, notes, assignments, lessonId, courseId, t
         const note = outNotes[i];
         if (note.type === 'file' && noteFiles[i]) {
             const f = noteFiles[i];
-            const buffer = f.buffer || (f.path ? fs.readFileSync(f.path) : null);
+            let buffer = f.buffer || (f.path ? fs.readFileSync(f.path) : null);
+            if (buffer && isImage(f.originalname)) buffer = await compressImage(buffer, f.originalname);
             if (buffer) {
                 if (r2Storage.isConfigured && r2Storage.uploadLessonMedia) {
                     const r2Key = await r2Storage.uploadLessonMedia(teacherId, courseId, lessonId, buffer, f.originalname, 'notes');
@@ -66,7 +69,8 @@ async function processLessonFiles(req, notes, assignments, lessonId, courseId, t
         const a = outAssignments[i];
         if (a.type === 'file' && assignmentFiles[i]) {
             const f = assignmentFiles[i];
-            const buffer = f.buffer || (f.path ? fs.readFileSync(f.path) : null);
+            let buffer = f.buffer || (f.path ? fs.readFileSync(f.path) : null);
+            if (buffer && isImage(f.originalname)) buffer = await compressImage(buffer, f.originalname);
             if (buffer) {
                 if (r2Storage.isConfigured && r2Storage.uploadLessonMedia) {
                     const r2Key = await r2Storage.uploadLessonMedia(teacherId, courseId, lessonId, buffer, f.originalname, 'assignments');
@@ -132,10 +136,27 @@ class LessonController {
 
     async getLessonsByCourse(req, res) {
         try {
-            const lessons = await lessonService.getLessonsByCourse(req.params.courseId);
+            // Pass userId for students to check lock status
+            const userId = req.user.role === 'student' ? req.user.id : null;
+            const lessons = await lessonService.getLessonsByCourse(req.params.courseId, userId);
             res.json(lessons);
         } catch (error) {
             console.error('Get lessons error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async getLessonVideos(req, res) {
+        try {
+            const lessonId = req.params.id;
+            const lesson = await lessonService.getLessonById(lessonId);
+            if (!lesson) {
+                return res.status(404).json({ error: 'Lesson not found' });
+            }
+            const videos = await videoService.getVideosByLesson(lessonId);
+            res.json(videos);
+        } catch (error) {
+            console.error('Get lesson videos error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     }

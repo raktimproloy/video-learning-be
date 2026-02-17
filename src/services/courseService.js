@@ -56,27 +56,92 @@ class CourseService {
     }
 
     async getCoursesByTeacher(teacherId) {
+        // Check if reviews table exists
+        const tableCheck = await db.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'reviews'
+            );
+        `);
+        const reviewsTableExists = tableCheck.rows[0]?.exists || false;
+
+        // Build query with conditional reviews subqueries
+        const reviewsRatingQuery = reviewsTableExists 
+            ? `(SELECT COALESCE(AVG(r.rating), 0)::numeric(3,2) FROM reviews r WHERE r.course_id = c.id)`
+            : `0::numeric(3,2)`;
+        const reviewsCountQuery = reviewsTableExists
+            ? `(SELECT COUNT(*)::int FROM reviews r WHERE r.course_id = c.id)`
+            : `0::int`;
+
         const result = await db.query(
             `SELECT 
-                *,
+                c.*,
                 CASE 
-                    WHEN tags IS NULL THEN '[]'::jsonb
-                    WHEN jsonb_typeof(tags) = 'string' THEN tags::jsonb
-                    ELSE tags
-                END as tags
-            FROM courses 
-            WHERE teacher_id = $1 
-            ORDER BY created_at DESC`,
+                    WHEN c.tags IS NULL THEN '[]'::jsonb
+                    WHEN jsonb_typeof(c.tags) = 'string' THEN c.tags::jsonb
+                    ELSE c.tags
+                END as tags,
+                (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = c.id) as total_lessons,
+                (SELECT COUNT(*)::int FROM videos v 
+                 JOIN lessons l ON v.lesson_id = l.id 
+                 WHERE l.course_id = c.id) as total_videos,
+                (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = c.id) as purchase_count,
+                ${reviewsRatingQuery} as rating,
+                ${reviewsCountQuery} as review_count
+            FROM courses c
+            WHERE c.teacher_id = $1 
+            ORDER BY c.created_at DESC`,
             [teacherId]
         );
         // Parse tags if they're stored as JSON string
         return result.rows.map(row => ({
             ...row,
-            tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : (row.tags || [])
+            tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : (row.tags || []),
+            total_lessons: row.total_lessons || 0,
+            total_videos: row.total_videos || 0,
+            purchase_count: row.purchase_count || 0,
+            rating: parseFloat(row.rating) || 0,
+            review_count: row.review_count || 0
         }));
     }
 
-    async getAllCourses() {
+    async getAllCourses(userId = null) {
+        // Build query with optional purchase/ownership check
+        let purchaseCheck = '';
+        let ownershipCheck = '';
+        const params = [];
+        
+        if (userId) {
+            purchaseCheck = `, EXISTS(
+                SELECT 1 FROM course_enrollments ce 
+                WHERE ce.course_id = courses.id AND ce.user_id = $1
+            ) as is_purchased`;
+            ownershipCheck = `, (courses.teacher_id = $1) as is_owned`;
+            params.push(userId);
+        } else {
+            purchaseCheck = `, false as is_purchased`;
+            ownershipCheck = `, false as is_owned`;
+        }
+        
+        // Check if reviews table exists for rating/review_count
+        const reviewsTableCheck = await db.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'reviews'
+            )
+        `);
+        const hasReviewsTable = reviewsTableCheck.rows[0]?.exists || false;
+        
+        const reviewsRatingQuery = hasReviewsTable
+            ? `(SELECT COALESCE(AVG(r.rating), 0)::numeric(3,2) FROM reviews r WHERE r.course_id = courses.id)`
+            : `0::numeric(3,2)`;
+        
+        const reviewsCountQuery = hasReviewsTable
+            ? `(SELECT COUNT(*)::int FROM reviews r WHERE r.course_id = courses.id)`
+            : `0::int`;
+        
         const result = await db.query(
             `SELECT 
                 courses.*,
@@ -86,18 +151,208 @@ class CourseService {
                     WHEN jsonb_typeof(courses.tags) = 'string' THEN courses.tags::jsonb
                     ELSE courses.tags
                 END as tags
+                ${purchaseCheck}
+                ${ownershipCheck},
+                ${reviewsRatingQuery} as rating,
+                ${reviewsCountQuery} as review_count,
+                (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = courses.id) as purchase_count,
+                (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id) as total_lessons,
+                (SELECT COUNT(*)::int FROM videos v 
+                 JOIN lessons l ON v.lesson_id = l.id 
+                 WHERE l.course_id = courses.id) as total_videos
             FROM courses 
             LEFT JOIN users ON courses.teacher_id = users.id 
-            ORDER BY courses.created_at DESC`
+            ORDER BY courses.created_at DESC`,
+            params
         );
         // Parse tags if they're stored as JSON string
         return result.rows.map(row => ({
             ...row,
-            tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : (row.tags || [])
+            tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : (row.tags || []),
+            is_purchased: row.is_purchased || false,
+            is_owned: row.is_owned || false,
+            rating: parseFloat(row.rating) || 0,
+            review_count: row.review_count || 0,
+            purchase_count: row.purchase_count || 0,
+            total_lessons: row.total_lessons || 0,
+            total_videos: row.total_videos || 0
         }));
     }
 
-    async getCourseById(id) {
+    async getCourseDetails(id, userId = null) {
+        // Get course with all related data for details page
+        const course = await this.getCourseById(id, userId);
+        if (!course) return null;
+
+        // Get teacher info
+        const teacherResult = await db.query(
+            `SELECT id, email, created_at 
+             FROM users 
+             WHERE id = $1`,
+            [course.teacher_id]
+        );
+        const teacher = teacherResult.rows[0] || null;
+
+        // Get lessons for this course
+        const lessonService = require('./lessonService');
+        const lessons = await lessonService.getLessonsByCourse(course.id, userId);
+
+        // Get all videos for all lessons
+        const videoService = require('./videoService');
+        const videos = [];
+        for (const lesson of lessons) {
+            const lessonVideos = await videoService.getVideosByLesson(lesson.id, userId, lesson.isLocked || false);
+            videos.push(...lessonVideos);
+        }
+
+        // Check if reviews table exists
+        const reviewsTableCheck = await db.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'reviews'
+            )
+        `);
+        const hasReviewsTable = reviewsTableCheck.rows[0]?.exists || false;
+
+        const reviewsRatingQuery = hasReviewsTable
+            ? `(SELECT COALESCE(AVG(r.rating), 0)::numeric(3,2) FROM reviews r WHERE r.course_id = courses.id)`
+            : `0::numeric(3,2)`;
+        
+        const reviewsCountQuery = hasReviewsTable
+            ? `(SELECT COUNT(*)::int FROM reviews r WHERE r.course_id = courses.id)`
+            : `0::int`;
+
+        // Get teacher's other courses (public, limit to 4)
+        const otherCoursesResult = await db.query(
+            `SELECT 
+                courses.*,
+                users.email as teacher_email,
+                CASE 
+                    WHEN courses.tags IS NULL THEN '[]'::jsonb
+                    WHEN jsonb_typeof(courses.tags) = 'string' THEN courses.tags::jsonb
+                    ELSE courses.tags
+                END as tags,
+                ${reviewsRatingQuery} as rating,
+                ${reviewsCountQuery} as review_count,
+                (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = courses.id) as purchase_count,
+                (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id) as total_lessons,
+                (SELECT COUNT(*)::int FROM videos v 
+                 JOIN lessons l ON v.lesson_id = l.id 
+                 WHERE l.course_id = courses.id) as total_videos
+            FROM courses 
+            LEFT JOIN users ON courses.teacher_id = users.id 
+            WHERE courses.teacher_id = $1 AND courses.id != $2
+            ORDER BY courses.created_at DESC
+            LIMIT 4`,
+            [course.teacher_id, course.id]
+        );
+
+        const otherCourses = otherCoursesResult.rows.map(row => ({
+            ...row,
+            tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : (row.tags || []),
+            rating: parseFloat(row.rating) || 0,
+            review_count: row.review_count || 0,
+            purchase_count: row.purchase_count || 0,
+            total_lessons: row.total_lessons || 0,
+            total_videos: row.total_videos || 0
+        }));
+
+        return {
+            course,
+            teacher: teacher ? {
+                id: teacher.id,
+                email: teacher.email,
+                name: teacher.email, // Using email as name since we don't have name field
+                location: '',
+                totalStudents: course.purchase_count || 0,
+                avatar: ''
+            } : null,
+            lessons,
+            videos,
+            otherCourses,
+            reviews: [] // Reviews can be added later if needed
+        };
+    }
+
+    async getCourseById(id, userId = null) {
+        // Check if reviews table exists
+        const reviewsTableCheck = await db.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'reviews'
+            )
+        `);
+        const hasReviewsTable = reviewsTableCheck.rows[0]?.exists || false;
+        
+        const reviewsRatingQuery = hasReviewsTable
+            ? `(SELECT COALESCE(AVG(r.rating), 0)::numeric(3,2) FROM reviews r WHERE r.course_id = courses.id)`
+            : `0::numeric(3,2)`;
+        
+        const reviewsCountQuery = hasReviewsTable
+            ? `(SELECT COUNT(*)::int FROM reviews r WHERE r.course_id = courses.id)`
+            : `0::int`;
+        
+        // Build query with optional purchase/ownership check
+        let purchaseCheck = '';
+        let ownershipCheck = '';
+        const params = [id];
+        
+        if (userId) {
+            purchaseCheck = `, EXISTS(
+                SELECT 1 FROM course_enrollments ce 
+                WHERE ce.course_id = courses.id AND ce.user_id = $2
+            ) as is_purchased`;
+            ownershipCheck = `, (courses.teacher_id = $2) as is_owned`;
+            params.push(userId);
+        } else {
+            purchaseCheck = `, false as is_purchased`;
+            ownershipCheck = `, false as is_owned`;
+        }
+        
+        const result = await db.query(
+            `SELECT 
+                courses.*,
+                users.email as teacher_email,
+                CASE 
+                    WHEN courses.tags IS NULL THEN '[]'::jsonb
+                    WHEN jsonb_typeof(courses.tags) = 'string' THEN courses.tags::jsonb
+                    ELSE courses.tags
+                END as tags
+                ${purchaseCheck}
+                ${ownershipCheck},
+                ${reviewsRatingQuery} as rating,
+                ${reviewsCountQuery} as review_count,
+                (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = courses.id) as purchase_count,
+                (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id) as total_lessons,
+                (SELECT COUNT(*)::int FROM videos v 
+                 JOIN lessons l ON v.lesson_id = l.id 
+                 WHERE l.course_id = courses.id) as total_videos
+            FROM courses 
+            LEFT JOIN users ON courses.teacher_id = users.id 
+            WHERE courses.id = $1`,
+            params
+        );
+        
+        if (!result.rows[0]) return null;
+        
+        const course = result.rows[0];
+        // Parse tags if they're stored as JSON string
+        return {
+            ...course,
+            tags: typeof course.tags === 'string' ? JSON.parse(course.tags) : (course.tags || []),
+            is_purchased: course.is_purchased || false,
+            is_owned: course.is_owned || false,
+            rating: parseFloat(course.rating) || 0,
+            review_count: course.review_count || 0,
+            purchase_count: course.purchase_count || 0,
+            total_lessons: course.total_lessons || 0,
+            total_videos: course.total_videos || 0
+        };
+    }
+
+    async getCourseByIdSimple(id) {
         const result = await db.query('SELECT * FROM courses WHERE id = $1', [id]);
         if (!result.rows[0]) return null;
         

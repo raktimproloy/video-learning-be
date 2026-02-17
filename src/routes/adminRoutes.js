@@ -22,20 +22,21 @@ const storage = multer.diskStorage({
     }
 });
 
-const upload = multer({ storage });
+const upload = multer({
+    storage,
+    limits: { fileSize: 550 * 1024 * 1024 }, // 550MB for video + notes/assignments
+});
 
-// Protect admin routes with JWT 
-// (In a real app, you'd check for an 'admin' role too)
+// Protect admin routes with JWT
 router.use(verifyToken);
 
 router.post(
     '/videos',
-    upload.single('video'), // Expect a field named 'video'
+    upload.any(), // video + note_file_N + assignment_file_N
     [
         check('title', 'Title is required').not().isEmpty(),
         check('lesson_id', 'Lesson ID must be a UUID').optional().isUUID(),
         check('order', 'Order must be an integer').optional().isInt(),
-        // storage_path is no longer required from client, we'll generate it
     ],
     adminController.addVideo
 );
@@ -69,6 +70,33 @@ router.delete(
         check('id', 'Video ID is required').isUUID()
     ],
     adminController.deleteVideo
+);
+
+router.get(
+    '/videos/:id',
+    [
+        check('id', 'Video ID is required').isUUID()
+    ],
+    adminController.getVideo
+);
+
+router.get(
+    '/videos/:id/processing-status',
+    [
+        check('id', 'Video ID is required').isUUID()
+    ],
+    adminController.getProcessingStatus
+);
+
+router.put(
+    '/videos/:id',
+    upload.any(),
+    [
+        check('id', 'Video ID is required').isUUID(),
+        check('title', 'Title is required').optional().not().isEmpty(),
+        check('order', 'Order must be an integer').optional().isInt(),
+    ],
+    adminController.updateVideo
 );
 
 module.exports = router;

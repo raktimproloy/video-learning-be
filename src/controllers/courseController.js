@@ -4,16 +4,44 @@ const path = require('path');
 const fs = require('fs');
 
 function enrichCourseMediaUrls(courses, req) {
+    const apiUrl = process.env.BASE_URL || 'http://localhost:5000';
+    const v1Url = `${apiUrl}/v1`;
+    
     return (Array.isArray(courses) ? courses : [courses]).map((c) => {
         const course = { ...c };
-        if (course.thumbnail_path && r2Storage.getPublicUrl) {
-            const url = r2Storage.getPublicUrl(course.thumbnail_path);
-            if (url) course.thumbnail_url = url;
+        
+        // Handle thumbnail URL
+        if (course.thumbnail_path) {
+            // Try public URL first (if R2_PUBLIC_URL is configured)
+            const publicUrl = r2Storage.getPublicUrl ? r2Storage.getPublicUrl(course.thumbnail_path) : null;
+            if (publicUrl) {
+                course.thumbnail_url = publicUrl;
+            } else if (course.thumbnail_path.startsWith('teachers/')) {
+                // R2 key - use media endpoint
+                course.thumbnail_url = `${v1Url}/courses/media/${encodeURIComponent(course.thumbnail_path)}`;
+            } else if (course.thumbnail_path.startsWith('/uploads/')) {
+                // Local storage
+                course.thumbnail_url = `${apiUrl}${course.thumbnail_path}`;
+            } else {
+                // Fallback - assume it's a relative path
+                course.thumbnail_url = `${apiUrl}${course.thumbnail_path.startsWith('/') ? '' : '/'}${course.thumbnail_path}`;
+            }
         }
-        if (course.intro_video_path && r2Storage.getPublicUrl) {
-            const url = r2Storage.getPublicUrl(course.intro_video_path);
-            if (url) course.intro_video_url = url;
+        
+        // Handle intro video URL
+        if (course.intro_video_path) {
+            const publicUrl = r2Storage.getPublicUrl ? r2Storage.getPublicUrl(course.intro_video_path) : null;
+            if (publicUrl) {
+                course.intro_video_url = publicUrl;
+            } else if (course.intro_video_path.startsWith('teachers/')) {
+                course.intro_video_url = `${v1Url}/courses/media/${encodeURIComponent(course.intro_video_path)}`;
+            } else if (course.intro_video_path.startsWith('/uploads/')) {
+                course.intro_video_url = `${apiUrl}${course.intro_video_path}`;
+            } else {
+                course.intro_video_url = `${apiUrl}${course.intro_video_path.startsWith('/') ? '' : '/'}${course.intro_video_path}`;
+            }
         }
+        
         return course;
     });
 }
@@ -262,21 +290,58 @@ class CourseController {
 
     async getAllCourses(req, res) {
         try {
-            const courses = await courseService.getAllCourses();
-            res.json(courses);
+            // Pass userId if authenticated to check purchase/ownership status
+            const userId = req.user?.id || null;
+            const courses = await courseService.getAllCourses(userId);
+            // Enrich with media URLs
+            const enriched = enrichCourseMediaUrls(courses, req);
+            res.json(enriched);
         } catch (error) {
             console.error('Get all courses error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     }
 
+    async getCourseDetails(req, res) {
+        try {
+            // Pass userId if authenticated to check purchase/ownership status
+            const userId = req.user?.id || null;
+            const details = await courseService.getCourseDetails(req.params.id, userId);
+            if (!details) {
+                return res.status(404).json({ error: 'Course not found' });
+            }
+            
+            // Enrich course with media URLs
+            const enrichedCourse = enrichCourseMediaUrls([details.course], req)[0];
+            
+            // Enrich other courses with media URLs
+            const enrichedOtherCourses = enrichCourseMediaUrls(details.otherCourses || [], req);
+            
+            res.json({
+                course: enrichedCourse,
+                teacher: details.teacher,
+                lessons: details.lessons || [],
+                videos: details.videos || [],
+                otherCourses: enrichedOtherCourses,
+                reviews: details.reviews || []
+            });
+        } catch (error) {
+            console.error('Get course details error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
     async getCourseById(req, res) {
         try {
-            const course = await courseService.getCourseById(req.params.id);
+            // Pass userId if authenticated to check purchase/ownership status
+            const userId = req.user?.id || null;
+            const course = await courseService.getCourseById(req.params.id, userId);
             if (!course) {
                 return res.status(404).json({ error: 'Course not found' });
             }
-            res.json(course);
+            // Enrich with media URLs
+            const enriched = enrichCourseMediaUrls([course], req);
+            res.json(enriched[0]);
         } catch (error) {
             console.error('Get course error:', error);
             res.status(500).json({ error: 'Internal server error' });
@@ -641,10 +706,16 @@ class CourseController {
             else if (ext === 'avi') contentType = 'video/x-msvideo';
             else if (ext === 'webm') contentType = 'video/webm';
 
-            // Stream the file
-            const stream = await r2Storage.getObjectStream(key);
+            // Set CORS headers for cross-origin image/video requests
+            res.set('Access-Control-Allow-Origin', '*');
+            res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+            res.set('Access-Control-Allow-Headers', 'Content-Type');
             res.set('Content-Type', contentType);
             res.set('Cache-Control', 'public, max-age=31536000'); // Cache for 1 year
+            res.set('Cross-Origin-Resource-Policy', 'cross-origin');
+
+            // Stream the file
+            const stream = await r2Storage.getObjectStream(key);
             stream.pipe(res);
         } catch (error) {
             console.error('Stream course media error:', error);

@@ -10,14 +10,24 @@ const authRoutes = require('./routes/authRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const courseRoutes = require('./routes/courseRoutes');
 const lessonRoutes = require('./routes/lessonRoutes');
+const assignmentRoutes = require('./routes/assignmentRoutes');
+const teacherProfileRoutes = require('./routes/teacherProfileRoutes');
 
 const app = express();
 
-// Security Middleware
-app.use(helmet());
+// Security Middleware - Configure Helmet to allow cross-origin images
+app.use(helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    crossOriginEmbedderPolicy: false,
+}));
 
-// CORS Middleware
-app.use(cors());
+// CORS Middleware - Allow all origins for media files
+app.use(cors({
+    origin: '*',
+    credentials: false,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
 // Logging Middleware
 app.use(morgan('combined'));
@@ -37,6 +47,8 @@ app.use('/v1/video', videoRoutes);
 app.use('/v1/admin', adminRoutes);
 app.use('/v1/courses', courseRoutes);
 app.use('/v1/lessons', lessonRoutes);
+app.use('/v1/assignments', assignmentRoutes);
+app.use('/v1/teacher/profile', teacherProfileRoutes);
 
 // Health Check
 app.get('/health', (req, res) => {

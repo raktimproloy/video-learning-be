@@ -158,45 +158,17 @@ class VideoProcessor {
             
             const preset = 'slow'; // Professional grade compression
             
-            // 6. Determine Resolutions
-            // Parse resolutions or default to source-like
-            let resolutions = task.resolutions || ['720p'];
-            // Normalize resolutions to [{w, h, name}]
-            const resolutionMap = {
-                '1080p': { w: 1920, h: 1080, name: '1080p', bandwidth: 5000000 },
-                '720p': { w: 1280, h: 720, name: '720p', bandwidth: 2800000 },
-                '480p': { w: 854, h: 480, name: '480p', bandwidth: 1400000 },
-                '360p': { w: 640, h: 360, name: '360p', bandwidth: 800000 }
-            };
-
-            const targetResolutions = [];
-            for (const res of resolutions) {
-                if (resolutionMap[res]) {
-                    // UPSCALING PREVENTION:
-                    // If target height > original height, skip it.
-                    if (resolutionMap[res].h > origHeight) {
-                        console.log(`Skipping ${res} (Target height ${resolutionMap[res].h} > Original ${origHeight})`);
-                        continue;
-                    }
-                    targetResolutions.push(resolutionMap[res]);
-                }
-            }
-            
-            // Fallback: If all requested resolutions were skipped (e.g. input is 240p but we asked for 720p),
-            // add the original resolution or the closest valid one.
-            if (targetResolutions.length === 0) {
-                console.log('All requested resolutions skipped due to upscale prevention. Using original resolution.');
-                // Create a custom entry for original resolution
-                // Round dimensions to even numbers (ffmpeg requirement for yuv420p sometimes)
-                const safeW = origWidth % 2 === 0 ? origWidth : origWidth - 1;
-                const safeH = origHeight % 2 === 0 ? origHeight : origHeight - 1;
-                targetResolutions.push({
-                    w: safeW,
-                    h: safeH,
-                    name: 'original',
-                    bandwidth: 2000000 // Estimation
-                });
-            }
+            // 6. Use original resolution only (no multiple resolutions)
+            // Round dimensions to even numbers (ffmpeg requirement for yuv420p)
+            const safeW = origWidth % 2 === 0 ? origWidth : origWidth - 1;
+            const safeH = origHeight % 2 === 0 ? origHeight : origHeight - 1;
+            const targetResolutions = [{
+                w: safeW,
+                h: safeH,
+                name: 'original',
+                bandwidth: 2500000 // Estimation for original quality
+            }];
+            console.log(`Using original resolution only: ${safeW}x${safeH} (encrypted, no multi-resolution)`);
 
             // 7. Process each resolution
             const variants = [];
@@ -302,9 +274,13 @@ class VideoProcessor {
                  WHERE id = $1`,
                 [task.id]
             );
-            await db.query('UPDATE videos SET size_bytes = $1 WHERE id = $2', [totalSize, task.video_id]);
+            const durationSeconds = metadata.format?.duration != null ? Math.round(Number(metadata.format.duration) * 100) / 100 : null;
+            await db.query(
+                'UPDATE videos SET size_bytes = $1, duration_seconds = COALESCE(duration_seconds, $2), status = $3 WHERE id = $4',
+                [totalSize, durationSeconds, 'active', task.video_id]
+            );
 
-            console.log(`Task ${task.id} completed successfully.`);
+            console.log(`Task ${task.id} completed successfully. Duration: ${durationSeconds ?? 'N/A'}s`);
 
         } catch (error) {
             console.error(`Task ${task.id} failed:`, error);
@@ -314,6 +290,7 @@ class VideoProcessor {
                  WHERE id = $2`,
                 [error.message, task.id]
             );
+            // Keep status as 'processing' on failure - teacher can retry or set to inactive manually
         }
     }
 }

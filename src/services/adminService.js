@@ -9,16 +9,22 @@ const KEYS_ROOT_DIR = process.env.KEYS_ROOT_DIR || path.join(__dirname, '../../k
 class AdminService {
     /**
      * Create video record. Use storagePath for local, or pass storageProvider='r2' and r2Key for R2.
+     * options: { storageProvider, r2Key, description, isPreview, notes, assignments, status }
      */
     async createVideo(title, storagePath, ownerId, lessonId = null, order = 0, options = {}) {
         const signingSecret = crypto.randomBytes(32).toString('hex');
         const storageProvider = options.storageProvider || 'local';
         const r2Key = options.r2Key || null;
+        const description = options.description || null;
+        const isPreview = options.isPreview === true;
+        const notes = options.notes ? JSON.stringify(options.notes) : '[]';
+        const assignments = options.assignments ? JSON.stringify(options.assignments) : '[]';
+        const status = options.status || 'processing'; // Default to processing when video is created
 
         const result = await db.query(
-            `INSERT INTO videos (title, storage_path, signing_secret, owner_id, lesson_id, "order", storage_provider, r2_key)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-            [title, storagePath, signingSecret, ownerId, lessonId, order, storageProvider, r2Key]
+            `INSERT INTO videos (title, description, storage_path, signing_secret, owner_id, lesson_id, "order", is_preview, notes, assignments, storage_provider, r2_key, status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+            [title, description, storagePath, signingSecret, ownerId, lessonId, order, isPreview, notes, assignments, storageProvider, r2Key, status]
         );
         const video = result.rows[0];
 
@@ -44,6 +50,76 @@ class AdminService {
             [newPath, videoId]
         );
         return result.rows[0];
+    }
+
+    async updateVideoDuration(videoId, durationSeconds) {
+        const result = await db.query(
+            'UPDATE videos SET duration_seconds = $1 WHERE id = $2 RETURNING *',
+            [durationSeconds, videoId]
+        );
+        return result.rows[0];
+    }
+
+    async updateVideoMetadata(videoId, metadata) {
+        const updates = [];
+        const values = [];
+        let idx = 1;
+        if (metadata.description !== undefined) { updates.push(`description = $${idx++}`); values.push(metadata.description); }
+        if (metadata.isPreview !== undefined) { updates.push(`is_preview = $${idx++}`); values.push(metadata.isPreview); }
+        if (metadata.notes !== undefined) { updates.push(`notes = $${idx++}`); values.push(JSON.stringify(metadata.notes)); }
+        if (metadata.assignments !== undefined) { updates.push(`assignments = $${idx++}`); values.push(JSON.stringify(metadata.assignments)); }
+        if (metadata.status !== undefined) { updates.push(`status = $${idx++}`); values.push(metadata.status); }
+        if (metadata.title !== undefined) { updates.push(`title = $${idx++}`); values.push(metadata.title); }
+        if (metadata.order !== undefined) { updates.push(`"order" = $${idx++}`); values.push(metadata.order); }
+        if (updates.length === 0) return (await db.query('SELECT * FROM videos WHERE id = $1', [videoId])).rows[0];
+        values.push(videoId);
+        const result = await db.query(
+            `UPDATE videos SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`,
+            values
+        );
+        return result.rows[0];
+    }
+
+    async updateVideoStatus(videoId, status) {
+        const result = await db.query(
+            'UPDATE videos SET status = $1 WHERE id = $2 RETURNING *',
+            [status, videoId]
+        );
+        return result.rows[0];
+    }
+
+    async getProcessingStatus(videoId, ownerId) {
+        // Check ownership
+        const videoRes = await db.query(
+            'SELECT id, status FROM videos WHERE id = $1 AND owner_id = $2',
+            [videoId, ownerId]
+        );
+        if (videoRes.rows.length === 0) {
+            throw new Error('Video not found or access denied');
+        }
+
+        const video = videoRes.rows[0];
+        
+        // Get latest processing task status
+        const taskRes = await db.query(
+            `SELECT status, error_message, created_at, updated_at 
+             FROM video_processing_tasks 
+             WHERE video_id = $1 
+             ORDER BY created_at DESC 
+             LIMIT 1`,
+            [videoId]
+        );
+
+        const task = taskRes.rows[0];
+        
+        return {
+            videoId: video.id,
+            videoStatus: video.status,
+            processingStatus: task ? task.status : null,
+            errorMessage: task ? task.error_message : null,
+            createdAt: task ? task.created_at : null,
+            updatedAt: task ? task.updated_at : null,
+        };
     }
 
     async updateVideoR2(videoId, r2Key, sizeBytes = null) {

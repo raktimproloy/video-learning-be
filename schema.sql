@@ -60,14 +60,20 @@ CREATE TABLE IF NOT EXISTS lessons (
 CREATE TABLE IF NOT EXISTS videos (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title TEXT NOT NULL,
+    description TEXT,
     storage_path TEXT NOT NULL,
     signing_secret TEXT NOT NULL,
     is_live BOOLEAN DEFAULT false,
+    is_preview BOOLEAN DEFAULT false,
+    duration_seconds DECIMAL(10, 2),
     owner_id UUID REFERENCES users(id),
     lesson_id UUID REFERENCES lessons(id) ON DELETE SET NULL,
     "order" INTEGER DEFAULT 0,
+    notes JSONB DEFAULT '[]'::jsonb,
+    assignments JSONB DEFAULT '[]'::jsonb,
     storage_provider TEXT NOT NULL DEFAULT 'local' CHECK (storage_provider IN ('local', 'r2')),
     r2_key TEXT,
+    status TEXT DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'processing')),
     created_at TIMESTAMP DEFAULT NOW(),
     size_bytes BIGINT DEFAULT 0
 );
@@ -112,10 +118,65 @@ CREATE TABLE IF NOT EXISTS teacher_profiles (
     avatar TEXT,
     specialization JSONB DEFAULT '[]'::jsonb,
     experience TEXT,
+    experience_new JSONB DEFAULT '[]'::jsonb,
     certifications JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    updated_at TIMESTAMP DEFAULT NOW(),
+    -- Profile image
+    profile_image_path TEXT,
+    -- Contact information with verification
+    account_email TEXT,
+    account_email_verified BOOLEAN DEFAULT false,
+    account_email_otp TEXT,
+    account_email_otp_expires_at TIMESTAMP,
+    support_email TEXT,
+    support_email_verified BOOLEAN DEFAULT false,
+    support_email_otp TEXT,
+    support_email_otp_expires_at TIMESTAMP,
+    original_phone TEXT,
+    original_phone_verified BOOLEAN DEFAULT false,
+    original_phone_otp TEXT,
+    original_phone_otp_expires_at TIMESTAMP,
+    support_phone TEXT,
+    support_phone_verified BOOLEAN DEFAULT false,
+    support_phone_otp TEXT,
+    support_phone_otp_expires_at TIMESTAMP,
+    -- Address
+    address TEXT,
+    -- Social links
+    youtube_url TEXT,
+    linkedin_url TEXT,
+    facebook_url TEXT,
+    twitter_url TEXT,
+    -- Education
+    education JSONB DEFAULT '[]'::jsonb,
+    -- Payment information
+    bank_accounts JSONB DEFAULT '[]'::jsonb,
+    card_accounts JSONB DEFAULT '[]'::jsonb
 );
 
--- Create index for faster lookups
+-- Create indexes for faster lookups
 CREATE INDEX IF NOT EXISTS idx_teacher_profiles_user_id ON teacher_profiles(user_id);
+CREATE INDEX IF NOT EXISTS idx_teacher_profiles_account_email ON teacher_profiles(account_email) WHERE account_email IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_teacher_profiles_support_email ON teacher_profiles(support_email) WHERE support_email IS NOT NULL;
+
+-- Assignment submissions (student submissions for video/lesson assignments)
+CREATE TABLE IF NOT EXISTS assignment_submissions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    assignment_type TEXT NOT NULL CHECK (assignment_type IN ('video', 'lesson')),
+    video_id UUID REFERENCES videos(id) ON DELETE CASCADE,
+    lesson_id UUID REFERENCES lessons(id) ON DELETE CASCADE,
+    assignment_id TEXT NOT NULL,
+    file_path TEXT,
+    file_name TEXT,
+    submitted_at TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT chk_video_or_lesson CHECK (
+        (assignment_type = 'video' AND video_id IS NOT NULL AND lesson_id IS NULL) OR
+        (assignment_type = 'lesson' AND lesson_id IS NOT NULL AND video_id IS NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_assignment_submissions_user ON assignment_submissions(user_id);
+CREATE INDEX IF NOT EXISTS idx_assignment_submissions_video ON assignment_submissions(video_id);
+CREATE INDEX IF NOT EXISTS idx_assignment_submissions_lesson ON assignment_submissions(lesson_id);
