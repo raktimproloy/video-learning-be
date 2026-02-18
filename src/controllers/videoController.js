@@ -21,7 +21,10 @@ class VideoController {
             }
 
             const isOwner = video.owner_id === userId;
-            const hasPermission = isOwner || await videoService.checkPermission(userId, videoId);
+            let hasPermission = isOwner || await videoService.checkPermission(userId, videoId);
+            if (!hasPermission && video.is_preview) {
+                hasPermission = true;
+            }
             if (!hasPermission) {
                 return res.status(403).json({ error: 'Access denied' });
             }
@@ -37,8 +40,12 @@ class VideoController {
 
             // For students, check if video is locked
             if (role === 'student') {
-                const isLocked = await videoService.isVideoLockedForStudent(userId, videoId);
-                result.isLocked = isLocked;
+                const enrolled = await videoService.checkPermission(userId, videoId);
+                if (video.is_preview && !isOwner && !enrolled) {
+                    result.isLocked = false;
+                } else {
+                    result.isLocked = await videoService.isVideoLockedForStudent(userId, videoId);
+                }
             }
 
             res.json(result);
@@ -110,6 +117,9 @@ class VideoController {
             if (error.message === 'Video not found') {
                 return res.status(404).json({ error: 'Video not found' });
             }
+            if (error.message && error.message.includes('Video is locked')) {
+                return res.status(403).json({ error: error.message });
+            }
             res.status(500).json({ error: 'Internal server error' });
         }
     }
@@ -154,6 +164,7 @@ class VideoController {
             }
 
             let hasAccess = video.owner_id === userId || await videoService.checkPermission(userId, videoId);
+            if (!hasAccess && video.is_preview) hasAccess = true;
             if (!hasAccess) return res.status(403).send('Access denied');
 
             // For students, check if video is locked

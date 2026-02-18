@@ -39,8 +39,11 @@ class LessonService {
         );
         const lessons = result.rows.map((row) => {
             const lesson = { ...row };
-            if (lesson.notes) lesson.notes = typeof lesson.notes === 'string' ? JSON.parse(lesson.notes) : lesson.notes;
-            if (lesson.assignments) lesson.assignments = typeof lesson.assignments === 'string' ? JSON.parse(lesson.assignments) : lesson.assignments;
+            lesson.notes = lesson.notes ? (typeof lesson.notes === 'string' ? JSON.parse(lesson.notes) : lesson.notes) : [];
+            lesson.assignments = lesson.assignments ? (typeof lesson.assignments === 'string' ? JSON.parse(lesson.assignments) : lesson.assignments) : [];
+            lesson.notes = Array.isArray(lesson.notes) ? lesson.notes : [];
+            lesson.assignments = Array.isArray(lesson.assignments) ? lesson.assignments : [];
+            lesson.hasRequiredAssignment = lesson.assignments.some((a) => a && a.isRequired === true);
             lesson.isPreview = lesson.is_preview;
             lesson.videoCount = lesson.video_count ?? 0;
             lesson.duration = (lesson.total_duration_seconds ?? 0) / 60; // minutes for frontend
@@ -89,6 +92,29 @@ class LessonService {
         }
 
         return lessons;
+    }
+
+    /**
+     * Check if a lesson can be set as preview. Preview is only allowed when the previous lesson (by order) has no required assignments.
+     * @param {string} courseId
+     * @param {number} order - Order of the lesson we want to set as preview
+     * @param {string|null} excludeLessonId - When editing, exclude this lesson from the "previous" check
+     * @returns {{ allowed: boolean, reason?: string }}
+     */
+    async canSetLessonPreview(courseId, order, excludeLessonId = null) {
+        if (order <= 1) return { allowed: true };
+        const result = await db.query(
+            `SELECT id, assignments FROM lessons WHERE course_id = $1 AND "order" = $2 AND ($3::uuid IS NULL OR id != $3) ORDER BY created_at ASC LIMIT 1`,
+            [courseId, order - 1, excludeLessonId]
+        );
+        const previous = result.rows[0];
+        if (!previous) return { allowed: true };
+        const assignments = previous.assignments ? (typeof previous.assignments === 'string' ? JSON.parse(previous.assignments) : previous.assignments) : [];
+        const hasRequired = Array.isArray(assignments) && assignments.some((a) => a && a.isRequired === true);
+        if (hasRequired) {
+            return { allowed: false, reason: 'Cannot set as preview: the previous lesson has required assignments. Students must complete them before accessing the next lesson.' };
+        }
+        return { allowed: true };
     }
 
     async getLessonById(id) {

@@ -143,6 +143,8 @@ CREATE TABLE IF NOT EXISTS teacher_profiles (
     support_phone_otp_expires_at TIMESTAMP,
     -- Address
     address TEXT,
+    -- Personal institute/organization name
+    institute_name TEXT,
     -- Social links
     youtube_url TEXT,
     linkedin_url TEXT,
@@ -159,6 +161,19 @@ CREATE TABLE IF NOT EXISTS teacher_profiles (
 CREATE INDEX IF NOT EXISTS idx_teacher_profiles_user_id ON teacher_profiles(user_id);
 CREATE INDEX IF NOT EXISTS idx_teacher_profiles_account_email ON teacher_profiles(account_email) WHERE account_email IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_teacher_profiles_support_email ON teacher_profiles(support_email) WHERE support_email IS NOT NULL;
+
+-- Student Profiles table
+CREATE TABLE IF NOT EXISTS student_profiles (
+    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT,
+    phone TEXT,
+    profile_image_path TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Create index for faster lookups
+CREATE INDEX IF NOT EXISTS idx_student_profiles_user_id ON student_profiles(user_id);
 
 -- Assignment submissions (student submissions for video/lesson assignments)
 CREATE TABLE IF NOT EXISTS assignment_submissions (

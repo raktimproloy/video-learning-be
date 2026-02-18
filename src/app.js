@@ -12,6 +12,11 @@ const courseRoutes = require('./routes/courseRoutes');
 const lessonRoutes = require('./routes/lessonRoutes');
 const assignmentRoutes = require('./routes/assignmentRoutes');
 const teacherProfileRoutes = require('./routes/teacherProfileRoutes');
+const studentProfileRoutes = require('./routes/studentProfileRoutes');
+const reviewRoutes = require('./routes/reviewRoutes');
+const announcementRoutes = require('./routes/announcementRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
+const bundleRoutes = require('./routes/bundleRoutes');
 
 const app = express();
 
@@ -49,6 +54,11 @@ app.use('/v1/courses', courseRoutes);
 app.use('/v1/lessons', lessonRoutes);
 app.use('/v1/assignments', assignmentRoutes);
 app.use('/v1/teacher/profile', teacherProfileRoutes);
+app.use('/v1/student/profile', studentProfileRoutes);
+app.use('/v1/reviews', reviewRoutes);
+app.use('/v1/announcements', announcementRoutes);
+app.use('/v1/notifications', notificationRoutes);
+app.use('/v1/bundles', bundleRoutes);
 
 // Health Check
 app.get('/health', (req, res) => {

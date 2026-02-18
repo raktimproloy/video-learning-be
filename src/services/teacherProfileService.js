@@ -1,5 +1,4 @@
 const db = require('../../db');
-const r2Storage = require('./r2StorageService');
 
 class TeacherProfileService {
     /**
@@ -22,35 +21,128 @@ class TeacherProfileService {
         
         const profile = result.rows[0];
         
-        // Parse JSONB fields
-        const parsedProfile = {
-            ...profile,
-            // Account email should always be the login email from users table
-            account_email: profile.login_email || profile.account_email,
-            specialization: typeof profile.specialization === 'string' 
-                ? JSON.parse(profile.specialization) 
-                : (profile.specialization || []),
-            education: typeof profile.education === 'string'
-                ? JSON.parse(profile.education)
-                : (profile.education || []),
-            experience: profile.experience_new || (typeof profile.experience === 'string'
-                ? JSON.parse(profile.experience)
-                : (profile.experience || [])),
-            certifications: typeof profile.certifications === 'string'
-                ? JSON.parse(profile.certifications)
-                : (profile.certifications || []),
-            bank_accounts: typeof profile.bank_accounts === 'string'
-                ? JSON.parse(profile.bank_accounts)
-                : (profile.bank_accounts || []),
-            card_accounts: typeof profile.card_accounts === 'string'
-                ? JSON.parse(profile.card_accounts)
-                : (profile.card_accounts || []),
-        };
+        // Parse JSONB fields - specialization: always return array of strings
+        let specialization = typeof profile.specialization === 'string' 
+            ? JSON.parse(profile.specialization) 
+            : (profile.specialization || []);
+        if (!Array.isArray(specialization)) specialization = [];
+        specialization = specialization.map(s => typeof s === 'string' ? s : (s && s.name ? String(s.name) : '')).filter(Boolean);
         
-        // Remove experience_new and login_email from response
-        delete parsedProfile.experience_new;
-        delete parsedProfile.login_email;
-        return parsedProfile;
+        const education = typeof profile.education === 'string'
+            ? JSON.parse(profile.education)
+            : (profile.education || []);
+        
+        const experience = typeof profile.experience_new === 'string'
+            ? JSON.parse(profile.experience_new)
+            : (profile.experience_new || []);
+        
+        const certifications = typeof profile.certifications === 'string'
+            ? JSON.parse(profile.certifications)
+            : (profile.certifications || []);
+        
+        return {
+            ...profile,
+            account_email: profile.account_email || profile.login_email,
+            specialization,
+            education,
+            experience,
+            certifications,
+            // Remove internal fields
+            login_email: undefined,
+            experience_new: undefined
+        };
+    }
+
+    /**
+     * Get public teacher profile (for public viewing)
+     */
+    async getPublicProfile(userId) {
+        // Check if reviews table exists
+        const reviewsTableCheck = await db.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'reviews'
+            )
+        `);
+        const hasReviewsTable = reviewsTableCheck.rows[0]?.exists || false;
+
+        const reviewsRatingQuery = hasReviewsTable
+            ? `(SELECT COALESCE(AVG(r.rating), 0) FROM reviews r 
+               JOIN courses c ON r.course_id = c.id 
+               WHERE c.teacher_id = u.id)`
+            : `0`;
+        
+        const reviewsCountQuery = hasReviewsTable
+            ? `(SELECT COUNT(*) FROM reviews r 
+               JOIN courses c ON r.course_id = c.id 
+               WHERE c.teacher_id = u.id)`
+            : `0`;
+
+        const result = await db.query(
+            `SELECT 
+                tp.*,
+                u.email as login_email,
+                (SELECT COUNT(*) FROM courses WHERE teacher_id = u.id) as total_courses,
+                (SELECT COUNT(*) FROM course_enrollments ce 
+                 JOIN courses c ON ce.course_id = c.id 
+                 WHERE c.teacher_id = u.id) as total_students,
+                ${reviewsRatingQuery} as rating,
+                ${reviewsCountQuery} as total_reviews
+             FROM teacher_profiles tp
+             JOIN users u ON tp.user_id = u.id
+             WHERE tp.user_id = $1`,
+            [userId]
+        );
+        
+        if (result.rows.length === 0) {
+            return null;
+        }
+        
+        const profile = result.rows[0];
+        
+        // Parse JSONB fields - specialization: always return array of strings
+        let specialization = typeof profile.specialization === 'string' 
+            ? JSON.parse(profile.specialization) 
+            : (profile.specialization || []);
+        if (!Array.isArray(specialization)) specialization = [];
+        specialization = specialization.map(s => typeof s === 'string' ? s : (s && s.name ? String(s.name) : '')).filter(Boolean);
+        
+        const education = typeof profile.education === 'string'
+            ? JSON.parse(profile.education)
+            : (profile.education || []);
+        
+        const experience = typeof profile.experience_new === 'string'
+            ? JSON.parse(profile.experience_new)
+            : (profile.experience_new || []);
+        
+        const certifications = typeof profile.certifications === 'string'
+            ? JSON.parse(profile.certifications)
+            : (profile.certifications || []);
+        
+        return {
+            user_id: profile.user_id,
+            name: profile.name || profile.login_email,
+            bio: profile.bio,
+            location: profile.location,
+            profile_image_path: profile.profile_image_path,
+            institute_name: profile.institute_name || null,
+            specialization,
+            education,
+            experience,
+            certifications,
+            account_email: profile.account_email || profile.login_email,
+            original_phone: profile.original_phone,
+            support_phone: profile.support_phone,
+            youtube_url: profile.youtube_url,
+            linkedin_url: profile.linkedin_url,
+            facebook_url: profile.facebook_url,
+            twitter_url: profile.twitter_url,
+            total_courses: parseInt(profile.total_courses) || 0,
+            total_students: parseInt(profile.total_students) || 0,
+            rating: parseFloat(profile.rating) || 0,
+            total_reviews: parseInt(profile.total_reviews) || 0
+        };
     }
 
     /**
@@ -72,13 +164,11 @@ class TeacherProfileService {
         const profile = result.rows[0];
         return {
             ...profile,
-            account_email: loginEmail, // Ensure account_email is set to login email
+            account_email: profile.account_email || loginEmail,
             specialization: [],
             education: [],
             experience: [],
-            certifications: [],
-            bank_accounts: [],
-            card_accounts: [],
+            certifications: []
         };
     }
 
@@ -86,116 +176,22 @@ class TeacherProfileService {
      * Update teacher profile
      */
     async updateProfile(userId, profileData) {
-        const {
-            name,
-            bio,
-            profileImagePath,
-            accountEmail,
-            supportEmail,
-            originalPhone,
-            supportPhone,
-            address,
-            location,
-            youtubeUrl,
-            linkedinUrl,
-            facebookUrl,
-            twitterUrl,
-            specialization,
-            education,
-            experience,
-            certifications,
-            bankAccounts,
-            cardAccounts,
-        } = profileData;
-
-        // Build update query dynamically
         const updates = [];
         const values = [];
         let paramIndex = 1;
 
-        if (name !== undefined) {
-            updates.push(`name = $${paramIndex++}`);
-            values.push(name);
-        }
-        if (bio !== undefined) {
-            updates.push(`bio = $${paramIndex++}`);
-            values.push(bio);
-        }
-        if (profileImagePath !== undefined) {
-            updates.push(`profile_image_path = $${paramIndex++}`);
-            values.push(profileImagePath);
-        }
-        // Account email is read-only - it comes from users table, don't allow updates
-        // We skip accountEmail updates here since it should always match login email
-        if (supportEmail !== undefined) {
-            updates.push(`support_email = $${paramIndex++}`);
-            values.push(supportEmail);
-            if (supportEmail) {
-                updates.push(`support_email_verified = false`);
+        // Build dynamic update query
+        Object.keys(profileData).forEach(key => {
+            if (profileData[key] !== undefined) {
+                if (['specialization', 'education', 'experience', 'certifications', 'bank_accounts', 'card_accounts'].includes(key)) {
+                    updates.push(`${key === 'experience' ? 'experience_new' : key} = $${paramIndex++}`);
+                    values.push(JSON.stringify(profileData[key]));
+                } else if (key !== 'account_email') { // Don't update account_email as it's linked to login email
+                    updates.push(`${key} = $${paramIndex++}`);
+                    values.push(profileData[key]);
+                }
             }
-        }
-        if (originalPhone !== undefined) {
-            updates.push(`original_phone = $${paramIndex++}`);
-            values.push(originalPhone);
-            if (originalPhone) {
-                updates.push(`original_phone_verified = false`);
-            }
-        }
-        if (supportPhone !== undefined) {
-            updates.push(`support_phone = $${paramIndex++}`);
-            values.push(supportPhone);
-            if (supportPhone) {
-                updates.push(`support_phone_verified = false`);
-            }
-        }
-        if (address !== undefined) {
-            updates.push(`address = $${paramIndex++}`);
-            values.push(address);
-        }
-        if (location !== undefined) {
-            updates.push(`location = $${paramIndex++}`);
-            values.push(location);
-        }
-        if (youtubeUrl !== undefined) {
-            updates.push(`youtube_url = $${paramIndex++}`);
-            values.push(youtubeUrl);
-        }
-        if (linkedinUrl !== undefined) {
-            updates.push(`linkedin_url = $${paramIndex++}`);
-            values.push(linkedinUrl);
-        }
-        if (facebookUrl !== undefined) {
-            updates.push(`facebook_url = $${paramIndex++}`);
-            values.push(facebookUrl);
-        }
-        if (twitterUrl !== undefined) {
-            updates.push(`twitter_url = $${paramIndex++}`);
-            values.push(twitterUrl);
-        }
-        if (specialization !== undefined) {
-            updates.push(`specialization = $${paramIndex++}::jsonb`);
-            values.push(JSON.stringify(specialization));
-        }
-        if (education !== undefined) {
-            updates.push(`education = $${paramIndex++}::jsonb`);
-            values.push(JSON.stringify(education));
-        }
-        if (experience !== undefined) {
-            updates.push(`experience_new = $${paramIndex++}::jsonb`);
-            values.push(JSON.stringify(experience));
-        }
-        if (certifications !== undefined) {
-            updates.push(`certifications = $${paramIndex++}::jsonb`);
-            values.push(JSON.stringify(certifications));
-        }
-        if (bankAccounts !== undefined) {
-            updates.push(`bank_accounts = $${paramIndex++}::jsonb`);
-            values.push(JSON.stringify(bankAccounts));
-        }
-        if (cardAccounts !== undefined) {
-            updates.push(`card_accounts = $${paramIndex++}::jsonb`);
-            values.push(JSON.stringify(cardAccounts));
-        }
+        });
 
         if (updates.length === 0) {
             return await this.getProfile(userId);
@@ -211,155 +207,129 @@ class TeacherProfileService {
             RETURNING *
         `;
 
-        const result = await db.query(query, values);
-        
+        await db.query(query, values);
+        return await this.getProfile(userId);
+    }
+
+    /**
+     * Request OTP for verification
+     */
+    async requestOTP(userId, type) {
+        const otp = '123456'; // Fixed OTP for now
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+        const fieldMap = {
+            account_email: 'account_email_otp',
+            support_email: 'support_email_otp',
+            original_phone: 'original_phone_otp',
+            support_phone: 'support_phone_otp'
+        };
+
+        const expiryMap = {
+            account_email: 'account_email_otp_expires_at',
+            support_email: 'support_email_otp_expires_at',
+            original_phone: 'original_phone_otp_expires_at',
+            support_phone: 'support_phone_otp_expires_at'
+        };
+
+        await db.query(
+            `UPDATE teacher_profiles 
+             SET ${fieldMap[type]} = $1, ${expiryMap[type]} = $2
+             WHERE user_id = $3`,
+            [otp, expiresAt, userId]
+        );
+
+        return { otp };
+    }
+
+    /**
+     * Verify OTP
+     */
+    async verifyOTP(userId, type, otp) {
+        const fieldMap = {
+            account_email: { otp: 'account_email_otp', expiry: 'account_email_otp_expires_at', verified: 'account_email_verified' },
+            support_email: { otp: 'support_email_otp', expiry: 'support_email_otp_expires_at', verified: 'support_email_verified' },
+            original_phone: { otp: 'original_phone_otp', expiry: 'original_phone_otp_expires_at', verified: 'original_phone_verified' },
+            support_phone: { otp: 'support_phone_otp', expiry: 'support_phone_otp_expires_at', verified: 'support_phone_verified' }
+        };
+
+        const fields = fieldMap[type];
+        const result = await db.query(
+            `SELECT ${fields.otp}, ${fields.expiry} 
+             FROM teacher_profiles 
+             WHERE user_id = $1`,
+            [userId]
+        );
+
         if (result.rows.length === 0) {
-            return await this.createProfile(userId);
+            throw new Error('Profile not found');
         }
+
+        const storedOTP = result.rows[0][fields.otp];
+        const expiresAt = result.rows[0][fields.expiry];
+
+        if (!storedOTP || storedOTP !== otp) {
+            throw new Error('Invalid OTP');
+        }
+
+        if (new Date(expiresAt) < new Date()) {
+            throw new Error('OTP expired');
+        }
+
+        // Mark as verified and clear OTP
+        await db.query(
+            `UPDATE teacher_profiles 
+             SET ${fields.verified} = true, 
+                 ${fields.otp} = NULL, 
+                 ${fields.expiry} = NULL
+             WHERE user_id = $1`,
+            [userId]
+        );
 
         return await this.getProfile(userId);
     }
 
     /**
-     * Request OTP for email/phone verification
-     * For now, uses fixed OTP: 123456
-     */
-    async requestOTP(userId, type) {
-        const FIXED_OTP = '123456';
-        const OTP_EXPIRY_MINUTES = 10;
-        const expiresAt = new Date();
-        expiresAt.setMinutes(expiresAt.getMinutes() + OTP_EXPIRY_MINUTES);
-
-        const otpField = `${type}_otp`;
-        const expiresField = `${type}_otp_expires_at`;
-
-        await db.query(
-            `UPDATE teacher_profiles 
-             SET ${otpField} = $1, ${expiresField} = $2
-             WHERE user_id = $3`,
-            [FIXED_OTP, expiresAt, userId]
-        );
-
-        return {
-            success: true,
-            message: `OTP sent to ${type}`,
-            expiresAt: expiresAt.toISOString()
-        };
-    }
-
-    /**
-     * Verify OTP for email/phone
-     */
-    async verifyOTP(userId, type, otp) {
-        const FIXED_OTP = '123456';
-        
-        // Check if OTP matches (for now, always accept 123456)
-        if (otp !== FIXED_OTP) {
-            const profile = await this.getProfile(userId);
-            const otpField = `${type}_otp`;
-            const expiresField = `${type}_otp_expires_at`;
-            const currentOTP = profile[otpField];
-            const expiresAt = profile[expiresField];
-
-            if (!currentOTP) {
-                return { success: false, error: 'No OTP requested' };
-            }
-
-            if (expiresAt && new Date(expiresAt) < new Date()) {
-                return { success: false, error: 'OTP expired' };
-            }
-
-            if (currentOTP !== otp) {
-                return { success: false, error: 'Invalid OTP' };
-            }
-        }
-
-        // Mark as verified
-        const verifiedField = `${type}_verified`;
-        const otpField = `${type}_otp`;
-        const expiresField = `${type}_otp_expires_at`;
-
-        await db.query(
-            `UPDATE teacher_profiles 
-             SET ${verifiedField} = true, 
-                 ${otpField} = NULL, 
-                 ${expiresField} = NULL
-             WHERE user_id = $1`,
-            [userId]
-        );
-
-        return {
-            success: true,
-            message: `${type} verified successfully`
-        };
-    }
-
-    /**
-     * Calculate profile completion percentage
+     * Get profile completion percentage
      */
     async getProfileCompletion(userId) {
         const profile = await this.getProfile(userId);
         
-        const fields = {
-            // Personal (40%)
-            name: profile.name ? 1 : 0,
-            bio: profile.bio ? 1 : 0,
-            profileImage: profile.profile_image_path ? 1 : 0,
-            accountEmail: profile.account_email ? 1 : 0,
-            accountEmailVerified: profile.account_email_verified ? 1 : 0,
-            supportEmail: profile.support_email ? 1 : 0,
-            originalPhone: profile.original_phone ? 1 : 0,
-            originalPhoneVerified: profile.original_phone_verified ? 1 : 0,
-            address: profile.address ? 1 : 0,
-            location: profile.location ? 1 : 0,
-            
-            // Qualification (40%)
-            specialization: (profile.specialization && profile.specialization.length > 0) ? 1 : 0,
-            education: (profile.education && profile.education.length > 0) ? 1 : 0,
-            experience: (profile.experience && profile.experience.length > 0) ? 1 : 0,
-            certifications: (profile.certifications && profile.certifications.length > 0) ? 1 : 0,
-            
-            // Payment (20%)
-            bankAccounts: (profile.bank_accounts && profile.bank_accounts.length > 0) ? 1 : 0,
-            cardAccounts: (profile.card_accounts && profile.card_accounts.length > 0) ? 1 : 0,
-        };
+        let completedFields = 0;
+        const totalFields = 20;
 
-        // Calculate weighted completion
-        const personalScore = (
-            fields.name * 0.05 +
-            fields.bio * 0.05 +
-            fields.profileImage * 0.05 +
-            fields.accountEmail * 0.05 +
-            fields.accountEmailVerified * 0.05 +
-            fields.supportEmail * 0.03 +
-            fields.originalPhone * 0.05 +
-            fields.originalPhoneVerified * 0.05 +
-            fields.address * 0.01 +
-            fields.location * 0.01
-        ) * 40;
+        // Personal section (7 fields)
+        if (profile.name) completedFields++;
+        if (profile.bio) completedFields++;
+        if (profile.profile_image_path) completedFields++;
+        if (profile.account_email) completedFields++;
+        if (profile.original_phone) completedFields++;
+        if (profile.address) completedFields++;
+        if (profile.location) completedFields++;
 
-        const qualificationScore = (
-            fields.specialization * 0.10 +
-            fields.education * 0.15 +
-            fields.experience * 0.10 +
-            fields.certifications * 0.05
-        ) * 40;
+        // Qualification section (8 fields)
+        if (profile.specialization && profile.specialization.length > 0) completedFields++;
+        if (profile.education && profile.education.length > 0) completedFields++;
+        if (profile.experience && profile.experience.length > 0) completedFields++;
+        if (profile.certifications && profile.certifications.length > 0) completedFields++;
+        // Count additional fields
+        if (profile.education && profile.education.length >= 2) completedFields++;
+        if (profile.experience && profile.experience.length >= 2) completedFields++;
+        if (profile.certifications && profile.certifications.length >= 2) completedFields++;
+        if (profile.specialization && profile.specialization.length >= 3) completedFields++;
 
-        const paymentScore = (
-            fields.bankAccounts * 0.10 +
-            fields.cardAccounts * 0.10
-        ) * 20;
+        // Payment section (5 fields - dummy for now)
+        // completedFields += 5; // Skip payment section
 
-        const totalPercentage = Math.round(personalScore + qualificationScore + paymentScore);
+        const percentage = Math.round((completedFields / totalFields) * 100);
         
         return {
-            percentage: Math.min(100, totalPercentage),
+            percentage,
             breakdown: {
-                personal: Math.round(personalScore),
-                qualification: Math.round(qualificationScore),
-                payment: Math.round(paymentScore),
-            },
-            fields
+                personal: Math.round((completedFields / 7) * 100),
+                qualification: Math.round((completedFields / 8) * 100),
+                payment: 0
+            }
         };
     }
 }

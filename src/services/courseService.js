@@ -77,6 +77,9 @@ class CourseService {
         const result = await db.query(
             `SELECT 
                 c.*,
+                users.email as teacher_email,
+                COALESCE(tp.name, users.email) as teacher_name,
+                users.id as teacher_id,
                 CASE 
                     WHEN c.tags IS NULL THEN '[]'::jsonb
                     WHEN jsonb_typeof(c.tags) = 'string' THEN c.tags::jsonb
@@ -90,6 +93,8 @@ class CourseService {
                 ${reviewsRatingQuery} as rating,
                 ${reviewsCountQuery} as review_count
             FROM courses c
+            LEFT JOIN users ON c.teacher_id = users.id
+            LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
             WHERE c.teacher_id = $1 
             ORDER BY c.created_at DESC`,
             [teacherId]
@@ -98,6 +103,8 @@ class CourseService {
         return result.rows.map(row => ({
             ...row,
             tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : (row.tags || []),
+            teacher_name: row.teacher_name || row.teacher_email || 'Teacher',
+            teacher_id: row.teacher_id,
             total_lessons: row.total_lessons || 0,
             total_videos: row.total_videos || 0,
             purchase_count: row.purchase_count || 0,
@@ -146,6 +153,8 @@ class CourseService {
             `SELECT 
                 courses.*,
                 users.email as teacher_email,
+                COALESCE(tp.name, users.email) as teacher_name,
+                users.id as teacher_id,
                 CASE 
                     WHEN courses.tags IS NULL THEN '[]'::jsonb
                     WHEN jsonb_typeof(courses.tags) = 'string' THEN courses.tags::jsonb
@@ -162,6 +171,7 @@ class CourseService {
                  WHERE l.course_id = courses.id) as total_videos
             FROM courses 
             LEFT JOIN users ON courses.teacher_id = users.id 
+            LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
             ORDER BY courses.created_at DESC`,
             params
         );
@@ -169,6 +179,8 @@ class CourseService {
         return result.rows.map(row => ({
             ...row,
             tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : (row.tags || []),
+            teacher_name: row.teacher_name || row.teacher_email || 'Teacher',
+            teacher_id: row.teacher_id,
             is_purchased: row.is_purchased || false,
             is_owned: row.is_owned || false,
             rating: parseFloat(row.rating) || 0,
@@ -179,16 +191,155 @@ class CourseService {
         }));
     }
 
+    /**
+     * Search courses with optional text query, category filter, and pagination.
+     * @param {string|null} userId - Optional user id for purchase/ownership flags
+     * @param {Object} options - { q, category, page, limit }
+     * @returns {Promise<{ courses: Array, total: number, page: number, limit: number, hasMore: boolean }>}
+     */
+    async searchCourses(userId = null, options = {}) {
+        const { q = '', category = '', page = 1, limit: limitParam = 12 } = options;
+        const limit = Math.min(Math.max(parseInt(limitParam, 10) || 12, 1), 50);
+        const offset = (Math.max(parseInt(page, 10) || 1, 1) - 1) * limit;
+
+        let purchaseCheck = '';
+        let ownershipCheck = '';
+        const params = [];
+        let paramIndex = 1;
+
+        if (userId) {
+            purchaseCheck = `, EXISTS(
+                SELECT 1 FROM course_enrollments ce 
+                WHERE ce.course_id = courses.id AND ce.user_id = $${paramIndex}
+            ) as is_purchased`;
+            ownershipCheck = `, (courses.teacher_id = $${paramIndex}) as is_owned`;
+            params.push(userId);
+            paramIndex++;
+        } else {
+            purchaseCheck = `, false as is_purchased`;
+            ownershipCheck = `, false as is_owned`;
+        }
+
+        const reviewsTableCheck = await db.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'reviews'
+            )
+        `);
+        const hasReviewsTable = reviewsTableCheck.rows[0]?.exists || false;
+        const reviewsRatingQuery = hasReviewsTable
+            ? `(SELECT COALESCE(AVG(r.rating), 0)::numeric(3,2) FROM reviews r WHERE r.course_id = courses.id)`
+            : `0::numeric(3,2)`;
+        const reviewsCountQuery = hasReviewsTable
+            ? `(SELECT COUNT(*)::int FROM reviews r WHERE r.course_id = courses.id)`
+            : `0::int`;
+
+        const conditions = [];
+        let searchPattern = null;
+        const searchTerm = (q && typeof q === 'string') ? q.trim() : '';
+        if (searchTerm) {
+            searchPattern = `%${searchTerm.replace(/%/g, '\\%').replace(/_/g, '\\_')}%`;
+            conditions.push(`(
+                courses.title ILIKE $${paramIndex}
+                OR courses.short_description ILIKE $${paramIndex}
+                OR courses.full_description ILIKE $${paramIndex}
+                OR (courses.tags::text ILIKE $${paramIndex})
+            )`);
+            params.push(searchPattern);
+            paramIndex++;
+        }
+
+        const categoryFilter = (category && typeof category === 'string') ? category.trim().toLowerCase() : '';
+        if (categoryFilter === 'skill-based' || categoryFilter === 'skill') {
+            conditions.push(`(LOWER(COALESCE(courses.category, '')) IN ('skill-based', 'skill'))`);
+        } else if (categoryFilter === 'academy-based' || categoryFilter === 'academic') {
+            conditions.push(`(LOWER(COALESCE(courses.category, '')) IN ('academy-based', 'academic'))`);
+        }
+
+        const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+        // Count query: use only params that appear in WHERE (search pattern). Use $1 for search so we don't pass unused userId.
+        const countWhereClause = conditions.length
+            ? `WHERE ${conditions.join(' AND ').replace(/\$\d+/g, '$1')}`
+            : '';
+        const countParams = searchTerm ? [searchPattern] : [];
+        const countResult = await db.query(
+            `SELECT COUNT(*)::int as total FROM courses ${countWhereClause}`,
+            countParams
+        );
+        const total = countResult.rows[0]?.total || 0;
+
+        params.push(limit, offset);
+        const limitParamIndex = params.length - 1;
+        const offsetParamIndex = params.length;
+        const dataQuery = `
+            SELECT 
+                courses.*,
+                users.email as teacher_email,
+                COALESCE(tp.name, users.email) as teacher_name,
+                users.id as teacher_id,
+                CASE 
+                    WHEN courses.tags IS NULL THEN '[]'::jsonb
+                    WHEN jsonb_typeof(courses.tags) = 'string' THEN courses.tags::jsonb
+                    ELSE courses.tags
+                END as tags
+                ${purchaseCheck}
+                ${ownershipCheck},
+                ${reviewsRatingQuery} as rating,
+                ${reviewsCountQuery} as review_count,
+                (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = courses.id) as purchase_count,
+                (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id) as total_lessons,
+                (SELECT COUNT(*)::int FROM videos v 
+                 JOIN lessons l ON v.lesson_id = l.id 
+                 WHERE l.course_id = courses.id) as total_videos
+            FROM courses 
+            LEFT JOIN users ON courses.teacher_id = users.id 
+            LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
+            ${whereClause}
+            ORDER BY courses.created_at DESC
+            LIMIT $${limitParamIndex}::integer OFFSET $${offsetParamIndex}::integer
+        `;
+
+        const result = await db.query(dataQuery, params);
+        const courses = result.rows.map(row => ({
+            ...row,
+            tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : (row.tags || []),
+            teacher_name: row.teacher_name || row.teacher_email || 'Teacher',
+            teacher_id: row.teacher_id,
+            is_purchased: row.is_purchased || false,
+            is_owned: row.is_owned || false,
+            rating: parseFloat(row.rating) || 0,
+            review_count: row.review_count || 0,
+            purchase_count: row.purchase_count || 0,
+            total_lessons: row.total_lessons || 0,
+            total_videos: row.total_videos || 0
+        }));
+
+        const currentPage = Math.max(1, parseInt(page, 10) || 1);
+        const hasMore = offset + courses.length < total;
+
+        return {
+            courses,
+            total,
+            page: currentPage,
+            limit,
+            hasMore
+        };
+    }
+
     async getCourseDetails(id, userId = null) {
         // Get course with all related data for details page
         const course = await this.getCourseById(id, userId);
         if (!course) return null;
 
-        // Get teacher info
+        // Get teacher info with name from profile
         const teacherResult = await db.query(
-            `SELECT id, email, created_at 
-             FROM users 
-             WHERE id = $1`,
+            `SELECT u.id, u.email, u.created_at, 
+                    COALESCE(tp.name, u.email) as name
+             FROM users u
+             LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
+             WHERE u.id = $1`,
             [course.teacher_id]
         );
         const teacher = teacherResult.rows[0] || null;
@@ -258,12 +409,28 @@ class CourseService {
             total_videos: row.total_videos || 0
         }));
 
+        // Latest 3 reviews for course details page
+        let reviews = [];
+        if (hasReviewsTable) {
+            const reviewService = require('./reviewService');
+            const reviewRows = await reviewService.getReviewsByCourse(id, 3, 0);
+            reviews = reviewRows.map(r => ({
+                id: r.id,
+                userName: r.user_name || r.user_email || 'Student',
+                userAvatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&q=80',
+                rating: parseInt(r.rating) || 0,
+                comment: r.comment || '',
+                createdAt: r.created_at,
+                helpful: 0
+            }));
+        }
+
         return {
             course,
             teacher: teacher ? {
                 id: teacher.id,
                 email: teacher.email,
-                name: teacher.email, // Using email as name since we don't have name field
+                name: teacher.name || teacher.email,
                 location: '',
                 totalStudents: course.purchase_count || 0,
                 avatar: ''
@@ -271,7 +438,7 @@ class CourseService {
             lessons,
             videos,
             otherCourses,
-            reviews: [] // Reviews can be added later if needed
+            reviews
         };
     }
 
@@ -485,27 +652,148 @@ class CourseService {
     }
 
     async getPurchasedCourses(userId) {
+        // Check if reviews table exists
+        const reviewsTableCheck = await db.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'reviews'
+            )
+        `);
+        const hasReviewsTable = reviewsTableCheck.rows[0]?.exists || false;
+
+        const reviewRatingQuery = hasReviewsTable
+            ? `(SELECT r.rating FROM reviews r WHERE r.user_id = $1 AND r.course_id = c.id LIMIT 1) as my_rating`
+            : `NULL as my_rating`;
+        const reviewCommentQuery = hasReviewsTable
+            ? `(SELECT r.comment FROM reviews r WHERE r.user_id = $1 AND r.course_id = c.id LIMIT 1) as my_comment`
+            : `NULL as my_comment`;
+
         const result = await db.query(
             `SELECT 
                 c.*,
                 u.email as teacher_email,
+                COALESCE(tp.name, u.email) as teacher_name,
+                u.id as teacher_id,
                 CASE 
                     WHEN c.tags IS NULL THEN '[]'::jsonb
                     WHEN jsonb_typeof(c.tags) = 'string' THEN c.tags::jsonb
                     ELSE c.tags
-                END as tags
+                END as tags,
+                ${reviewRatingQuery},
+                ${reviewCommentQuery},
+                -- Course statistics
+                (SELECT COUNT(*) FROM lessons l WHERE l.course_id = c.id) as total_lessons,
+                (SELECT COUNT(*) FROM videos v 
+                 JOIN lessons l ON v.lesson_id = l.id 
+                 WHERE l.course_id = c.id AND v.status != 'processing') as total_videos,
+                (SELECT COALESCE(SUM(v.duration_seconds), 0) FROM videos v 
+                 JOIN lessons l ON v.lesson_id = l.id 
+                 WHERE l.course_id = c.id AND v.status != 'processing') as total_duration_seconds,
+                -- Assignment counts
+                (SELECT COUNT(*) FROM (
+                    SELECT jsonb_array_elements(l.assignments) as assignment FROM lessons l WHERE l.course_id = c.id
+                    UNION ALL
+                    SELECT jsonb_array_elements(v.assignments) as assignment FROM videos v 
+                    JOIN lessons l ON v.lesson_id = l.id WHERE l.course_id = c.id
+                ) assignments WHERE (assignments.assignment->>'isRequired')::boolean = false) as total_normal_assignments,
+                (SELECT COUNT(*) FROM (
+                    SELECT jsonb_array_elements(l.assignments) as assignment FROM lessons l WHERE l.course_id = c.id
+                    UNION ALL
+                    SELECT jsonb_array_elements(v.assignments) as assignment FROM videos v 
+                    JOIN lessons l ON v.lesson_id = l.id WHERE l.course_id = c.id
+                ) assignments WHERE (assignments.assignment->>'isRequired')::boolean = true) as total_required_assignments,
+                -- Notes count
+                (SELECT COUNT(*) FROM (
+                    SELECT jsonb_array_elements(l.notes) as note FROM lessons l WHERE l.course_id = c.id
+                    UNION ALL
+                    SELECT jsonb_array_elements(v.notes) as note FROM videos v 
+                    JOIN lessons l ON v.lesson_id = l.id WHERE l.course_id = c.id
+                ) notes WHERE notes.note IS NOT NULL) as total_notes,
+                -- Live stream status
+                (SELECT COUNT(*) > 0 FROM lessons l WHERE l.course_id = c.id AND l.is_live = true) as has_live_stream,
+                -- Completed lessons count (simplified - count lessons with at least one video)
+                (SELECT COUNT(DISTINCT l.id) FROM lessons l
+                 WHERE l.course_id = c.id
+                 AND EXISTS (SELECT 1 FROM videos v WHERE v.lesson_id = l.id AND v.status != 'processing')) as completed_lessons,
+                -- Completed videos count (simplified - will be 0 for now, can be enhanced later)
+                0 as completed_videos,
+                -- Completed required assignments count
+                (SELECT COUNT(*) FROM (
+                    SELECT DISTINCT asub.assignment_id FROM assignment_submissions asub
+                    JOIN videos v ON asub.video_id = v.id
+                    JOIN lessons l ON v.lesson_id = l.id
+                    WHERE l.course_id = c.id 
+                    AND asub.user_id = $1 
+                    AND asub.status = 'passed'
+                    AND EXISTS (
+                        SELECT 1 FROM jsonb_array_elements(v.assignments) assignment
+                        WHERE assignment->>'id' = asub.assignment_id 
+                        AND (assignment->>'isRequired')::boolean = true
+                    )
+                    UNION
+                    SELECT DISTINCT asub.assignment_id FROM assignment_submissions asub
+                    JOIN lessons l ON asub.lesson_id = l.id
+                    WHERE l.course_id = c.id 
+                    AND asub.user_id = $1 
+                    AND asub.status = 'passed'
+                    AND EXISTS (
+                        SELECT 1 FROM jsonb_array_elements(l.assignments) assignment
+                        WHERE assignment->>'id' = asub.assignment_id 
+                        AND (assignment->>'isRequired')::boolean = true
+                    )
+                ) completed) as completed_required_assignments
              FROM courses c
              JOIN course_enrollments ce ON c.id = ce.course_id
              LEFT JOIN users u ON c.teacher_id = u.id
+             LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
              WHERE ce.user_id = $1
              ORDER BY ce.enrolled_at DESC`,
             [userId]
         );
-        // Parse tags if they're stored as JSON string
-        return result.rows.map(row => ({
-            ...row,
-            tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : (row.tags || [])
-        }));
+
+        // Parse tags and calculate completion percentage
+        return result.rows.map(row => {
+            const totalLessons = parseInt(row.total_lessons) || 0;
+            const totalVideos = parseInt(row.total_videos) || 0;
+            const completedLessons = parseInt(row.completed_lessons) || 0;
+            const completedVideos = parseInt(row.completed_videos) || 0;
+            
+            // Calculate completion percentage (weighted: 40% lessons, 60% videos)
+            let completionPercentage = 0;
+            if (totalLessons > 0 || totalVideos > 0) {
+                const lessonProgress = totalLessons > 0 ? (completedLessons / totalLessons) * 40 : 0;
+                const videoProgress = totalVideos > 0 ? (completedVideos / totalVideos) * 60 : 0;
+                completionPercentage = Math.round(lessonProgress + videoProgress);
+            }
+
+            // Format duration
+            const totalDurationSeconds = parseFloat(row.total_duration_seconds) || 0;
+            const hours = Math.floor(totalDurationSeconds / 3600);
+            const minutes = Math.floor((totalDurationSeconds % 3600) / 60);
+            const durationFormatted = hours > 0 
+                ? `${hours}h ${minutes}m` 
+                : `${minutes}m`;
+
+            return {
+                ...row,
+                tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : (row.tags || []),
+                total_lessons: totalLessons,
+                total_videos: totalVideos,
+                total_duration_seconds: totalDurationSeconds,
+                total_duration_formatted: durationFormatted,
+                total_normal_assignments: parseInt(row.total_normal_assignments) || 0,
+                total_required_assignments: parseInt(row.total_required_assignments) || 0,
+                total_notes: parseInt(row.total_notes) || 0,
+                has_live_stream: row.has_live_stream || false,
+                completed_lessons: completedLessons,
+                completed_videos: completedVideos,
+                completed_required_assignments: parseInt(row.completed_required_assignments) || 0,
+                completion_percentage: completionPercentage,
+                my_rating: row.my_rating ? parseInt(row.my_rating) : null,
+                my_comment: row.my_comment || null
+            };
+        });
     }
 
     async getUnpurchasedCourses(userId) {
@@ -533,12 +821,133 @@ class CourseService {
         }));
     }
 
+    /**
+     * Get students enrolled in teacher's courses only (with pagination).
+     * Returns distinct students with list of this teacher's courses they purchased.
+     */
+    async getStudentsEnrolledInTeacherCourses(teacherId, limit = 10, offset = 0) {
+        const countResult = await db.query(
+            `SELECT COUNT(DISTINCT ce.user_id) as total
+             FROM course_enrollments ce
+             JOIN courses c ON ce.course_id = c.id AND c.teacher_id = $1`,
+            [teacherId]
+        );
+        const total = parseInt(countResult.rows[0]?.total || '0', 10);
+
+        const result = await db.query(
+            `SELECT 
+                u.id as user_id,
+                u.email,
+                COALESCE(sp.name, u.email) as name,
+                sp.profile_image_path,
+                MIN(ce.enrolled_at)::timestamp as first_enrolled_at,
+                COALESCE(
+                    array_agg(
+                        json_build_object('course_id', c.id, 'course_title', c.title)
+                    ) FILTER (WHERE c.id IS NOT NULL),
+                    '{}'
+                ) as courses
+             FROM course_enrollments ce
+             JOIN courses c ON ce.course_id = c.id AND c.teacher_id = $1
+             JOIN users u ON ce.user_id = u.id
+             LEFT JOIN student_profiles sp ON u.id = sp.user_id
+             GROUP BY u.id, u.email, sp.name, sp.profile_image_path
+             ORDER BY first_enrolled_at DESC
+             LIMIT $2 OFFSET $3`,
+            [teacherId, limit, offset]
+        );
+
+        const students = result.rows.map(row => {
+            let courses = row.courses;
+            if (typeof courses === 'string') {
+                try {
+                    courses = JSON.parse(courses);
+                } catch (e) {
+                    courses = [];
+                }
+            }
+            if (!Array.isArray(courses)) courses = courses ? [courses] : [];
+            return {
+                user_id: row.user_id,
+                email: row.email,
+                name: row.name,
+                profile_image_path: row.profile_image_path,
+                first_enrolled_at: row.first_enrolled_at,
+                courses
+            };
+        });
+
+        return { students, total };
+    }
+
     async isEnrolled(userId, courseId) {
         const result = await db.query(
             'SELECT 1 FROM course_enrollments WHERE user_id = $1 AND course_id = $2',
             [userId, courseId]
         );
         return result.rowCount > 0;
+    }
+
+    /** Teacher revenue: total from enrollments in their courses. Amount = COALESCE(discount_price, price) per enrollment. */
+    async getTeacherRevenue(teacherId) {
+        const result = await db.query(
+            `SELECT 
+                COALESCE(SUM(COALESCE(c.discount_price, c.price, 0)::numeric), 0)::float as total_revenue,
+                COUNT(ce.user_id) as purchase_count,
+                (SELECT c2.currency FROM courses c2 WHERE c2.teacher_id = $1 LIMIT 1) as currency
+             FROM course_enrollments ce
+             JOIN courses c ON ce.course_id = c.id AND c.teacher_id = $1`,
+            [teacherId]
+        );
+        const row = result.rows[0];
+        return {
+            totalRevenue: parseFloat(row?.total_revenue || '0') || 0,
+            purchaseCount: parseInt(row?.purchase_count || '0', 10) || 0,
+            currency: row?.currency || 'USD',
+        };
+    }
+
+    /** Teacher purchase history: paginated enrollments for teacher's courses. */
+    async getTeacherPurchaseHistory(teacherId, limit = 10, offset = 0) {
+        const countResult = await db.query(
+            `SELECT COUNT(*)::int as total
+             FROM course_enrollments ce
+             JOIN courses c ON ce.course_id = c.id AND c.teacher_id = $1`,
+            [teacherId]
+        );
+        const total = countResult.rows[0]?.total || 0;
+
+        const result = await db.query(
+            `SELECT 
+                ce.user_id,
+                ce.course_id,
+                ce.enrolled_at,
+                c.title as course_title,
+                COALESCE(c.discount_price, c.price, 0)::float as amount,
+                c.currency,
+                u.email as student_email,
+                COALESCE(sp.name, u.email) as student_name
+             FROM course_enrollments ce
+             JOIN courses c ON ce.course_id = c.id AND c.teacher_id = $1
+             JOIN users u ON ce.user_id = u.id
+             LEFT JOIN student_profiles sp ON u.id = sp.user_id
+             ORDER BY ce.enrolled_at DESC
+             LIMIT $2 OFFSET $3`,
+            [teacherId, limit, offset]
+        );
+
+        const purchases = result.rows.map(row => ({
+            userId: row.user_id,
+            courseId: row.course_id,
+            enrolledAt: row.enrolled_at,
+            courseTitle: row.course_title,
+            amount: row.amount,
+            currency: row.currency || 'USD',
+            studentEmail: row.student_email,
+            studentName: row.student_name || row.student_email,
+        }));
+
+        return { purchases, total };
     }
 }
 

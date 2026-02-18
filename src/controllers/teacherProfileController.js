@@ -1,5 +1,7 @@
 const teacherProfileService = require('../services/teacherProfileService');
+const courseService = require('../services/courseService');
 const r2Storage = require('../services/r2StorageService');
+const userPasswordService = require('../services/userPasswordService');
 const multer = require('multer');
 const path = require('path');
 
@@ -21,7 +23,80 @@ const upload = multer({
 
 class TeacherProfileController {
     /**
-     * Get teacher profile
+     * Get public teacher profile (no auth required)
+     */
+    async getPublicProfile(req, res) {
+        try {
+            const { userId } = req.params;
+            
+            if (!userId) {
+                return res.status(400).json({ error: 'User ID is required' });
+            }
+
+            const profile = await teacherProfileService.getPublicProfile(userId);
+            
+            if (!profile) {
+                return res.status(404).json({ error: 'Teacher profile not found' });
+            }
+
+            // Enrich profile image URL if exists
+            if (profile.profile_image_path) {
+                const publicUrl = r2Storage.getPublicUrl ? r2Storage.getPublicUrl(profile.profile_image_path) : null;
+                if (publicUrl) {
+                    profile.profile_image_url = publicUrl;
+                } else if (profile.profile_image_path.startsWith('teachers/')) {
+                    const apiUrl = process.env.BASE_URL || process.env.API_URL || 'http://localhost:5000';
+                    const baseUrl = apiUrl.replace(/\/v1\/?$/, '');
+                    profile.profile_image_url = `${baseUrl}/v1/teacher/profile/image/${encodeURIComponent(profile.profile_image_path)}`;
+                }
+            }
+
+            // Get teacher's courses
+            const courses = await courseService.getCoursesByTeacher(userId);
+            
+            // Enrich courses with thumbnail URLs (route is /v1/courses/media/...)
+            const apiBase = process.env.BASE_URL || process.env.API_URL || 'http://localhost:5000';
+            const baseUrl = apiBase.replace(/\/v1\/?$/, '');
+            const v1Url = baseUrl + (baseUrl.endsWith('/') ? 'v1' : '/v1');
+            const enrichedCourses = courses.map(course => {
+                let thumbnailUrl = course.thumbnail_url;
+                if (!thumbnailUrl && course.thumbnail_path) {
+                    if (course.thumbnail_path.startsWith('teachers/')) {
+                        thumbnailUrl = `${v1Url}/courses/media/${encodeURIComponent(course.thumbnail_path)}`;
+                    } else if (course.thumbnail_path.startsWith('/uploads/')) {
+                        thumbnailUrl = `${baseUrl}${course.thumbnail_path}`;
+                    }
+                }
+                return {
+                    ...course,
+                    thumbnail_url: thumbnailUrl
+                };
+            });
+
+            // Enrich certificate images
+            if (profile.certifications && Array.isArray(profile.certifications)) {
+                profile.certifications = profile.certifications.map(cert => {
+                    if (cert.image_path) {
+                        const apiUrl = process.env.BASE_URL || process.env.API_URL || 'http://localhost:5000';
+                        const baseUrl = apiUrl.replace(/\/v1\/?$/, '');
+                        cert.image_url = `${baseUrl}/v1/teacher/profile/image/${encodeURIComponent(cert.image_path)}`;
+                    }
+                    return cert;
+                });
+            }
+
+            res.json({
+                ...profile,
+                courses: enrichedCourses
+            });
+        } catch (error) {
+            console.error('Get public profile error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    /**
+     * Get teacher profile (authenticated)
      */
     async getProfile(req, res) {
         try {
@@ -30,7 +105,6 @@ class TeacherProfileController {
             }
 
             const profile = await teacherProfileService.getProfile(req.user.id);
-            const completion = await teacherProfileService.getProfileCompletion(req.user.id);
 
             // Enrich profile image URL if exists
             if (profile.profile_image_path) {
@@ -38,35 +112,29 @@ class TeacherProfileController {
                 if (publicUrl) {
                     profile.profile_image_url = publicUrl;
                 } else if (profile.profile_image_path.startsWith('teachers/')) {
-                    // Use the API endpoint to stream the image
                     const apiUrl = process.env.BASE_URL || process.env.API_URL || 'http://localhost:5000';
                     const baseUrl = apiUrl.replace(/\/v1\/?$/, '');
                     profile.profile_image_url = `${baseUrl}/v1/teacher/profile/image/${encodeURIComponent(profile.profile_image_path)}`;
                 }
             }
 
-            // Enrich certificate image URLs if they exist
+            // Enrich certificate images
             if (profile.certifications && Array.isArray(profile.certifications)) {
-                const apiUrl = process.env.BASE_URL || process.env.API_URL || 'http://localhost:5000';
-                const baseUrl = apiUrl.replace(/\/v1\/?$/, '');
-                
                 profile.certifications = profile.certifications.map(cert => {
                     if (cert.image_path) {
-                        const publicUrl = r2Storage.getPublicUrl ? r2Storage.getPublicUrl(cert.image_path) : null;
-                        if (publicUrl) {
-                            cert.image_url = publicUrl;
-                        } else if (cert.image_path.startsWith('teachers/')) {
-                            cert.image_url = `${baseUrl}/v1/teacher/profile/image/${encodeURIComponent(cert.image_path)}`;
-                        }
+                        const apiUrl = process.env.BASE_URL || process.env.API_URL || 'http://localhost:5000';
+                        const baseUrl = apiUrl.replace(/\/v1\/?$/, '');
+                        cert.image_url = `${baseUrl}/v1/teacher/profile/image/${encodeURIComponent(cert.image_path)}`;
                     }
                     return cert;
                 });
             }
 
-            res.json({
-                ...profile,
-                completion
-            });
+            // Get completion percentage
+            const completion = await teacherProfileService.getProfileCompletion(req.user.id);
+            profile.completion = completion;
+
+            res.json(profile);
         } catch (error) {
             console.error('Get profile error:', error);
             res.status(500).json({ error: 'Internal server error' });
@@ -85,104 +153,60 @@ class TeacherProfileController {
             const profileData = {
                 name: req.body.name,
                 bio: req.body.bio,
-                accountEmail: req.body.accountEmail,
-                supportEmail: req.body.supportEmail,
-                originalPhone: req.body.originalPhone,
-                supportPhone: req.body.supportPhone,
-                address: req.body.address,
                 location: req.body.location,
-                youtubeUrl: req.body.youtubeUrl,
-                linkedinUrl: req.body.linkedinUrl,
-                facebookUrl: req.body.facebookUrl,
-                twitterUrl: req.body.twitterUrl,
-                specialization: req.body.specialization ? JSON.parse(req.body.specialization) : undefined,
-                education: req.body.education ? JSON.parse(req.body.education) : undefined,
-                experience: req.body.experience ? JSON.parse(req.body.experience) : undefined,
-                certifications: req.body.certifications ? JSON.parse(req.body.certifications) : undefined,
-                bankAccounts: req.body.bankAccounts ? JSON.parse(req.body.bankAccounts) : undefined,
-                cardAccounts: req.body.cardAccounts ? JSON.parse(req.body.cardAccounts) : undefined,
+                address: req.body.address,
+                institute_name: req.body.institute_name,
+                account_email: req.body.account_email,
+                support_email: req.body.support_email,
+                original_phone: req.body.original_phone,
+                support_phone: req.body.support_phone,
+                youtube_url: req.body.youtube_url,
+                linkedin_url: req.body.linkedin_url,
+                facebook_url: req.body.facebook_url,
+                twitter_url: req.body.twitter_url,
             };
 
-            // Handle profile image upload if provided (support both single and fields)
-            if (req.file) {
-                // Single file upload (backward compatibility)
-                try {
-                    const fileExtension = path.extname(req.file.originalname);
-                    const fileName = `profile-${Date.now()}${fileExtension}`;
-                    const r2Key = `teachers/${req.user.id}/profile/${fileName}`;
-                    
-                    // Upload to R2
-                    await r2Storage.uploadFile(r2Key, req.file.buffer, req.file.mimetype);
-                    profileData.profileImagePath = r2Key;
-                } catch (uploadError) {
-                    console.error('Profile image upload error:', uploadError);
-                    return res.status(500).json({ error: 'Failed to upload profile image' });
-                }
-            } else if (req.files && req.files.profileImage && req.files.profileImage[0]) {
-                // Multiple files upload (fields)
+            // Handle JSON fields - specialization: store as array of strings
+            if (req.body.specialization !== undefined) {
+                const raw = typeof req.body.specialization === 'string' 
+                    ? JSON.parse(req.body.specialization) 
+                    : req.body.specialization;
+                const arr = Array.isArray(raw) ? raw : [];
+                profileData.specialization = arr.map(s => typeof s === 'string' ? s : (s && s.name ? String(s.name) : '')).filter(Boolean);
+            }
+            if (req.body.education) {
+                profileData.education = typeof req.body.education === 'string'
+                    ? JSON.parse(req.body.education)
+                    : req.body.education;
+            }
+            if (req.body.experience) {
+                profileData.experience = typeof req.body.experience === 'string'
+                    ? JSON.parse(req.body.experience)
+                    : req.body.experience;
+            }
+            if (req.body.certifications) {
+                profileData.certifications = typeof req.body.certifications === 'string'
+                    ? JSON.parse(req.body.certifications)
+                    : req.body.certifications;
+            }
+
+            // Handle profile image upload
+            if (req.files && req.files.profileImage && req.files.profileImage[0]) {
                 try {
                     const file = req.files.profileImage[0];
                     const fileExtension = path.extname(file.originalname);
                     const fileName = `profile-${Date.now()}${fileExtension}`;
                     const r2Key = `teachers/${req.user.id}/profile/${fileName}`;
                     
-                    // Upload to R2
                     await r2Storage.uploadFile(r2Key, file.buffer, file.mimetype);
-                    profileData.profileImagePath = r2Key;
+                    profileData.profile_image_path = r2Key;
                 } catch (uploadError) {
                     console.error('Profile image upload error:', uploadError);
                     return res.status(500).json({ error: 'Failed to upload profile image' });
                 }
             }
 
-            // Handle certificate images if provided
-            if (req.files && req.files.certificate_images && Array.isArray(req.files.certificate_images)) {
-                try {
-                    // Parse certifications to update image paths
-                    if (profileData.certifications && Array.isArray(profileData.certifications)) {
-                        const certificateImages = req.files.certificate_images;
-                        // Get certificate IDs from form data (certificate_id_0, certificate_id_1, etc.)
-                        const certificateIds = [];
-                        let index = 0;
-                        while (req.body[`certificate_id_${index}`] !== undefined) {
-                            certificateIds.push(req.body[`certificate_id_${index}`]);
-                            index++;
-                        }
-
-                        for (let i = 0; i < certificateImages.length && i < certificateIds.length; i++) {
-                            const certImage = certificateImages[i];
-                            const certId = certificateIds[i];
-                            
-                            const fileExtension = path.extname(certImage.originalname);
-                            const fileName = `certificate-${certId}-${Date.now()}${fileExtension}`;
-                            const r2Key = `teachers/${req.user.id}/certificates/${fileName}`;
-                            
-                            // Upload to R2
-                            await r2Storage.uploadFile(r2Key, certImage.buffer, certImage.mimetype);
-                            
-                            // Update the corresponding certificate with image path
-                            // Match by ID (handle both string and number IDs)
-                            const certIndex = profileData.certifications.findIndex((c) => {
-                                const cId = String(c.id || '');
-                                const searchId = String(certId || '');
-                                return cId === searchId;
-                            });
-                            
-                            if (certIndex !== -1) {
-                                profileData.certifications[certIndex].image_path = r2Key;
-                            } else {
-                                console.warn(`Certificate with ID ${certId} not found in certifications array`);
-                            }
-                        }
-                    }
-                } catch (uploadError) {
-                    console.error('Certificate image upload error:', uploadError);
-                    // Don't fail the whole request if certificate images fail
-                }
-            }
-
             const updatedProfile = await teacherProfileService.updateProfile(req.user.id, profileData);
-            const completion = await teacherProfileService.getProfileCompletion(req.user.id);
 
             // Enrich profile image URL
             if (updatedProfile.profile_image_path) {
@@ -190,35 +214,25 @@ class TeacherProfileController {
                 if (publicUrl) {
                     updatedProfile.profile_image_url = publicUrl;
                 } else if (updatedProfile.profile_image_path.startsWith('teachers/')) {
-                    // Use the API endpoint to stream the image
                     const apiUrl = process.env.BASE_URL || process.env.API_URL || 'http://localhost:5000';
                     const baseUrl = apiUrl.replace(/\/v1\/?$/, '');
                     updatedProfile.profile_image_url = `${baseUrl}/v1/teacher/profile/image/${encodeURIComponent(updatedProfile.profile_image_path)}`;
                 }
             }
 
-            // Enrich certificate image URLs if they exist
+            // Enrich certificate images
             if (updatedProfile.certifications && Array.isArray(updatedProfile.certifications)) {
-                const apiUrl = process.env.BASE_URL || process.env.API_URL || 'http://localhost:5000';
-                const baseUrl = apiUrl.replace(/\/v1\/?$/, '');
-                
                 updatedProfile.certifications = updatedProfile.certifications.map(cert => {
                     if (cert.image_path) {
-                        const publicUrl = r2Storage.getPublicUrl ? r2Storage.getPublicUrl(cert.image_path) : null;
-                        if (publicUrl) {
-                            cert.image_url = publicUrl;
-                        } else if (cert.image_path.startsWith('teachers/')) {
-                            cert.image_url = `${baseUrl}/v1/teacher/profile/image/${encodeURIComponent(cert.image_path)}`;
-                        }
+                        const apiUrl = process.env.BASE_URL || process.env.API_URL || 'http://localhost:5000';
+                        const baseUrl = apiUrl.replace(/\/v1\/?$/, '');
+                        cert.image_url = `${baseUrl}/v1/teacher/profile/image/${encodeURIComponent(cert.image_path)}`;
                     }
                     return cert;
                 });
             }
 
-            res.json({
-                ...updatedProfile,
-                completion
-            });
+            res.json(updatedProfile);
         } catch (error) {
             console.error('Update profile error:', error);
             res.status(500).json({ error: 'Internal server error' });
@@ -234,9 +248,10 @@ class TeacherProfileController {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
 
-            const { type } = req.body; // 'account_email', 'support_email', 'original_phone', 'support_phone'
-
-            if (!['account_email', 'support_email', 'original_phone', 'support_phone'].includes(type)) {
+            const { type } = req.body;
+            const validTypes = ['account_email', 'support_email', 'original_phone', 'support_phone'];
+            
+            if (!validTypes.includes(type)) {
                 return res.status(400).json({ error: 'Invalid verification type' });
             }
 
@@ -258,34 +273,27 @@ class TeacherProfileController {
             }
 
             const { type, otp } = req.body;
-
-            if (!['account_email', 'support_email', 'original_phone', 'support_phone'].includes(type)) {
+            const validTypes = ['account_email', 'support_email', 'original_phone', 'support_phone'];
+            
+            if (!validTypes.includes(type)) {
                 return res.status(400).json({ error: 'Invalid verification type' });
             }
 
-            if (!otp) {
-                return res.status(400).json({ error: 'OTP is required' });
-            }
-
-            const result = await teacherProfileService.verifyOTP(req.user.id, type, otp);
+            const profile = await teacherProfileService.verifyOTP(req.user.id, type, otp);
             
-            if (!result.success) {
-                return res.status(400).json(result);
+            // Enrich profile image URL
+            if (profile.profile_image_path) {
+                const apiUrl = process.env.BASE_URL || process.env.API_URL || 'http://localhost:5000';
+                const baseUrl = apiUrl.replace(/\/v1\/?$/, '');
+                profile.profile_image_url = `${baseUrl}/v1/teacher/profile/image/${encodeURIComponent(profile.profile_image_path)}`;
             }
 
-            // Return updated profile with completion
-            const profile = await teacherProfileService.getProfile(req.user.id);
-            const completion = await teacherProfileService.getProfileCompletion(req.user.id);
-
-            res.json({
-                ...result,
-                profile: {
-                    ...profile,
-                    completion
-                }
-            });
+            res.json(profile);
         } catch (error) {
             console.error('Verify OTP error:', error);
+            if (error.message === 'Invalid OTP' || error.message === 'OTP expired') {
+                return res.status(400).json({ error: error.message });
+            }
             res.status(500).json({ error: 'Internal server error' });
         }
     }
@@ -308,25 +316,51 @@ class TeacherProfileController {
     }
 
     /**
+     * Change password
+     */
+    async changePassword(req, res) {
+        try {
+            if (req.user.role !== 'teacher') {
+                return res.status(403).json({ error: 'Access denied. Teachers only.' });
+            }
+
+            const { currentPassword, newPassword } = req.body;
+
+            if (!currentPassword || !newPassword) {
+                return res.status(400).json({ error: 'Current password and new password are required' });
+            }
+
+            if (newPassword.length < 6) {
+                return res.status(400).json({ error: 'New password must be at least 6 characters long' });
+            }
+
+            await userPasswordService.changePassword(req.user.id, currentPassword, newPassword);
+            res.json({ message: 'Password changed successfully' });
+        } catch (error) {
+            console.error('Change password error:', error);
+            if (error.message === 'Current password is incorrect') {
+                return res.status(400).json({ error: error.message });
+            }
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    /**
      * Stream profile image
      */
     async streamProfileImage(req, res) {
         try {
-            // Extract path from regex route (req.params.key set by route handler)
             const imagePath = req.params.key || '';
             
-            // Security: Ensure path starts with teachers/
             if (!imagePath || !imagePath.startsWith('teachers/')) {
                 return res.status(403).json({ error: 'Access denied' });
             }
 
-            // Check if file exists
             const exists = await r2Storage.objectExists(imagePath);
             if (!exists) {
                 return res.status(404).json({ error: 'Image not found' });
             }
 
-            // Determine content type
             const ext = path.extname(imagePath).toLowerCase();
             const contentTypeMap = {
                 '.jpg': 'image/jpeg',
@@ -344,7 +378,6 @@ class TeacherProfileController {
                 'Cross-Origin-Resource-Policy': 'cross-origin'
             });
 
-            // Stream the file
             const stream = await r2Storage.getObjectStream(imagePath);
             stream.pipe(res);
         } catch (error) {

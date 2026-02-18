@@ -112,9 +112,18 @@ class AdminController {
             const effectiveCourseId = courseId || 'unknown';
             const effectiveLessonId = lesson_id || 'unknown';
 
+            const wantPreview = isPreview === 'true' || isPreview === true;
+            if (wantPreview && lesson_id) {
+                const orderNum = parseInt(order, 10) || 0;
+                const { allowed, reason } = await videoService.canSetVideoPreview(lesson_id, orderNum, null);
+                if (!allowed) {
+                    return res.status(400).json({ error: reason });
+                }
+            }
+
             const videoOptions = {
                 description: description || null,
-                isPreview: isPreview === 'true' || isPreview === true,
+                isPreview: wantPreview,
                 notes,
                 assignments,
                 status: 'processing', // Set status to processing when video is uploaded
@@ -303,6 +312,14 @@ class AdminController {
             if (status !== undefined) metadata.status = status;
             if (notes !== undefined) metadata.notes = notes;
             if (assignments !== undefined) metadata.assignments = assignments;
+
+            if (metadata.isPreview === true && video.lesson_id) {
+                const effectiveOrder = metadata.order !== undefined ? metadata.order : video.order;
+                const { allowed, reason } = await videoService.canSetVideoPreview(video.lesson_id, effectiveOrder, videoId);
+                if (!allowed) {
+                    return res.status(400).json({ error: reason });
+                }
+            }
 
             // Handle file uploads for notes and assignments if provided
             const files = req.files || [];

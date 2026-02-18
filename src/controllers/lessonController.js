@@ -115,6 +115,13 @@ class LessonController {
                 assignments,
             };
 
+            if (lessonData.isPreview) {
+                const { allowed, reason } = await lessonService.canSetLessonPreview(courseId, lessonData.order, null);
+                if (!allowed) {
+                    return res.status(400).json({ error: reason });
+                }
+            }
+
             let lesson = await lessonService.createLesson(courseId, lessonData);
             const { notes: finalNotes, assignments: finalAssignments } = await processLessonFiles(
                 req,
@@ -211,6 +218,15 @@ class LessonController {
             if (isPreview !== undefined) lessonData.isPreview = isPreview === 'true' || isPreview === true;
             if (notes.length > 0 || hasFiles) lessonData.notes = finalNotes;
             if (assignments.length > 0 || hasFiles) lessonData.assignments = finalAssignments;
+
+            const effectivePreview = lessonData.isPreview === true;
+            const effectiveOrder = lessonData.order !== undefined ? lessonData.order : existingLesson.order;
+            if (effectivePreview) {
+                const { allowed, reason } = await lessonService.canSetLessonPreview(existingLesson.course_id, effectiveOrder, req.params.id);
+                if (!allowed) {
+                    return res.status(400).json({ error: reason });
+                }
+            }
 
             const lesson = await lessonService.updateLesson(req.params.id, lessonData);
             res.json(lesson);

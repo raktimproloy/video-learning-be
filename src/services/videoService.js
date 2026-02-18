@@ -97,12 +97,21 @@ class VideoService {
             ORDER BY v."order" ASC, v.created_at ASC
         `;
         const result = await db.query(query, [lessonId]);
-        const videos = result.rows.map((row) => ({
-            ...row,
-            isPreview: row.is_preview ?? false,
-            // Use video status if available, otherwise fall back to processing_status
-            status: row.status || (row.processing_status && row.processing_status !== 'completed' ? 'processing' : 'active'),
-        }));
+        const videos = result.rows.map((row) => {
+            const notes = row.notes ? (typeof row.notes === 'string' ? JSON.parse(row.notes) : row.notes) : [];
+            const assignments = row.assignments ? (typeof row.assignments === 'string' ? JSON.parse(row.assignments) : row.assignments) : [];
+            const hasRequired = Array.isArray(assignments) && assignments.some((a) => a && a.isRequired === true);
+            return {
+                ...row,
+                isPreview: row.is_preview ?? false,
+                notes: Array.isArray(notes) ? notes : [],
+                assignments: Array.isArray(assignments) ? assignments : [],
+                hasRequiredAssignment: !!hasRequired,
+                viewCount: row.view_count != null ? parseInt(row.view_count, 10) : 0,
+                // Use video status if available, otherwise fall back to processing_status
+                status: row.status || (row.processing_status && row.processing_status !== 'completed' ? 'processing' : 'active'),
+            };
+        });
 
         // If lesson is locked, lock all videos
         if (lessonIsLocked) {
@@ -142,6 +151,29 @@ class VideoService {
         }
         
         return videos;
+    }
+
+    /**
+     * Check if a video can be set as preview. Preview is only allowed when all previous videos in the same lesson have no required assignments.
+     * @param {string} lessonId
+     * @param {number} order - Order of the video we want to set as preview
+     * @param {string|null} excludeVideoId - When editing, exclude this video from the "previous" check
+     * @returns {{ allowed: boolean, reason?: string }}
+     */
+    async canSetVideoPreview(lessonId, order, excludeVideoId = null) {
+        if (!lessonId) return { allowed: true };
+        const result = await db.query(
+            `SELECT id, assignments FROM videos WHERE lesson_id = $1 AND "order" < $2 AND ($3::uuid IS NULL OR id != $3) ORDER BY "order" ASC`,
+            [lessonId, order, excludeVideoId]
+        );
+        for (const row of result.rows) {
+            const assignments = row.assignments ? (typeof row.assignments === 'string' ? JSON.parse(row.assignments) : row.assignments) : [];
+            const hasRequired = Array.isArray(assignments) && assignments.some((a) => a && a.isRequired === true);
+            if (hasRequired) {
+                return { allowed: false, reason: 'Cannot set as preview: a previous video in this lesson has required assignments. Students must complete them before accessing the next video.' };
+            }
+        }
+        return { allowed: true };
     }
 
     /**
@@ -188,8 +220,20 @@ class VideoService {
             hasAccess = await this.checkPermission(userId, videoId);
         }
 
+        // Allow any logged-in user to watch preview videos (no enrollment required)
+        if (!hasAccess && video.is_preview) {
+            hasAccess = true;
+        }
         if (!hasAccess) {
             throw new Error('Access denied');
+        }
+
+        // Increment view count when a non-owner (e.g. student) requests playback
+        if (video.owner_id !== userId) {
+            await db.query(
+                'UPDATE videos SET view_count = COALESCE(view_count, 0) + 1 WHERE id = $1',
+                [videoId]
+            ).catch(() => { /* ignore if column missing */ });
         }
 
         // For students, check if video is locked
@@ -224,7 +268,9 @@ class VideoService {
         } else {
             hasAccess = await this.checkPermission(userId, videoId);
         }
-
+        if (!hasAccess && video.is_preview) {
+            hasAccess = true;
+        }
         if (!hasAccess) {
             throw new Error('Access denied');
         }

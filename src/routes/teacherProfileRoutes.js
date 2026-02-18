@@ -19,24 +19,25 @@ const upload = multer({
     }
 });
 
-// Stream profile image (PUBLIC endpoint - must be before authMiddleware)
-// Use regex to match paths with slashes (similar to course media route)
+// PUBLIC ROUTES (must be before authMiddleware)
+// Stream profile image (PUBLIC endpoint)
 router.get(/^\/image\/(.+)$/, (req, res, next) => {
     req.params.key = decodeURIComponent(req.params[0]);
     return teacherProfileController.streamProfileImage(req, res, next);
 });
 
+// Get public teacher profile (PUBLIC endpoint - no auth required)
+router.get('/public/:userId', teacherProfileController.getPublicProfile);
+
 // All other routes require authentication
 router.use(authMiddleware);
 
-// Get teacher profile
+// Get teacher profile (authenticated)
 router.get('/', teacherProfileController.getProfile);
 
-// Update teacher profile (with optional image uploads - profile image and certificate images)
-// Support both single file (profileImage) and multiple files (certificate_images)
+// Update teacher profile (with optional profile image upload only)
 router.put('/', upload.fields([
-    { name: 'profileImage', maxCount: 1 },
-    { name: 'certificate_images', maxCount: 10 }
+    { name: 'profileImage', maxCount: 1 }
 ]), teacherProfileController.updateProfile);
 
 // Request OTP for verification
@@ -47,5 +48,8 @@ router.post('/verify', teacherProfileController.verifyOTP);
 
 // Get profile completion percentage
 router.get('/completion', teacherProfileController.getProfileCompletion);
+
+// Change password
+router.post('/change-password', teacherProfileController.changePassword);
 
 module.exports = router;

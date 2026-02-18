@@ -66,11 +66,16 @@ router.get(/^\/media\/(.+)$/, (req, res, next) => {
 
 // Public/Authenticated routes - optionalAuth allows public access but sets req.user if authenticated
 router.get('/', optionalAuth, courseController.getAllCourses);
+router.get('/search', optionalAuth, courseController.searchCourses);
 router.get('/:id/details', optionalAuth, courseController.getCourseDetails);
 router.get('/:id', optionalAuth, courseController.getCourseById);
 
 // Teacher only routes
 router.get('/teacher/my-courses', authMiddleware, requireRole(['teacher']), courseController.getMyCourses);
+router.get('/teacher/my-students', authMiddleware, requireRole(['teacher']), courseController.getMyStudents);
+router.get('/teacher/revenue', authMiddleware, requireRole(['teacher']), courseController.getTeacherRevenue);
+router.get('/teacher/purchase-history', authMiddleware, requireRole(['teacher']), courseController.getTeacherPurchaseHistory);
+router.post('/teacher/withdraw', authMiddleware, requireRole(['teacher']), courseController.requestWithdraw);
 router.post('/', 
     authMiddleware, 
     requireRole(['teacher']), 

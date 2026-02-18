@@ -288,6 +288,128 @@ class CourseController {
         }
     }
 
+    async getMyStudents(req, res) {
+        try {
+            if (req.user.role !== 'teacher') {
+                return res.status(403).json({ error: 'Access denied. Teachers only.' });
+            }
+            const page = Math.max(1, parseInt(req.query.page) || 1);
+            const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 10));
+            const offset = (page - 1) * limit;
+
+            const { students, total } = await courseService.getStudentsEnrolledInTeacherCourses(
+                req.user.id,
+                limit,
+                offset
+            );
+
+            const apiUrl = process.env.BASE_URL || process.env.API_URL || 'http://localhost:5000';
+            const baseUrl = apiUrl.replace(/\/v1\/?$/, '');
+            const v1Url = baseUrl + (baseUrl.endsWith('/') ? 'v1' : '/v1');
+
+            const r2Storage = require('../services/r2StorageService');
+            const enriched = students.map((s) => {
+                let profile_image_url = null;
+                if (s.profile_image_path) {
+                    if (r2Storage.getPublicUrl) {
+                        profile_image_url = r2Storage.getPublicUrl(s.profile_image_path);
+                    }
+                    if (!profile_image_url && s.profile_image_path.startsWith('students/')) {
+                        profile_image_url = `${v1Url}/student/profile/image/${encodeURIComponent(s.profile_image_path)}`;
+                    }
+                }
+                return {
+                    user_id: s.user_id,
+                    email: s.email,
+                    name: s.name,
+                    profile_image_path: s.profile_image_path,
+                    profile_image_url: profile_image_url,
+                    first_enrolled_at: s.first_enrolled_at,
+                    courses: s.courses,
+                };
+            });
+
+            res.json({
+                students: enriched,
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit) || 1,
+            });
+        } catch (error) {
+            console.error('Get my students error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async getTeacherRevenue(req, res) {
+        try {
+            const teacherId = req.user.id;
+            const revenue = await courseService.getTeacherRevenue(teacherId);
+            const platformFeePercent = 20;
+            const platformFee = (revenue.totalRevenue * platformFeePercent) / 100;
+            const withdrawable = revenue.totalRevenue - platformFee;
+            res.json({
+                total_revenue: revenue.totalRevenue,
+                currency: revenue.currency,
+                purchase_count: revenue.purchaseCount,
+                platform_fee_percent: platformFeePercent,
+                platform_fee: platformFee,
+                withdrawable,
+            });
+        } catch (error) {
+            console.error('Get teacher revenue error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async getTeacherPurchaseHistory(req, res) {
+        try {
+            const teacherId = req.user.id;
+            const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+            const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 10));
+            const offset = (page - 1) * limit;
+            const { purchases, total } = await courseService.getTeacherPurchaseHistory(teacherId, limit, offset);
+            const totalPages = Math.ceil(total / limit) || 1;
+            res.json({
+                purchases,
+                total,
+                page,
+                limit,
+                totalPages,
+            });
+        } catch (error) {
+            console.error('Get teacher purchase history error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async requestWithdraw(req, res) {
+        try {
+            const teacherId = req.user.id;
+            const { amount } = req.body || {};
+            const revenue = await courseService.getTeacherRevenue(teacherId);
+            const platformFeePercent = 20;
+            const withdrawable = revenue.totalRevenue - (revenue.totalRevenue * platformFeePercent) / 100;
+            const requestedAmount = parseFloat(amount);
+            if (!requestedAmount || requestedAmount <= 0) {
+                return res.status(400).json({ error: 'Invalid amount' });
+            }
+            if (requestedAmount > withdrawable) {
+                return res.status(400).json({ error: 'Amount exceeds withdrawable balance' });
+            }
+            // In production: create withdraw_requests record and notify admin
+            res.json({
+                message: 'Withdrawal request submitted. You will be notified when processed.',
+                requested_amount: requestedAmount,
+                currency: revenue.currency,
+            });
+        } catch (error) {
+            console.error('Request withdraw error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
     async getAllCourses(req, res) {
         try {
             // Pass userId if authenticated to check purchase/ownership status
@@ -298,6 +420,28 @@ class CourseController {
             res.json(enriched);
         } catch (error) {
             console.error('Get all courses error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async searchCourses(req, res) {
+        try {
+            const userId = req.user?.id || null;
+            const q = req.query.q || req.query.search || '';
+            const category = req.query.category || '';
+            const page = req.query.page || 1;
+            const limit = req.query.limit || 12;
+            const result = await courseService.searchCourses(userId, { q, category, page, limit });
+            const enriched = enrichCourseMediaUrls(result.courses, req);
+            res.json({
+                courses: enriched,
+                total: result.total,
+                page: result.page,
+                limit: result.limit,
+                hasMore: result.hasMore,
+            });
+        } catch (error) {
+            console.error('Search courses error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     }
@@ -650,11 +794,13 @@ class CourseController {
         try {
             const courseId = req.params.id;
             const userId = req.user.id;
-            
-            // In a real app, handle payment verification here
-            
+            const { payment_method: paymentMethod, payment_reference: paymentReference } = req.body || {};
+            // In production: validate payment with gateway using paymentMethod/paymentReference before enrolling
             await courseService.enrollUser(userId, courseId);
-            res.json({ message: 'Course purchased successfully' });
+            res.json({
+                message: 'Course purchased successfully',
+                payment_method: paymentMethod || null,
+            });
         } catch (error) {
             console.error('Purchase course error:', error);
             res.status(500).json({ error: 'Internal server error' });
