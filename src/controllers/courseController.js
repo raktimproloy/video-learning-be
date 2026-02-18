@@ -384,6 +384,17 @@ class CourseController {
         }
     }
 
+    async getTeacherDashboardStats(req, res) {
+        try {
+            const teacherId = req.user.id;
+            const stats = await courseService.getTeacherDashboardStats(teacherId);
+            res.json(stats);
+        } catch (error) {
+            console.error('Get teacher dashboard stats error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
     async requestWithdraw(req, res) {
         try {
             const teacherId = req.user.id;

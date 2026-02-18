@@ -75,6 +75,7 @@ router.get('/teacher/my-courses', authMiddleware, requireRole(['teacher']), cour
 router.get('/teacher/my-students', authMiddleware, requireRole(['teacher']), courseController.getMyStudents);
 router.get('/teacher/revenue', authMiddleware, requireRole(['teacher']), courseController.getTeacherRevenue);
 router.get('/teacher/purchase-history', authMiddleware, requireRole(['teacher']), courseController.getTeacherPurchaseHistory);
+router.get('/teacher/dashboard-stats', authMiddleware, requireRole(['teacher']), courseController.getTeacherDashboardStats);
 router.post('/teacher/withdraw', authMiddleware, requireRole(['teacher']), courseController.requestWithdraw);
 router.post('/', 
     authMiddleware, 

@@ -17,6 +17,7 @@ const reviewRoutes = require('./routes/reviewRoutes');
 const announcementRoutes = require('./routes/announcementRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const bundleRoutes = require('./routes/bundleRoutes');
+const progressRoutes = require('./routes/progressRoutes');
 
 const app = express();
 
@@ -59,6 +60,7 @@ app.use('/v1/reviews', reviewRoutes);
 app.use('/v1/announcements', announcementRoutes);
 app.use('/v1/notifications', notificationRoutes);
 app.use('/v1/bundles', bundleRoutes);
+app.use('/v1/progress', progressRoutes);
 
 // Health Check
 app.get('/health', (req, res) => {

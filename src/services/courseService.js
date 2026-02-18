@@ -750,12 +750,6 @@ class CourseService {
                 ) notes WHERE notes.note IS NOT NULL) as total_notes,
                 -- Live stream status
                 (SELECT COUNT(*) > 0 FROM lessons l WHERE l.course_id = c.id AND l.is_live = true) as has_live_stream,
-                -- Completed lessons count (simplified - count lessons with at least one video)
-                (SELECT COUNT(DISTINCT l.id) FROM lessons l
-                 WHERE l.course_id = c.id
-                 AND EXISTS (SELECT 1 FROM videos v WHERE v.lesson_id = l.id AND v.status != 'processing')) as completed_lessons,
-                -- Completed videos count (simplified - will be 0 for now, can be enhanced later)
-                0 as completed_videos,
                 -- Completed required assignments count
                 (SELECT COUNT(*) FROM (
                     SELECT DISTINCT asub.assignment_id FROM assignment_submissions asub
@@ -790,27 +784,34 @@ class CourseService {
             [userId]
         );
 
-        // Parse tags and calculate completion percentage
-        return result.rows.map(row => {
+        // Enrich with progress from video_watch_progress (videos/lessons completed 90%+, assignments)
+        const progressService = require('./progressService');
+        const progressList = await Promise.all(
+            result.rows.map((r) =>
+                progressService.getCourseProgress(userId, r.id).catch(() => null)
+            )
+        );
+
+        // Parse tags and calculate completion percentage from real progress
+        return result.rows.map((row, i) => {
             const totalLessons = parseInt(row.total_lessons) || 0;
             const totalVideos = parseInt(row.total_videos) || 0;
-            const completedLessons = parseInt(row.completed_lessons) || 0;
-            const completedVideos = parseInt(row.completed_videos) || 0;
-            
-            // Calculate completion percentage (weighted: 40% lessons, 60% videos)
-            let completionPercentage = 0;
-            if (totalLessons > 0 || totalVideos > 0) {
-                const lessonProgress = totalLessons > 0 ? (completedLessons / totalLessons) * 40 : 0;
-                const videoProgress = totalVideos > 0 ? (completedVideos / totalVideos) * 60 : 0;
-                completionPercentage = Math.round(lessonProgress + videoProgress);
-            }
+            const progress = progressList[i];
+            const completedLessons = progress ? progress.lessonsCompleted : 0;
+            const completedVideos = progress ? progress.videosCompleted90 : 0;
+            const assignmentsSubmitted = progress ? progress.assignmentsSubmitted : 0;
+            const assignmentsTotal = progress ? progress.assignmentsTotal : 0;
+            const assignmentsUnsubmitted = progress ? progress.assignmentsUnsubmitted : 0;
+
+            // Completion percentage from progress: sum(effective watch time) / sum(video duration), anti-cheat applied
+            const completionPercentage = progress ? progress.completionPercentage : 0;
 
             // Format duration
             const totalDurationSeconds = parseFloat(row.total_duration_seconds) || 0;
             const hours = Math.floor(totalDurationSeconds / 3600);
             const minutes = Math.floor((totalDurationSeconds % 3600) / 60);
-            const durationFormatted = hours > 0 
-                ? `${hours}h ${minutes}m` 
+            const durationFormatted = hours > 0
+                ? `${hours}h ${minutes}m`
                 : `${minutes}m`;
 
             return {
@@ -826,8 +827,13 @@ class CourseService {
                 has_live_stream: row.has_live_stream || false,
                 completed_lessons: completedLessons,
                 completed_videos: completedVideos,
+                assignments_submitted: assignmentsSubmitted,
+                assignments_total: assignmentsTotal,
+                assignments_unsubmitted: assignmentsUnsubmitted,
                 completed_required_assignments: parseInt(row.completed_required_assignments) || 0,
-                completion_percentage: completionPercentage,
+                completion_percentage: Math.min(100, completionPercentage),
+                percent_videos_completed: progress ? progress.percentVideosCompleted : 0,
+                percent_lessons_completed: progress ? progress.percentLessonsCompleted : 0,
                 my_rating: row.my_rating ? parseInt(row.my_rating) : null,
                 my_comment: row.my_comment || null
             };
@@ -986,6 +992,87 @@ class CourseService {
         }));
 
         return { purchases, total };
+    }
+
+    /**
+     * Teacher dashboard stats: courses, videos, students, rating, revenue this month, latest update, latest video.
+     */
+    async getTeacherDashboardStats(teacherId) {
+        const [coursesCount, videosCount, studentsCount, ratingRow, revenueMonth, latestUpdateRow, latestVideoRow] = await Promise.all([
+            db.query('SELECT COUNT(*)::int as n FROM courses WHERE teacher_id = $1', [teacherId]),
+            db.query(
+                `SELECT COUNT(*)::int as n FROM videos v
+                 JOIN lessons l ON l.id = v.lesson_id
+                 JOIN courses c ON c.id = l.course_id AND c.teacher_id = $1`,
+                [teacherId]
+            ),
+            db.query(
+                `SELECT COUNT(DISTINCT ce.user_id)::int as n
+                 FROM course_enrollments ce
+                 JOIN courses c ON c.id = ce.course_id AND c.teacher_id = $1`,
+                [teacherId]
+            ),
+            db.query(
+                `SELECT COALESCE(AVG(r.rating), 0)::float as avg_rating, COUNT(r.id)::int as total_reviews
+                 FROM reviews r
+                 JOIN courses c ON c.id = r.course_id AND c.teacher_id = $1`,
+                [teacherId]
+            ),
+            db.query(
+                `SELECT COALESCE(SUM(COALESCE(c.discount_price, c.price, 0)::numeric), 0)::float as revenue
+                 FROM course_enrollments ce
+                 JOIN courses c ON c.id = ce.course_id AND c.teacher_id = $1
+                 WHERE ce.enrolled_at >= date_trunc('month', CURRENT_DATE)`,
+                [teacherId]
+            ),
+            db.query(
+                `SELECT GREATEST(
+                    (SELECT COALESCE(MAX(updated_at), '1970-01-01') FROM courses WHERE teacher_id = $1),
+                    (SELECT COALESCE(MAX(v.created_at), '1970-01-01') FROM videos v
+                     JOIN lessons l ON l.id = v.lesson_id
+                     JOIN courses c ON c.id = l.course_id AND c.teacher_id = $1)
+                ) as latest`,
+                [teacherId]
+            ),
+            db.query(
+                `SELECT v.id, v.title, v.created_at, v.lesson_id, l.course_id, c.title as course_title, l.title as lesson_title
+                 FROM videos v
+                 JOIN lessons l ON l.id = v.lesson_id
+                 JOIN courses c ON c.id = l.course_id AND c.teacher_id = $1
+                 ORDER BY v.created_at DESC
+                 LIMIT 1`,
+                [teacherId]
+            ),
+        ]);
+
+        const totalCourses = coursesCount.rows[0]?.n ?? 0;
+        const totalVideos = videosCount.rows[0]?.n ?? 0;
+        const totalStudents = studentsCount.rows[0]?.n ?? 0;
+        const avgRating = parseFloat(ratingRow.rows[0]?.avg_rating) || 0;
+        const totalReviews = parseInt(ratingRow.rows[0]?.total_reviews, 10) || 0;
+        const revenueThisMonth = parseFloat(revenueMonth.rows[0]?.revenue) || 0;
+        const latestUpdate = latestUpdateRow.rows[0]?.latest;
+        const latestVideo = latestVideoRow.rows[0] || null;
+
+        return {
+            totalCourses,
+            totalVideos,
+            totalStudents,
+            averageRating: Math.round(avgRating * 10) / 10,
+            totalReviews,
+            revenueThisMonth,
+            latestUpdate: latestUpdate ? new Date(latestUpdate).toISOString() : null,
+            badges: [],
+            latestVideo: latestVideo ? {
+                id: latestVideo.id,
+                title: latestVideo.title,
+                created_at: latestVideo.created_at ? new Date(latestVideo.created_at).toISOString() : null,
+                lesson_id: latestVideo.lesson_id,
+                course_id: latestVideo.course_id,
+                course_title: latestVideo.course_title,
+                lesson_title: latestVideo.lesson_title,
+            } : null,
+        };
     }
 }
 
