@@ -333,10 +333,16 @@ class CourseService {
         const course = await this.getCourseById(id, userId);
         if (!course) return null;
 
-        // Get teacher info with name from profile
+        // Get teacher info with full profile (name, image, institute, verified, address)
         const teacherResult = await db.query(
-            `SELECT u.id, u.email, u.created_at, 
-                    COALESCE(tp.name, u.email) as name
+            `SELECT u.id, u.email, u.created_at,
+                    COALESCE(tp.name, u.email) as name,
+                    tp.profile_image_path,
+                    tp.institute_name,
+                    tp.account_email_verified,
+                    tp.address,
+                    (SELECT COUNT(DISTINCT ce.user_id) FROM course_enrollments ce
+                     JOIN courses c ON ce.course_id = c.id WHERE c.teacher_id = u.id) as total_students
              FROM users u
              LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
              WHERE u.id = $1`,
@@ -409,7 +415,7 @@ class CourseService {
             total_videos: row.total_videos || 0
         }));
 
-        // Latest 3 reviews for course details page
+        // Latest 3 reviews for course details page (include user_profile_image_path for controller to build avatar URL)
         let reviews = [];
         if (hasReviewsTable) {
             const reviewService = require('./reviewService');
@@ -417,7 +423,7 @@ class CourseService {
             reviews = reviewRows.map(r => ({
                 id: r.id,
                 userName: r.user_name || r.user_email || 'Student',
-                userAvatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&q=80',
+                user_profile_image_path: r.user_profile_image_path || null,
                 rating: parseInt(r.rating) || 0,
                 comment: r.comment || '',
                 createdAt: r.created_at,
@@ -425,20 +431,52 @@ class CourseService {
             }));
         }
 
+        // Compute total_notes (only actual notes, not assignments) for "course includes" section.
+        // Exclude assignments (isRequired === true). Only count items with note shape (type 'text' or 'file') or no type (legacy).
+        const countNotesOnly = (arr) => {
+            if (!Array.isArray(arr)) return 0;
+            return arr.filter((item) => {
+                if (!item || item.isRequired === true) return false;
+                if (item.type !== undefined && item.type !== 'text' && item.type !== 'file') return false;
+                return true;
+            }).length;
+        };
+        const totalNotes = lessons.reduce((sum, l) => sum + countNotesOnly(l.notes), 0) + videos.reduce((sum, v) => sum + countNotesOnly(v.notes), 0);
+        const totalAssignments = lessons.reduce((sum, l) => sum + (Array.isArray(l.assignments) ? l.assignments.length : 0), 0) + videos.reduce((sum, v) => sum + (Array.isArray(v.assignments) ? v.assignments.length : 0), 0);
+        const totalDurationSeconds = videos.reduce((sum, v) => sum + (parseFloat(v.duration_seconds) || 0), 0);
+        const courseWithMeta = {
+            ...course,
+            total_notes: totalNotes,
+            total_assignments: totalAssignments,
+            total_duration_seconds: totalDurationSeconds
+        };
+
+        // Bundles that include this course (for "Bundles" section on course details)
+        let bundles = [];
+        try {
+            const bundleService = require('./bundleService');
+            bundles = await bundleService.getBundlesContainingCourse(course.id, course.teacher_id);
+        } catch (e) {
+            // bundle_courses table may not exist in older deployments
+        }
+
         return {
-            course,
+            course: courseWithMeta,
             teacher: teacher ? {
                 id: teacher.id,
                 email: teacher.email,
                 name: teacher.name || teacher.email,
-                location: '',
-                totalStudents: course.purchase_count || 0,
-                avatar: ''
+                profile_image_path: teacher.profile_image_path || null,
+                institute_name: teacher.institute_name || null,
+                account_email_verified: teacher.account_email_verified || false,
+                address: teacher.address || null,
+                totalStudents: parseInt(teacher.total_students) || course.purchase_count || 0
             } : null,
             lessons,
             videos,
             otherCourses,
-            reviews
+            reviews,
+            bundles: bundles || []
         };
     }
 

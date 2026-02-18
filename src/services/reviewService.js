@@ -41,7 +41,8 @@ class ReviewService {
      */
     async getReviewsByCourse(courseId, limit = 10, offset = 0) {
         const result = await db.query(
-            `SELECT r.*, u.email as user_email, sp.name as user_name
+            `SELECT r.*, u.email as user_email, sp.name as user_name,
+                    sp.profile_image_path as user_profile_image_path
              FROM reviews r
              JOIN users u ON r.user_id = u.id
              LEFT JOIN student_profiles sp ON u.id = sp.user_id

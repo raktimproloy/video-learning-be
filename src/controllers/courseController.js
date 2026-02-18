@@ -454,20 +454,66 @@ class CourseController {
             if (!details) {
                 return res.status(404).json({ error: 'Course not found' });
             }
-            
+
+            const apiUrl = process.env.BASE_URL || process.env.API_URL || 'http://localhost:5000';
+            const baseUrl = apiUrl.replace(/\/v1\/?$/, '');
+            const v1Url = baseUrl + (baseUrl.endsWith('/') ? 'v1' : '/v1');
+
             // Enrich course with media URLs
             const enrichedCourse = enrichCourseMediaUrls([details.course], req)[0];
-            
+
+            // Enrich teacher with avatar URL and camelCase fields for frontend
+            let enrichedTeacher = details.teacher;
+            if (details.teacher) {
+                let avatar = '';
+                const path = details.teacher.profile_image_path;
+                if (path) {
+                    if (r2Storage.getPublicUrl) {
+                        avatar = r2Storage.getPublicUrl(path) || '';
+                    }
+                    if (!avatar && path.startsWith('teachers/')) {
+                        avatar = `${v1Url}/teacher/profile/image/${encodeURIComponent(path)}`;
+                    }
+                }
+                enrichedTeacher = {
+                    id: details.teacher.id,
+                    email: details.teacher.email,
+                    name: details.teacher.name,
+                    avatar,
+                    institute_name: details.teacher.institute_name,
+                    account_email_verified: details.teacher.account_email_verified,
+                    address: details.teacher.address,
+                    totalStudents: details.teacher.totalStudents
+                };
+            }
+
+            // Enrich reviews with real user avatar URL
+            const enrichedReviews = (details.reviews || []).map((r) => {
+                let userAvatar = '';
+                const path = r.user_profile_image_path;
+                if (path) {
+                    if (r2Storage.getPublicUrl) {
+                        userAvatar = r2Storage.getPublicUrl(path) || '';
+                    }
+                    if (!userAvatar && path.startsWith('students/')) {
+                        userAvatar = `${v1Url}/student/profile/image/${encodeURIComponent(path)}`;
+                    }
+                }
+                const { user_profile_image_path, ...rest } = r;
+                return { ...rest, userAvatar };
+            });
+
             // Enrich other courses with media URLs
             const enrichedOtherCourses = enrichCourseMediaUrls(details.otherCourses || [], req);
-            
+
             res.json({
                 course: enrichedCourse,
-                teacher: details.teacher,
+                teacher: enrichedTeacher,
                 lessons: details.lessons || [],
                 videos: details.videos || [],
                 otherCourses: enrichedOtherCourses,
-                reviews: details.reviews || []
+                reviews: enrichedReviews,
+                bundles: details.bundles || []
             });
         } catch (error) {
             console.error('Get course details error:', error);
@@ -710,13 +756,16 @@ class CourseController {
                 }
             }
             
-            // If no new file uploaded but thumbnailUrl/introVideoUrl provided, keep existing
-            // (This handles the case where frontend sends existing URLs)
-            if (!courseData.thumbnailPath && req.body.thumbnailUrl) {
-                courseData.thumbnailPath = req.body.thumbnailUrl;
+            // When no new file is uploaded, do NOT overwrite thumbnail_path/intro_video_path with
+            // frontend URLs (e.g. http://.../media/...) — that would break existing thumbnails.
+            // Only preserve existing paths by not setting courseData.thumbnailPath/introVideoPath.
+            const thumbnailUrl = req.body.thumbnailUrl;
+            const introVideoUrl = req.body.introVideoUrl;
+            if (!courseData.thumbnailPath && thumbnailUrl && (thumbnailUrl.startsWith('teachers/') || thumbnailUrl.startsWith('/uploads/'))) {
+                courseData.thumbnailPath = thumbnailUrl;
             }
-            if (!courseData.introVideoPath && req.body.introVideoUrl) {
-                courseData.introVideoPath = req.body.introVideoUrl;
+            if (!courseData.introVideoPath && introVideoUrl && (introVideoUrl.startsWith('teachers/') || introVideoUrl.startsWith('/uploads/'))) {
+                courseData.introVideoPath = introVideoUrl;
             }
 
             const course = await courseService.updateCourse(req.params.id, courseData);

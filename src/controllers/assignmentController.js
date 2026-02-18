@@ -115,6 +115,7 @@ async function getLockStatus(req, res) {
 /**
  * GET /assignments/watch-context?videoId=...
  * Returns submission status + lock status for next video/lesson.
+ * For preview videos, allows access without enrollment and returns isPreviewOnly + requiresPurchase flags.
  */
 async function getWatchContext(req, res) {
   try {
@@ -124,10 +125,15 @@ async function getWatchContext(req, res) {
 
     const video = await videoService.getVideoById(videoId);
     if (!video) return res.status(404).json({ error: 'Video not found' });
-    const hasAccess = await videoService.checkPermission(userId, videoId) || video.owner_id === userId;
+
+    const isOwner = video.owner_id === userId;
+    const enrolled = await videoService.checkPermission(userId, videoId);
+    const hasAccess = isOwner || enrolled || (video.is_preview === true);
     if (!hasAccess) return res.status(403).json({ error: 'Access denied' });
 
-    const submissionStatus = await assignmentService.getVideoSubmissionStatus(userId, videoId);
+    const isPreviewOnly = hasAccess && !isOwner && !enrolled;
+
+    const submissionStatus = isPreviewOnly ? {} : await assignmentService.getVideoSubmissionStatus(userId, videoId);
 
     const lessonId = video.lesson_id;
     let nextVideoLocked = false;
@@ -135,34 +141,73 @@ async function getWatchContext(req, res) {
     let nextVideoId = null;
     let nextLessonId = null;
     let nextLessonTitle = null;
+    let nextVideoIsPreview = false;
+    let nextVideoRequiresPurchase = false;
+    let nextLessonFullyPreview = false;
+    let nextLessonRequiresPurchase = false;
+    let nextLessonFirstVideoId = null;
 
     if (lessonId) {
       const lesson = await lessonService.getLessonById(lessonId);
-      const videos = await db.query(
-        'SELECT id FROM videos WHERE lesson_id = $1 ORDER BY "order" ASC',
+      const videosResult = await db.query(
+        'SELECT id, is_preview FROM videos WHERE lesson_id = $1 ORDER BY "order" ASC',
         [lessonId]
       );
-      const idx = videos.rows.findIndex((v) => v.id === videoId);
-      const nextVideo = idx >= 0 && idx < videos.rows.length - 1 ? videos.rows[idx + 1] : null;
-      if (nextVideo) {
-        nextVideoId = nextVideo.id;
-        nextVideoLocked = await assignmentService.isNextVideoLocked(userId, videoId, nextVideo.id);
+      const videosRows = videosResult.rows;
+      const idx = videosRows.findIndex((v) => v.id === videoId);
+      const nextVideoRow = idx >= 0 && idx < videosRows.length - 1 ? videosRows[idx + 1] : null;
+
+      if (nextVideoRow) {
+        nextVideoId = nextVideoRow.id;
+        nextVideoIsPreview = nextVideoRow.is_preview === true;
+        if (isPreviewOnly) {
+          nextVideoLocked = !nextVideoIsPreview;
+          nextVideoRequiresPurchase = !nextVideoIsPreview;
+        } else {
+          nextVideoLocked = await assignmentService.isNextVideoLocked(userId, videoId, nextVideoRow.id);
+        }
       } else {
-        const lessons = await db.query(
+        const lessonsResult = await db.query(
           'SELECT id, title FROM lessons WHERE course_id = $1 ORDER BY "order" ASC',
           [lesson.course_id]
         );
-        const lIdx = lessons.rows.findIndex((l) => l.id === lessonId);
-        const nextL = lIdx >= 0 && lIdx < lessons.rows.length - 1 ? lessons.rows[lIdx + 1] : null;
+        const lessonsRows = lessonsResult.rows;
+        const lIdx = lessonsRows.findIndex((l) => l.id === lessonId);
+        const nextL = lIdx >= 0 && lIdx < lessonsRows.length - 1 ? lessonsRows[lIdx + 1] : null;
         if (nextL) {
           nextLessonId = nextL.id;
           nextLessonTitle = nextL.title;
-          nextLessonLocked = await assignmentService.isNextLessonLocked(userId, lesson.course_id, lessonId, nextL.id);
+          const nextLessonVideos = await db.query(
+            'SELECT id, is_preview FROM videos WHERE lesson_id = $1 ORDER BY "order" ASC',
+            [nextL.id]
+          );
+          const nvRows = nextLessonVideos.rows;
+          nextLessonFullyPreview = nvRows.length > 0 && nvRows.every((v) => v.is_preview === true);
+          if (nvRows.length > 0) nextLessonFirstVideoId = nvRows[0].id;
+          if (isPreviewOnly) {
+            nextLessonLocked = !nextLessonFullyPreview;
+            nextLessonRequiresPurchase = !nextLessonFullyPreview;
+          } else {
+            nextLessonLocked = await assignmentService.isNextLessonLocked(userId, lesson.course_id, lessonId, nextL.id);
+          }
         }
       }
     }
 
-    res.json({ submissionStatus, nextVideoLocked, nextLessonLocked, nextVideoId, nextLessonId, nextLessonTitle });
+    res.json({
+      isPreviewOnly,
+      submissionStatus,
+      nextVideoLocked,
+      nextLessonLocked,
+      nextVideoId,
+      nextLessonId,
+      nextLessonTitle,
+      nextLessonFirstVideoId,
+      nextVideoIsPreview,
+      nextVideoRequiresPurchase,
+      nextLessonFullyPreview,
+      nextLessonRequiresPurchase,
+    });
   } catch (error) {
     console.error('Get watch context error:', error);
     res.status(500).json({ error: 'Internal server error' });

@@ -152,6 +152,39 @@ class BundleService {
         );
         return result.rowCount > 0;
     }
+
+    /** Get bundles that include the given course (for course details page). */
+    async getBundlesContainingCourse(courseId, teacherId) {
+        const result = await db.query(
+            `SELECT b.id, b.title, b.description, b.main_price, b.discount_price, b.currency,
+                    (SELECT json_agg(bc.course_id) FROM bundle_courses bc WHERE bc.bundle_id = b.id) as course_ids
+             FROM course_bundles b
+             JOIN bundle_courses bc ON bc.bundle_id = b.id
+             WHERE bc.course_id = $1 AND b.teacher_id = $2
+             ORDER BY b.updated_at DESC`,
+            [courseId, teacherId]
+        );
+        return result.rows.map((row) => {
+            let courseIds = row.course_ids;
+            if (typeof courseIds === 'string') {
+                try {
+                    courseIds = JSON.parse(courseIds);
+                } catch (e) {
+                    courseIds = [];
+                }
+            }
+            if (!Array.isArray(courseIds)) courseIds = [];
+            return {
+                id: row.id,
+                title: row.title,
+                description: row.description || '',
+                main_price: parseFloat(row.main_price) || 0,
+                discount_price: row.discount_price != null ? parseFloat(row.discount_price) : null,
+                currency: row.currency || 'USD',
+                course_ids: courseIds,
+            };
+        });
+    }
 }
 
 module.exports = new BundleService();
