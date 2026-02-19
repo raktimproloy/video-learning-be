@@ -555,8 +555,8 @@ class CourseController {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
 
-            // Check if teacher owns the course
-            const existingCourse = await courseService.getCourseById(req.params.id);
+            // Check if teacher owns the course (pass userId so owner can update inactive courses)
+            const existingCourse = await courseService.getCourseById(req.params.id, req.user.id);
             if (!existingCourse) {
                 return res.status(404).json({ error: 'Course not found' });
             }
@@ -580,7 +580,8 @@ class CourseController {
                 discountPrice,
                 currency,
                 hasLiveClass,
-                hasAssignments
+                hasAssignments,
+                status
             } = req.body;
 
             // Build update data object (only include fields that are provided)
@@ -607,6 +608,7 @@ class CourseController {
             if (currency !== undefined) courseData.currency = currency;
             if (hasLiveClass !== undefined) courseData.hasLiveClass = hasLiveClass === 'true' || hasLiveClass === true;
             if (hasAssignments !== undefined) courseData.hasAssignments = hasAssignments === 'true' || hasAssignments === true;
+            if (status !== undefined) courseData.status = status;
 
             // Handle file uploads - upload to R2 if configured, otherwise use local storage
             if (req.files) {
@@ -855,6 +857,13 @@ class CourseController {
             const courseId = req.params.id;
             const userId = req.user.id;
             const { payment_method: paymentMethod, payment_reference: paymentReference } = req.body || {};
+            const course = await courseService.getCourseByIdSimple(courseId);
+            if (!course) {
+                return res.status(404).json({ error: 'Course not found' });
+            }
+            if (course.status && course.status !== 'active') {
+                return res.status(400).json({ error: 'This course is not available for purchase' });
+            }
             // In production: validate payment with gateway using paymentMethod/paymentReference before enrolling
             await courseService.enrollUser(userId, courseId);
             res.json({

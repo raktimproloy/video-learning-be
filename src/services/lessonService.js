@@ -27,13 +27,15 @@ class LessonService {
         return result.rows[0];
     }
 
-    async getLessonsByCourse(courseId, userId = null) {
+    async getLessonsByCourse(courseId, userId = null, teacherId = null) {
+        const isOwner = userId && teacherId && userId === teacherId;
+        const statusFilter = isOwner ? '' : `AND (COALESCE(l.status, 'active') = 'active')`;
         const result = await db.query(
             `SELECT l.*,
                     (SELECT COUNT(*)::int FROM videos v WHERE v.lesson_id = l.id) AS video_count,
                     (SELECT COALESCE(SUM(v.duration_seconds), 0) FROM videos v WHERE v.lesson_id = l.id) AS total_duration_seconds
              FROM lessons l
-             WHERE l.course_id = $1
+             WHERE l.course_id = $1 ${statusFilter}
              ORDER BY l."order" ASC, l.created_at ASC`,
             [courseId]
         );
@@ -156,6 +158,10 @@ class LessonService {
         if (lessonData.assignments !== undefined) {
             updates.push(`assignments = $${paramIndex++}`);
             values.push(JSON.stringify(lessonData.assignments));
+        }
+        if (lessonData.status !== undefined) {
+            updates.push(`status = $${paramIndex++}`);
+            values.push(lessonData.status);
         }
 
         if (updates.length === 0) return this.getLessonById(id);

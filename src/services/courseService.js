@@ -172,6 +172,7 @@ class CourseService {
             FROM courses 
             LEFT JOIN users ON courses.teacher_id = users.id 
             LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
+            WHERE (COALESCE(courses.status, 'active') = 'active' OR ${params.length ? '(courses.teacher_id = $1)' : 'false'})
             ORDER BY courses.created_at DESC`,
             params
         );
@@ -236,6 +237,10 @@ class CourseService {
             : `0::int`;
 
         const conditions = [];
+        const statusCondition = params.length > 0
+            ? `(COALESCE(courses.status, 'active') = 'active' OR courses.teacher_id = $1)`
+            : `(COALESCE(courses.status, 'active') = 'active')`;
+        conditions.push(statusCondition);
         let searchPattern = null;
         const searchTerm = (q && typeof q === 'string') ? q.trim() : '';
         if (searchTerm) {
@@ -250,20 +255,20 @@ class CourseService {
             paramIndex++;
         }
 
-        const categoryFilter = (category && typeof category === 'string') ? category.trim().toLowerCase() : '';
-        if (categoryFilter === 'skill-based' || categoryFilter === 'skill') {
-            conditions.push(`(LOWER(COALESCE(courses.category, '')) IN ('skill-based', 'skill'))`);
-        } else if (categoryFilter === 'academy-based' || categoryFilter === 'academic') {
-            conditions.push(`(LOWER(COALESCE(courses.category, '')) IN ('academy-based', 'academic'))`);
+        const categoryFilter = (category && typeof category === 'string') ? category.trim().toLowerCase().replace(/\s+/g, '-') : '';
+        if (categoryFilter) {
+            conditions.push(`(LOWER(REPLACE(TRIM(COALESCE(courses.category, '')), ' ', '-')) = $${paramIndex})`);
+            params.push(categoryFilter);
+            paramIndex++;
         }
 
         const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
         // Count query: use only params that appear in WHERE (search pattern). Use $1 for search so we don't pass unused userId.
         const countWhereClause = conditions.length
-            ? `WHERE ${conditions.join(' AND ').replace(/\$\d+/g, '$1')}`
+            ? `WHERE ${conditions.join(' AND ')}`
             : '';
-        const countParams = searchTerm ? [searchPattern] : [];
+        const countParams = [...params];
         const countResult = await db.query(
             `SELECT COUNT(*)::int as total FROM courses ${countWhereClause}`,
             countParams
@@ -350,15 +355,16 @@ class CourseService {
         );
         const teacher = teacherResult.rows[0] || null;
 
-        // Get lessons for this course
+        // Get lessons for this course (pass teacherId so owner sees all, students only see active)
         const lessonService = require('./lessonService');
-        const lessons = await lessonService.getLessonsByCourse(course.id, userId);
+        const lessons = await lessonService.getLessonsByCourse(course.id, userId, course.teacher_id);
 
         // Get all videos for all lessons
         const videoService = require('./videoService');
         const videos = [];
+        const isOwner = userId && course.teacher_id === userId;
         for (const lesson of lessons) {
-            const lessonVideos = await videoService.getVideosByLesson(lesson.id, userId, lesson.isLocked || false);
+            const lessonVideos = await videoService.getVideosByLesson(lesson.id, userId, lesson.isLocked || false, isOwner);
             videos.push(...lessonVideos);
         }
 
@@ -399,7 +405,8 @@ class CourseService {
                  WHERE l.course_id = courses.id) as total_videos
             FROM courses 
             LEFT JOIN users ON courses.teacher_id = users.id 
-            WHERE courses.teacher_id = $1 AND courses.id != $2
+             WHERE courses.teacher_id = $1 AND courses.id != $2
+               AND (COALESCE(courses.status, 'active') = 'active')
             ORDER BY courses.created_at DESC
             LIMIT 4`,
             [course.teacher_id, course.id]
@@ -541,8 +548,13 @@ class CourseService {
         );
         
         if (!result.rows[0]) return null;
-        
+
         const course = result.rows[0];
+        // Students cannot see non-active courses; owners (teachers) can always see their own
+        const isOwner = userId && course.teacher_id === userId;
+        const isActive = !course.status || course.status === 'active';
+        if (!isOwner && !isActive) return null;
+
         // Parse tags if they're stored as JSON string
         return {
             ...course,
@@ -587,7 +599,8 @@ class CourseService {
             discountPrice,
             currency,
             hasLiveClass,
-            hasAssignments
+            hasAssignments,
+            status
         } = courseData;
 
         // Build dynamic update query
@@ -662,6 +675,10 @@ class CourseService {
         if (hasAssignments !== undefined) {
             updates.push(`has_assignments = $${paramIndex++}`);
             values.push(hasAssignments);
+        }
+        if (status !== undefined) {
+            updates.push(`status = $${paramIndex++}`);
+            values.push(status);
         }
 
         // Always update updated_at
@@ -779,7 +796,7 @@ class CourseService {
              JOIN course_enrollments ce ON c.id = ce.course_id
              LEFT JOIN users u ON c.teacher_id = u.id
              LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
-             WHERE ce.user_id = $1
+             WHERE ce.user_id = $1 AND (COALESCE(c.status, 'active') = 'active')
              ORDER BY ce.enrolled_at DESC`,
             [userId]
         );
@@ -855,6 +872,7 @@ class CourseService {
              WHERE c.id NOT IN (
                  SELECT course_id FROM course_enrollments WHERE user_id = $1
              )
+             AND (COALESCE(c.status, 'active') = 'active')
              ORDER BY c.created_at DESC`,
             [userId]
         );

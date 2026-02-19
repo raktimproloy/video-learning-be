@@ -1,5 +1,6 @@
 const videoService = require('../services/videoService');
 const lessonService = require('../services/lessonService');
+const courseService = require('../services/courseService');
 const r2Storage = require('../services/r2StorageService');
 
 function contentTypeForPath(subpath) {
@@ -73,17 +74,19 @@ class VideoController {
                 let lessonIsLocked = false;
                 
                 // For students, check if the lesson itself is locked
-                if (userIdForLockCheck) {
-                    const lesson = await lessonService.getLessonById(lessonId);
-                    if (lesson) {
-                        // Get all lessons in the course to check if this lesson is locked
-                        const allLessons = await lessonService.getLessonsByCourse(lesson.course_id, userIdForLockCheck);
+                const lesson = await lessonService.getLessonById(lessonId);
+                let isOwner = false;
+                if (lesson) {
+                    const course = await courseService.getCourseByIdSimple(lesson.course_id);
+                    isOwner = course && userId && course.teacher_id === userId;
+                    if (userIdForLockCheck) {
+                        const allLessons = await lessonService.getLessonsByCourse(lesson.course_id, userIdForLockCheck, course?.teacher_id);
                         const currentLesson = allLessons.find(l => l.id === lessonId);
                         lessonIsLocked = currentLesson?.isLocked === true;
                     }
                 }
                 
-                videos = await videoService.getVideosByLesson(lessonId, userIdForLockCheck, lessonIsLocked);
+                videos = await videoService.getVideosByLesson(lessonId, userIdForLockCheck, lessonIsLocked, isOwner);
                 // Filter out processing videos for students
                 if (role === 'student') {
                     videos = videos.filter(v => v.status !== 'processing');
@@ -166,6 +169,7 @@ class VideoController {
             let hasAccess = video.owner_id === userId || await videoService.checkPermission(userId, videoId);
             if (!hasAccess && video.is_preview) hasAccess = true;
             if (!hasAccess) return res.status(403).send('Access denied');
+            if (video.owner_id !== userId && video.status === 'inactive') return res.status(403).send('Access denied');
 
             // For students, check if video is locked
             if (role === 'student') {

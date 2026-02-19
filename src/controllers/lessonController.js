@@ -143,9 +143,10 @@ class LessonController {
 
     async getLessonsByCourse(req, res) {
         try {
-            // Pass userId for students to check lock status
-            const userId = req.user.role === 'student' ? req.user.id : null;
-            const lessons = await lessonService.getLessonsByCourse(req.params.courseId, userId);
+            const userId = req.user?.id || null;
+            const course = await courseService.getCourseByIdSimple(req.params.courseId);
+            const teacherId = course?.teacher_id ?? null;
+            const lessons = await lessonService.getLessonsByCourse(req.params.courseId, userId, teacherId);
             res.json(lessons);
         } catch (error) {
             console.error('Get lessons error:', error);
@@ -160,7 +161,10 @@ class LessonController {
             if (!lesson) {
                 return res.status(404).json({ error: 'Lesson not found' });
             }
-            const videos = await videoService.getVideosByLesson(lessonId);
+            const course = await courseService.getCourseByIdSimple(lesson.course_id);
+            const isOwner = course && req.user?.id && course.teacher_id === req.user.id;
+            const userId = req.user?.role === 'student' ? req.user.id : null;
+            const videos = await videoService.getVideosByLesson(lessonId, userId, false, isOwner);
             res.json(videos);
         } catch (error) {
             console.error('Get lesson videos error:', error);
@@ -186,7 +190,7 @@ class LessonController {
             if (req.user.role !== 'teacher') {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
-            const { title, description, order, isPreview } = req.body;
+            const { title, description, order, isPreview, status } = req.body;
             const { notes, assignments } = parseNotesAndAssignments(req.body);
 
             const existingLesson = await lessonService.getLessonById(req.params.id);
@@ -218,6 +222,7 @@ class LessonController {
             if (isPreview !== undefined) lessonData.isPreview = isPreview === 'true' || isPreview === true;
             if (notes.length > 0 || hasFiles) lessonData.notes = finalNotes;
             if (assignments.length > 0 || hasFiles) lessonData.assignments = finalAssignments;
+            if (status !== undefined) lessonData.status = status;
 
             const effectivePreview = lessonData.isPreview === true;
             const effectiveOrder = lessonData.order !== undefined ? lessonData.order : existingLesson.order;

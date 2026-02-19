@@ -81,7 +81,8 @@ class VideoService {
         return result.rows;
     }
 
-    async getVideosByLesson(lessonId, userId = null, lessonIsLocked = false) {
+    async getVideosByLesson(lessonId, userId = null, lessonIsLocked = false, isOwner = false) {
+        const statusFilter = isOwner ? '' : `AND (v.status IS NULL OR v.status = 'active' OR v.status = 'processing')`;
         const query = `
             SELECT 
                 v.*,
@@ -93,7 +94,7 @@ class VideoService {
                     LIMIT 1
                 ) as processing_status
             FROM videos v
-            WHERE v.lesson_id = $1 
+            WHERE v.lesson_id = $1 ${statusFilter}
             ORDER BY v."order" ASC, v.created_at ASC
         `;
         const result = await db.query(query, [lessonId]);
@@ -190,8 +191,12 @@ class VideoService {
         const lesson = await lessonService.getLessonById(video.lesson_id);
         if (!lesson) return false;
 
-        // Check if lesson itself is locked
-        const allLessons = await lessonService.getLessonsByCourse(lesson.course_id, userId);
+        const courseService = require('./courseService');
+        const course = await courseService.getCourseByIdSimple(lesson.course_id);
+        const teacherId = course?.teacher_id ?? null;
+
+        // Check if lesson itself is locked (students only see active lessons)
+        const allLessons = await lessonService.getLessonsByCourse(lesson.course_id, userId, teacherId);
         const currentLesson = allLessons.find(l => l.id === lesson.id);
         if (currentLesson?.isLocked === true) {
             return true;
@@ -225,6 +230,11 @@ class VideoService {
             hasAccess = true;
         }
         if (!hasAccess) {
+            throw new Error('Access denied');
+        }
+
+        // Non-owners cannot access inactive videos
+        if (video.owner_id !== userId && video.status === 'inactive') {
             throw new Error('Access denied');
         }
 
@@ -272,6 +282,11 @@ class VideoService {
             hasAccess = true;
         }
         if (!hasAccess) {
+            throw new Error('Access denied');
+        }
+
+        // Non-owners cannot access inactive videos
+        if (video.owner_id !== userId && video.status === 'inactive') {
             throw new Error('Access denied');
         }
 

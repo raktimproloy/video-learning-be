@@ -8,6 +8,10 @@ require('dotenv').config();
 const videoRoutes = require('./routes/videoRoutes');
 const authRoutes = require('./routes/authRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const adminAuthRoutes = require('./routes/adminAuthRoutes');
+const adminUserRoutes = require('./routes/adminUserRoutes');
+const adminCategoryRoutes = require('./routes/adminCategoryRoutes');
+const adminSettingsRoutes = require('./routes/adminSettingsRoutes');
 const courseRoutes = require('./routes/courseRoutes');
 const lessonRoutes = require('./routes/lessonRoutes');
 const assignmentRoutes = require('./routes/assignmentRoutes');
@@ -18,6 +22,8 @@ const announcementRoutes = require('./routes/announcementRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const bundleRoutes = require('./routes/bundleRoutes');
 const progressRoutes = require('./routes/progressRoutes');
+const settingsRoutes = require('./routes/settingsRoutes');
+const couponRoutes = require('./routes/couponRoutes');
 
 const app = express();
 
@@ -48,8 +54,13 @@ app.use('/videos', express.static(path.join(__dirname, '../public/videos')));
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Routes
+app.use('/v1/settings', settingsRoutes);
 app.use('/v1/auth', authRoutes);
 app.use('/v1/video', videoRoutes);
+app.use('/v1/admin/auth', adminAuthRoutes);   // Public - must be before /v1/admin
+app.use('/v1/admin/users', adminUserRoutes);
+app.use('/v1/admin/categories', adminCategoryRoutes);
+app.use('/v1/admin/settings', adminSettingsRoutes);
 app.use('/v1/admin', adminRoutes);
 app.use('/v1/courses', courseRoutes);
 app.use('/v1/lessons', lessonRoutes);
@@ -61,6 +72,7 @@ app.use('/v1/announcements', announcementRoutes);
 app.use('/v1/notifications', notificationRoutes);
 app.use('/v1/bundles', bundleRoutes);
 app.use('/v1/progress', progressRoutes);
+app.use('/v1/coupons', couponRoutes);
 
 // Health Check
 app.get('/health', (req, res) => {
