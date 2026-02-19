@@ -182,12 +182,31 @@ class LessonService {
         return lesson;
     }
 
-    async updateLiveStatus(id, isLive) {
+    async updateLiveStatus(id, isLive, sessionData = {}) {
+        const { live_session_name, live_session_order, live_session_description } = sessionData;
+        if (isLive) {
+            const result = await db.query(
+                `UPDATE lessons SET is_live = true, live_started_at = COALESCE(live_started_at, NOW()),
+                 live_session_name = COALESCE($2, live_session_name),
+                 live_session_order = COALESCE($3, live_session_order, 0),
+                 live_session_description = COALESCE($4, live_session_description)
+                 WHERE id = $1 RETURNING *`,
+                [id, live_session_name ?? null, live_session_order ?? null, live_session_description ?? null]
+            );
+            return result.rows[0];
+        }
         const result = await db.query(
-            'UPDATE lessons SET is_live = $1 WHERE id = $2 RETURNING *',
-            [isLive, id]
+            `UPDATE lessons SET is_live = false, live_started_at = NULL,
+             live_session_name = NULL, live_session_order = NULL, live_session_description = NULL
+             WHERE id = $1 RETURNING *`,
+            [id]
         );
         return result.rows[0];
+    }
+
+    async getLiveStartedAt(lessonId) {
+        const r = await db.query('SELECT live_started_at FROM lessons WHERE id = $1', [lessonId]);
+        return r.rows[0]?.live_started_at || null;
     }
 
     async updateLessonVod(id, vodUrl) {

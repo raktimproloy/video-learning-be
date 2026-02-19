@@ -19,12 +19,13 @@ class AdminService {
         const isPreview = options.isPreview === true;
         const notes = options.notes ? JSON.stringify(options.notes) : '[]';
         const assignments = options.assignments ? JSON.stringify(options.assignments) : '[]';
-        const status = options.status || 'processing'; // Default to processing when video is created
+        const status = options.status || 'processing';
+        const sourceType = options.sourceType === 'live' ? 'live' : 'upload';
 
         const result = await db.query(
-            `INSERT INTO videos (title, description, storage_path, signing_secret, owner_id, lesson_id, "order", is_preview, notes, assignments, storage_provider, r2_key, status)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
-            [title, description, storagePath, signingSecret, ownerId, lessonId, order, isPreview, notes, assignments, storageProvider, r2Key, status]
+            `INSERT INTO videos (title, description, storage_path, signing_secret, owner_id, lesson_id, "order", is_preview, notes, assignments, storage_provider, r2_key, status, source_type)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+            [title, description, storagePath, signingSecret, ownerId, lessonId, order, isPreview, notes, assignments, storageProvider, r2Key, status, sourceType]
         );
         const video = result.rows[0];
 

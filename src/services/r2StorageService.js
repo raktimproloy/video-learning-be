@@ -132,6 +132,7 @@ async function uploadLessonMedia(teacherId, courseId, lessonId, fileBuffer, orig
   if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].some((e) => extLower === e)) {
     contentType = extLower === '.png' ? 'image/png' : extLower === '.gif' ? 'image/gif' : extLower === '.webp' ? 'image/webp' : 'image/jpeg';
   } else if (['.pdf'].includes(extLower)) contentType = 'application/pdf';
+  else if (['.txt'].includes(extLower)) contentType = 'text/plain';
   await uploadFile(key, fileBuffer, contentType);
   return key;
 }
@@ -152,6 +153,7 @@ async function uploadVideoMedia(teacherId, courseId, lessonId, videoId, fileBuff
   if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].some((e) => extLower === e)) {
     contentType = extLower === '.png' ? 'image/png' : extLower === '.gif' ? 'image/gif' : extLower === '.webp' ? 'image/webp' : 'image/jpeg';
   } else if (['.pdf'].includes(extLower)) contentType = 'application/pdf';
+  else if (['.txt'].includes(extLower)) contentType = 'text/plain';
   await uploadFile(key, fileBuffer, contentType);
   return key;
 }

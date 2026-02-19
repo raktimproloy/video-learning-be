@@ -1,27 +1,41 @@
 const socketIo = require('socket.io');
+const jwt = require('jsonwebtoken');
+const liveChatService = require('./services/liveChatService');
 
 let io;
-// Store notes per room (in-memory, consider Redis for production)
-const roomNotes = {};
+const roomNotes = {}; // legacy in-memory notes (LiveNote)
 
 const initSocket = (server) => {
   io = socketIo(server, {
     cors: {
-      origin: "*", // Adjust this in production to match your frontend domain
+      origin: "*",
       methods: ["GET", "POST"]
     }
   });
 
-  io.on('connection', (socket) => {
-    console.log('New client connected:', socket.id);
+  io.use((socket, next) => {
+    const token = socket.handshake?.auth?.token;
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_jwt_secret');
+        socket.user = { id: decoded.id, email: decoded.email, role: decoded.role || 'student' };
+      } catch (_) {
+        socket.user = null;
+      }
+    } else {
+      socket.user = null;
+    }
+    next();
+  });
 
-    // Join a specific room (e.g., based on lessonId)
+  io.on('connection', (socket) => {
+    console.log('New client connected:', socket.id, socket.user?.id ? `user=${socket.user.id}` : 'anon');
+
     socket.on('joinRoom', (roomId) => {
       socket.join(roomId);
       console.log(`Socket ${socket.id} joined room ${roomId}`);
     });
 
-    // Request existing notes
     socket.on('requestNotes', (roomId) => {
       if (roomNotes[roomId] && roomNotes[roomId].length > 0) {
         socket.emit('teacherNotesList', roomNotes[roomId]);
@@ -30,18 +44,31 @@ const initSocket = (server) => {
       }
     });
 
-    // Handle chat messages
-    socket.on('chatMessage', ({ roomId, message, user, isTeacher }) => {
-      // Broadcast to everyone in the room INCLUDING sender (or exclude if preferred)
-      io.to(roomId).emit('chatMessage', {
-        user,
-        message,
-        isTeacher: isTeacher || false,
-        timestamp: new Date().toISOString()
-      });
+    socket.on('chatMessage', async ({ roomId, message, user, isTeacher }) => {
+      const userId = socket.user?.id;
+      const userType = (socket.user?.role === 'teacher' ? 'teacher' : 'student');
+      const displayName = (user || socket.user?.email?.split('@')[0] || 'User');
+      const effectiveTeacher = isTeacher === true || userType === 'teacher';
+
+      if (!userId || !message || typeof message !== 'string' || message.trim().length === 0) {
+        return;
+      }
+      try {
+        const saved = await liveChatService.addMessage(roomId, userId, userType, displayName, message.trim());
+        if (saved) {
+          io.to(roomId).emit('chatMessage', {
+            id: saved.id,
+            user: saved.user_display_name || displayName,
+            message: saved.message,
+            isTeacher: effectiveTeacher,
+            timestamp: saved.created_at
+          });
+        }
+      } catch (err) {
+        console.error('Chat persist error:', err);
+      }
     });
 
-    // Handle adding teacher notes
     socket.on('addTeacherNote', ({ roomId, note, noteId }) => {
       if (!roomNotes[roomId]) {
         roomNotes[roomId] = [];
@@ -55,7 +82,6 @@ const initSocket = (server) => {
       io.to(roomId).emit('teacherNoteAdded', newNote);
     });
 
-    // Handle deleting teacher notes
     socket.on('deleteTeacherNote', ({ roomId, noteId }) => {
       if (roomNotes[roomId]) {
         roomNotes[roomId] = roomNotes[roomId].filter(n => n.id !== noteId);
