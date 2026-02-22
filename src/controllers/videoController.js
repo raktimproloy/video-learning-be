@@ -2,6 +2,7 @@ const videoService = require('../services/videoService');
 const lessonService = require('../services/lessonService');
 const courseService = require('../services/courseService');
 const r2Storage = require('../services/r2StorageService');
+const liveChatService = require('../services/liveChatService');
 
 function contentTypeForPath(subpath) {
     if (subpath.endsWith('.m3u8')) return 'application/vnd.apple.mpegurl';
@@ -52,6 +53,30 @@ class VideoController {
             res.json(result);
         } catch (error) {
             console.error('Get video details error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async getLiveChat(req, res) {
+        try {
+            const { videoId } = req.params;
+            const userId = req.user.id;
+
+            const video = await videoService.getVideoById(videoId);
+            if (!video) return res.status(404).json({ error: 'Video not found' });
+            if (video.source_type !== 'live') return res.status(400).json({ error: 'This video is not from a live session' });
+
+            let hasAccess = video.owner_id === userId || await videoService.checkPermission(userId, videoId);
+            if (!hasAccess && video.is_preview) hasAccess = true;
+            if (!hasAccess) return res.status(403).json({ error: 'Access denied' });
+
+            const lessonId = video.lesson_id;
+            if (!lessonId) return res.status(400).json({ error: 'Video has no lesson' });
+
+            const messages = await liveChatService.getMessages(lessonId, videoId, 500);
+            res.json({ messages });
+        } catch (error) {
+            console.error('Get live chat error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     }

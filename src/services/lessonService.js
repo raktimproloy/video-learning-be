@@ -183,21 +183,23 @@ class LessonService {
     }
 
     async updateLiveStatus(id, isLive, sessionData = {}) {
-        const { live_session_name, live_session_order, live_session_description } = sessionData;
+        const { live_session_name, live_session_order, live_session_description, current_live_session_id } = sessionData;
         if (isLive) {
             const result = await db.query(
                 `UPDATE lessons SET is_live = true, live_started_at = COALESCE(live_started_at, NOW()),
                  live_session_name = COALESCE($2, live_session_name),
                  live_session_order = COALESCE($3, live_session_order, 0),
-                 live_session_description = COALESCE($4, live_session_description)
+                 live_session_description = COALESCE($4, live_session_description),
+                 current_live_session_id = COALESCE($5, current_live_session_id)
                  WHERE id = $1 RETURNING *`,
-                [id, live_session_name ?? null, live_session_order ?? null, live_session_description ?? null]
+                [id, live_session_name ?? null, live_session_order ?? null, live_session_description ?? null, current_live_session_id ?? null]
             );
             return result.rows[0];
         }
         const result = await db.query(
             `UPDATE lessons SET is_live = false, live_started_at = NULL,
-             live_session_name = NULL, live_session_order = NULL, live_session_description = NULL
+             live_session_name = NULL, live_session_order = NULL, live_session_description = NULL,
+             current_live_session_id = NULL
              WHERE id = $1 RETURNING *`,
             [id]
         );

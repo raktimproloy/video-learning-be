@@ -48,12 +48,13 @@ class AdminCategoryController {
             return res.status(400).json({ errors: errors.array() });
         }
         try {
-            const { name, description, parentId, status } = req.body;
+            const { name, description, parentId, status, displayOrder } = req.body;
             const category = await adminCategoryService.create({
                 name,
                 description,
                 parentId: parentId || null,
                 status,
+                displayOrder: displayOrder != null ? parseInt(displayOrder, 10) : undefined,
             });
             res.status(201).json({ category });
         } catch (error) {
@@ -77,12 +78,13 @@ class AdminCategoryController {
             return res.status(400).json({ errors: errors.array() });
         }
         try {
-            const { name, description, parentId, status } = req.body;
+            const { name, description, parentId, status, displayOrder } = req.body;
             const category = await adminCategoryService.update(req.params.id, {
                 name,
                 description,
                 parentId,
                 status,
+                displayOrder: displayOrder != null ? parseInt(displayOrder, 10) : undefined,
             });
             res.json({ category });
         } catch (error) {

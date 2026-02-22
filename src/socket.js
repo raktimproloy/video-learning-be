@@ -1,6 +1,7 @@
 const socketIo = require('socket.io');
 const jwt = require('jsonwebtoken');
 const liveChatService = require('./services/liveChatService');
+const lessonService = require('./services/lessonService');
 
 let io;
 const roomNotes = {}; // legacy in-memory notes (LiveNote)
@@ -54,7 +55,9 @@ const initSocket = (server) => {
         return;
       }
       try {
-        const saved = await liveChatService.addMessage(roomId, userId, userType, displayName, message.trim());
+        const lesson = await lessonService.getLessonById(roomId).catch(() => null);
+        const liveSessionId = lesson?.current_live_session_id || null;
+        const saved = await liveChatService.addMessage(roomId, userId, userType, displayName, message.trim(), liveSessionId);
         if (saved) {
           io.to(roomId).emit('chatMessage', {
             id: saved.id,

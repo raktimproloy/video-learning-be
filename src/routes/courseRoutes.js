@@ -53,7 +53,9 @@ const upload = multer({
 
 // Student routes
 router.get('/student/purchased', authMiddleware, requireRole(['student', 'teacher']), courseController.getPurchasedCourses);
+router.get('/student/purchase-history', authMiddleware, requireRole(['student', 'teacher']), courseController.getStudentPurchaseHistory);
 router.get('/student/available', authMiddleware, requireRole(['student', 'teacher']), courseController.getAvailableCourses);
+router.get('/:id/assignments-notes', authMiddleware, requireRole(['student', 'teacher']), courseController.getCourseAssignmentsAndNotes);
 router.post('/:id/purchase', authMiddleware, requireRole(['student', 'teacher']), courseController.purchaseCourse);
 
 // Course media streaming from R2 - PUBLIC (no auth) so img/video tags work
@@ -67,6 +69,7 @@ router.get(/^\/media\/(.+)$/, (req, res, next) => {
 // Public/Authenticated routes - optionalAuth allows public access but sets req.user if authenticated
 router.get('/', optionalAuth, courseController.getAllCourses);
 router.get('/search', optionalAuth, courseController.searchCourses);
+router.get('/by-invite/:code', courseController.getCourseByInviteCode);
 router.get('/:id/details', optionalAuth, courseController.getCourseDetails);
 router.get('/:id', optionalAuth, courseController.getCourseById);
 

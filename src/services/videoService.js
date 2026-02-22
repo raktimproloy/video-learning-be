@@ -49,6 +49,7 @@ class VideoService {
             SELECT DISTINCT
                 v.id, 
                 v.title, 
+                v.source_type,
                 true as has_access
             FROM videos v
             LEFT JOIN user_permissions up ON v.id = up.video_id AND up.user_id = $1 AND up.expires_at > NOW()
@@ -72,6 +73,7 @@ class VideoService {
                 v.title, 
                 v.created_at,
                 v.size_bytes,
+                v.source_type,
                 (SELECT COUNT(*) FROM user_permissions up WHERE up.video_id = v.id AND up.expires_at > NOW()) as student_count
             FROM videos v
             WHERE v.owner_id = $1
@@ -105,6 +107,7 @@ class VideoService {
             return {
                 ...row,
                 isPreview: row.is_preview ?? false,
+                source_type: row.source_type || 'upload',
                 notes: Array.isArray(notes) ? notes : [],
                 assignments: Array.isArray(assignments) ? assignments : [],
                 hasRequiredAssignment: !!hasRequired,

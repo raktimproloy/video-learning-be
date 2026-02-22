@@ -1,24 +1,32 @@
 const db = require('../../db');
 
 class LiveChatService {
-    async getMessages(lessonId, limit = 500) {
+    async getMessages(lessonId, liveSessionId = null, limit = 500) {
+        const params = liveSessionId
+            ? [lessonId, liveSessionId, limit]
+            : [lessonId, limit];
+        const whereClause = liveSessionId
+            ? 'WHERE lesson_id = $1 AND live_session_id = $2'
+            : 'WHERE lesson_id = $1';
+        const orderLimit = liveSessionId
+            ? 'ORDER BY created_at ASC LIMIT $3'
+            : 'ORDER BY created_at ASC LIMIT $2';
         const result = await db.query(
             `SELECT id, user_id, user_type, user_display_name, message, created_at
              FROM live_chat_messages
-             WHERE lesson_id = $1
-             ORDER BY created_at ASC
-             LIMIT $2`,
-            [lessonId, limit]
+             ${whereClause}
+             ${orderLimit}`,
+            params
         );
         return result.rows;
     }
 
-    async addMessage(lessonId, userId, userType, userDisplayName, message) {
+    async addMessage(lessonId, userId, userType, userDisplayName, message, liveSessionId = null) {
         const result = await db.query(
-            `INSERT INTO live_chat_messages (lesson_id, user_id, user_type, user_display_name, message)
-             VALUES ($1, $2, $3, $4, $5)
+            `INSERT INTO live_chat_messages (lesson_id, user_id, user_type, user_display_name, message, live_session_id)
+             VALUES ($1, $2, $3, $4, $5, $6)
              RETURNING *`,
-            [lessonId, userId, userType, (userDisplayName || '').slice(0, 100), (message || '').slice(0, 2000)]
+            [lessonId, userId, userType, (userDisplayName || '').slice(0, 100), (message || '').slice(0, 2000), liveSessionId]
         );
         const row = result.rows[0];
         return row ? {

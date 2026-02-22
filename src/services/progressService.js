@@ -178,6 +178,13 @@ async function getCourseProgress(userId, courseId) {
     console.error('getCourseProgress assignment count error:', e);
   }
 
+  // Calculate total time spent watching videos
+  let totalTimeSpentSeconds = 0;
+  progressResult.rows.forEach((r) => {
+    const totalSec = parseFloat(r.total_watch_seconds) || 0;
+    totalTimeSpentSeconds += totalSec;
+  });
+
   return {
     courseId,
     totalVideos,
@@ -190,6 +197,8 @@ async function getCourseProgress(userId, courseId) {
     percentVideosCompleted: totalVideos > 0 ? Math.round((videosCompleted90 / totalVideos) * 100) : 0,
     percentLessonsCompleted: totalLessons > 0 ? Math.round((lessonsCompleted / totalLessons) * 100) : 0,
     completionPercentage: Math.min(100, completionPercentage),
+    totalTimeSpentSeconds,
+    totalDurationSeconds,
   };
 }
 

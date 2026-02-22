@@ -348,6 +348,38 @@ async function declineSubmission(submissionId, teacherId) {
 }
 
 /**
+ * Cancel submission (delete pending submission). Only allows canceling pending submissions by the student who submitted.
+ */
+async function cancelSubmission(submissionId, userId) {
+  const result = await db.query(
+    `DELETE FROM assignment_submissions 
+     WHERE id = $1 AND user_id = $2 AND status = 'pending' 
+     RETURNING *`,
+    [submissionId, userId]
+  );
+  if (result.rows.length === 0) {
+    throw new Error('Submission not found, already reviewed, or access denied');
+  }
+  return result.rows[0];
+}
+
+/**
+ * Get submission by assignment ID and user ID (for cancel/resubmit).
+ */
+async function getSubmissionByAssignmentAndUser(userId, assignmentType, videoId, lessonId, assignmentId) {
+  const videoIdVal = assignmentType === 'video' ? videoId : null;
+  const lessonIdVal = assignmentType === 'lesson' ? lessonId : null;
+  const result = await db.query(
+    `SELECT * FROM assignment_submissions 
+     WHERE user_id = $1 AND assignment_type = $2 AND video_id IS NOT DISTINCT FROM $3 
+     AND lesson_id IS NOT DISTINCT FROM $4 AND assignment_id = $5 
+     ORDER BY submitted_at DESC LIMIT 1`,
+    [userId, assignmentType, videoIdVal, lessonIdVal, assignmentId]
+  );
+  return result.rows[0] || null;
+}
+
+/**
  * Get file stream or local path for preview. Returns { stream, contentType } for R2 or { path } for local.
  * If fileIndex is provided, uses files_json array; otherwise uses file_path.
  */
@@ -436,5 +468,7 @@ module.exports = {
   getSubmissionById,
   grantSubmission,
   declineSubmission,
+  cancelSubmission,
+  getSubmissionByAssignmentAndUser,
   getSubmissionFileForPreview,
 };

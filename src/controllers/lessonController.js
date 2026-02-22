@@ -1,8 +1,10 @@
+const db = require('../../db');
 const lessonService = require('../services/lessonService');
 const courseService = require('../services/courseService');
 const liveChatService = require('../services/liveChatService');
 const liveMaterialService = require('../services/liveMaterialService');
 const liveWatchService = require('../services/liveWatchService');
+const liveSessionService = require('../services/liveSessionService');
 const { isImage, compressImage } = require('../utils/imageCompress');
 const videoService = require('../services/videoService');
 const agoraService = require('../services/agoraService');
@@ -283,18 +285,27 @@ class LessonController {
                 if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
                 if (is_live === true) {
                     const { live_name, live_order, live_description } = req.body || {};
+                    const liveOrder = live_order != null ? parseInt(live_order, 10) : 0;
+                    const liveName = (live_name && String(live_name).trim()) ? String(live_name).trim() : (lesson.title || 'Live');
+                    const liveSession = await liveSessionService.create(id, lesson.course_id, req.user.id, {
+                        liveName: liveName || lesson.title,
+                        liveOrder,
+                        liveDescription: (live_description && String(live_description).trim()) || null
+                    });
                     const sessionData = {
-                        live_session_name: live_name || null,
-                        live_session_order: live_order != null ? parseInt(live_order, 10) : null,
-                        live_session_description: live_description || null
+                        live_session_name: liveName,
+                        live_session_order: liveOrder,
+                        live_session_description: (live_description && String(live_description).trim()) || null,
+                        current_live_session_id: liveSession.id
                     };
                     const updatedLesson = await lessonService.updateLiveStatus(id, true, sessionData);
                     const uid = Math.abs(req.user.id.split('').reduce((a, c) => ((a << 5) - a) + c.charCodeAt(0), 0)) % 2147483647;
                     const creds = agoraService.generateRtcToken(id, uid, 'publisher');
                     if (!creds) return res.status(503).json({ error: 'Agora not configured. Set AGORA_APP_ID.' });
-                    return res.json({ ...creds, lesson: updatedLesson || lesson, is_live: true });
+                    return res.json({ ...creds, lesson: updatedLesson || lesson, is_live: true, live_session_id: liveSession.id });
                 }
                 if (is_live === false) {
+                    await liveSessionService.endDiscarded(id);
                     await lessonService.updateLiveStatus(id, false, {});
                     return res.json({ is_live: false, lesson });
                 }
@@ -353,7 +364,8 @@ class LessonController {
                 const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
                 if (!enrolled) return res.status(403).json({ error: 'Access denied' });
             } else if (!isTeacher) return res.status(403).json({ error: 'Access denied' });
-            const messages = await liveChatService.getMessages(lessonId);
+            const liveSessionId = lesson.current_live_session_id || null;
+            const messages = await liveChatService.getMessages(lessonId, liveSessionId);
             res.json({ messages });
         } catch (error) {
             console.error('Get live chat error:', error);
@@ -364,6 +376,7 @@ class LessonController {
     async getLiveMaterials(req, res) {
         try {
             const lessonId = req.params.id;
+            const { liveSessionId: querySessionId } = req.query;
             const lesson = await lessonService.getLessonById(lessonId);
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             const course = await courseService.getCourseById(lesson.course_id);
@@ -374,7 +387,10 @@ class LessonController {
                 const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
                 if (!enrolled) return res.status(403).json({ error: 'Access denied' });
             } else if (!isTeacher) return res.status(403).json({ error: 'Access denied' });
-            const materials = await liveMaterialService.list(lessonId);
+            const liveSessionId = querySessionId && String(querySessionId).trim()
+                ? String(querySessionId).trim()
+                : (lesson.current_live_session_id || null);
+            const materials = await liveMaterialService.list(lessonId, liveSessionId);
             res.json({ materials });
         } catch (error) {
             console.error('Get live materials error:', error);
@@ -417,10 +433,63 @@ class LessonController {
                 if (!enrolled) return res.status(403).json({ error: 'Access denied' });
             } else if (!isTeacher) return res.status(403).json({ error: 'Access denied' });
             const live_started_at = await lessonService.getLiveStartedAt(lessonId);
-            const viewerCount = await liveWatchService.getViewerCount(lessonId);
-            res.json({ live_started_at, viewerCount });
+            const viewerCount = await liveWatchService.getViewerCount(lessonId, course.teacher_id);
+            const live_session_id = lesson.current_live_session_id || null;
+            let broadcast_status = 'ended';
+            let live_name = null;
+            let live_description = null;
+            if (live_session_id) {
+                const session = await liveSessionService.getById(live_session_id);
+                broadcast_status = session?.broadcast_status || 'starting';
+                live_name = session?.live_name ?? null;
+                live_description = session?.live_description ?? null;
+            }
+            res.json({ live_started_at, viewerCount, live_session_id, broadcast_status, live_name, live_description });
         } catch (error) {
             console.error('Get live stats error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async updateLiveSession(req, res) {
+        try {
+            if (req.user.role !== 'teacher') return res.status(403).json({ error: 'Teachers only' });
+            const lessonId = req.params.id;
+            const lesson = await lessonService.getLessonById(lessonId);
+            if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
+            const course = await courseService.getCourseById(lesson.course_id);
+            if (!course) return res.status(404).json({ error: 'Course not found' });
+            if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+            const { live_name, live_description } = req.body || {};
+            const session = await liveSessionService.updateSession(lessonId, {
+                liveName: live_name,
+                liveDescription: live_description,
+            });
+            if (!session) return res.status(400).json({ error: 'No active live session' });
+            res.json({ live_name: session.live_name, live_description: session.live_description });
+        } catch (error) {
+            console.error('Update live session error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async setBroadcastStatus(req, res) {
+        try {
+            if (req.user.role !== 'teacher') return res.status(403).json({ error: 'Teachers only' });
+            const lessonId = req.params.id;
+            const lesson = await lessonService.getLessonById(lessonId);
+            if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
+            const course = await courseService.getCourseById(lesson.course_id);
+            if (!course) return res.status(404).json({ error: 'Course not found' });
+            if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+            const { broadcast_status } = req.body || {};
+            if (!['live', 'paused', 'ended'].includes(broadcast_status)) {
+                return res.status(400).json({ error: 'broadcast_status must be live, paused, or ended' });
+            }
+            await liveSessionService.setBroadcastStatus(lessonId, broadcast_status);
+            res.json({ broadcast_status });
+        } catch (error) {
+            console.error('Set broadcast status error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     }
@@ -436,7 +505,7 @@ class LessonController {
                 return res.status(403).json({ error: 'Access denied' });
             }
             const watchers = await liveWatchService.getWatchers(lessonId);
-            const viewerCount = await liveWatchService.getViewerCount(lessonId);
+            const viewerCount = await liveWatchService.getViewerCount(lessonId, course.teacher_id);
             res.json({ watchers, viewerCount });
         } catch (error) {
             console.error('Get live viewers error:', error);
@@ -455,8 +524,9 @@ class LessonController {
             const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
             if (!enrolled) return res.status(403).json({ error: 'Access denied' });
             if (!lesson.is_live) return res.status(400).json({ error: 'Lesson is not live' });
-            await liveWatchService.join(lessonId, req.user.id);
-            const viewerCount = await liveWatchService.getViewerCount(lessonId);
+            const liveSessionId = lesson.current_live_session_id || null;
+            await liveWatchService.join(lessonId, req.user.id, liveSessionId);
+            const viewerCount = await liveWatchService.getViewerCount(lessonId, course.teacher_id);
             res.json({ ok: true, viewerCount });
         } catch (error) {
             console.error('Live watch join error:', error);
@@ -483,7 +553,8 @@ class LessonController {
             const lesson = await lessonService.getLessonById(lessonId);
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             await liveWatchService.heartbeat(lessonId, req.user.id);
-            const viewerCount = await liveWatchService.getViewerCount(lessonId);
+            const course = await courseService.getCourseById(lesson.course_id);
+            const viewerCount = await liveWatchService.getViewerCount(lessonId, course?.teacher_id);
             res.json({ ok: true, viewerCount });
         } catch (error) {
             console.error('Live watch heartbeat error:', error);
@@ -520,7 +591,8 @@ class LessonController {
                     fileName = file.originalname || 'file';
                 }
             }
-            const material = await liveMaterialService.addNote(lessonId, req.user.id, { content: content.trim() || null, filePath, fileName });
+            const liveSessionId = lesson.current_live_session_id || null;
+            const material = await liveMaterialService.addNote(lessonId, req.user.id, { content: content.trim() || null, filePath, fileName }, liveSessionId);
             const getIo = require('../socket').getIo;
             getIo().to(lessonId).emit('liveMaterialAdded', material);
             res.status(201).json(material);
@@ -560,7 +632,8 @@ class LessonController {
                     fileName = file.originalname || 'file';
                 }
             }
-            const material = await liveMaterialService.addAssignment(lessonId, req.user.id, { content: content.trim() || null, filePath, fileName, isRequired });
+            const liveSessionId = lesson.current_live_session_id || null;
+            const material = await liveMaterialService.addAssignment(lessonId, req.user.id, { content: content.trim() || null, filePath, fileName, isRequired }, liveSessionId);
             const getIo = require('../socket').getIo;
             getIo().to(lessonId).emit('liveMaterialAdded', material);
             res.status(201).json(material);
@@ -590,7 +663,8 @@ class LessonController {
     }
 
     /**
-     * Save live stream recording. Teacher only; creates an encrypted video (same pipeline as uploaded videos).
+     * Save live stream recording. Teacher only; creates an encrypted video using live_session_id as video_id.
+     * All live info (chat, materials) is associated with that ID.
      */
     async saveLiveRecording(req, res) {
         try {
@@ -612,20 +686,40 @@ class LessonController {
             if (!course) return res.status(404).json({ error: 'Course not found' });
             if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized to save recording for this lesson.' });
 
+            const liveSession = await liveSessionService.getActiveByLesson(lessonId);
+            if (!liveSession) {
+                return res.status(400).json({ error: 'No active live session found. Start a live stream and record before saving.' });
+            }
+
+            const videoId = liveSession.id;
             const ownerId = req.user.id;
-            const liveName = lesson.live_session_name || lesson.title;
-            const liveOrder = lesson.live_session_order != null ? parseInt(lesson.live_session_order, 10) : 0;
-            const liveDesc = lesson.live_session_description || null;
+            const liveName = liveSession.live_name || lesson.title;
+            const liveOrder = liveSession.live_order != null ? parseInt(liveSession.live_order, 10) : 0;
+            const liveDesc = liveSession.live_description || null;
             const title = liveName ? (liveName.startsWith('Live:') ? liveName : `Live: ${liveName}`) : `Live: ${lesson.title}`;
             const useR2 = r2Storage.isConfigured;
 
-            const video = await adminService.createVideo(
+            const sessionMaterials = await liveMaterialService.listBySession(liveSession.id);
+            const notes = sessionMaterials.filter((m) => m.type === 'note').map((m) => ({
+                type: m.file_path ? 'file' : 'text',
+                content: m.content || '',
+                ...(m.file_path && { filePath: m.file_path, fileName: m.file_name || 'file' })
+            }));
+            const assignments = sessionMaterials.filter((m) => m.type === 'assignment').map((m) => ({
+                type: m.file_path ? 'file' : 'text',
+                content: m.content || '',
+                isRequired: !!m.is_required,
+                ...(m.file_path && { filePath: m.file_path, fileName: m.file_name || 'file' })
+            }));
+
+            const video = await adminService.createVideoWithId(
+                videoId,
                 title,
                 'staging_placeholder',
                 ownerId,
                 lessonId,
                 liveOrder,
-                { storageProvider: useR2 ? 'r2' : 'local', r2Key: null, description: liveDesc, sourceType: 'live' }
+                { storageProvider: useR2 ? 'r2' : 'local', r2Key: null, description: liveDesc, notes, assignments }
             );
 
             const stagingVideoDir = path.join(STAGING_DIR, video.id);
@@ -642,6 +736,14 @@ class LessonController {
             }
 
             await adminService.createProcessingTask(ownerId, video.id, 'h264', ['360p', '720p', '1080p'], 28, false);
+
+            const attendeeCount = await liveWatchService.getAttendeeCountBySession(videoId);
+            await db.query(
+                'UPDATE videos SET view_count = COALESCE(view_count, 0) + $1 WHERE id = $2',
+                [attendeeCount, videoId]
+            );
+
+            await liveSessionService.markSaved(liveSession.id);
 
             res.status(201).json({
                 message: 'Recording saved. It will be encrypted and processed like other lesson videos.',

@@ -297,6 +297,50 @@ async function declineSubmission(req, res) {
 }
 
 /**
+ * DELETE /assignments/cancel
+ * Body: { assignmentType, videoId?, lessonId, assignmentId }
+ * Student only. Cancel pending submission.
+ */
+async function cancelSubmission(req, res) {
+  try {
+    const userId = req.user.id;
+    const { assignmentType, videoId, lessonId, assignmentId } = req.body;
+    
+    if (!assignmentType || !assignmentId) {
+      return res.status(400).json({ error: 'assignmentType and assignmentId are required' });
+    }
+    if (assignmentType === 'video' && !videoId) {
+      return res.status(400).json({ error: 'videoId required for video assignment' });
+    }
+    if (assignmentType === 'lesson' && !lessonId) {
+      return res.status(400).json({ error: 'lessonId required for lesson assignment' });
+    }
+
+    const submission = await assignmentService.getSubmissionByAssignmentAndUser(
+      userId,
+      assignmentType,
+      videoId || null,
+      lessonId || null,
+      assignmentId
+    );
+
+    if (!submission) {
+      return res.status(404).json({ error: 'Submission not found' });
+    }
+
+    if (submission.status !== 'pending') {
+      return res.status(400).json({ error: 'Only pending submissions can be canceled' });
+    }
+
+    await assignmentService.cancelSubmission(submission.id, userId);
+    res.json({ message: 'Submission canceled successfully' });
+  } catch (error) {
+    console.error('Cancel submission error:', error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+}
+
+/**
  * GET /assignments/teacher/:id/preview?fileIndex=0
  * Teacher only. Stream submission file for inline preview (image, PDF, txt).
  * If fileIndex is provided, previews that file from files_json array.
@@ -338,5 +382,6 @@ module.exports = {
   getTeacherSubmissionById,
   grantSubmission,
   declineSubmission,
+  cancelSubmission,
   streamSubmissionPreview,
 };

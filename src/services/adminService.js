@@ -45,6 +45,43 @@ class AdminService {
         return video;
     }
 
+    /**
+     * Create video with a specific ID (used when saving live recording - live_session_id becomes video_id).
+     */
+    async createVideoWithId(videoId, title, storagePath, ownerId, lessonId = null, order = 0, options = {}) {
+        const signingSecret = crypto.randomBytes(32).toString('hex');
+        const storageProvider = options.storageProvider || 'local';
+        const r2Key = options.r2Key || null;
+        const description = options.description || null;
+        const isPreview = options.isPreview === true;
+        const notes = options.notes ? JSON.stringify(options.notes) : '[]';
+        const assignments = options.assignments ? JSON.stringify(options.assignments) : '[]';
+        const status = options.status || 'processing';
+        const sourceType = 'live';
+
+        const result = await db.query(
+            `INSERT INTO videos (id, title, description, storage_path, signing_secret, owner_id, lesson_id, "order", is_preview, notes, assignments, storage_provider, r2_key, status, source_type)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
+            [videoId, title, description, storagePath, signingSecret, ownerId, lessonId, order, isPreview, notes, assignments, storageProvider, r2Key, status, sourceType]
+        );
+        const video = result.rows[0];
+
+        try {
+            const keyDir = path.join(KEYS_ROOT_DIR, video.id);
+            if (!fs.existsSync(keyDir)) {
+                fs.mkdirSync(keyDir, { recursive: true });
+            }
+            const keyPath = path.join(keyDir, 'enc.key');
+            const key = crypto.randomBytes(16);
+            fs.writeFileSync(keyPath, key);
+            console.log(`Generated key for video ${video.id} at ${keyPath}`);
+        } catch (err) {
+            console.error('Failed to generate key file:', err);
+        }
+
+        return video;
+    }
+
     async updateVideoStoragePath(videoId, newPath) {
         const result = await db.query(
             'UPDATE videos SET storage_path = $1 WHERE id = $2 RETURNING *',

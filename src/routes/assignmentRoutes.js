@@ -12,6 +12,7 @@ const upload = multer({
 router.use(verifyToken);
 
 router.post('/submit', upload.array('files', 10), assignmentController.submitAssignment);
+router.delete('/cancel', assignmentController.cancelSubmission);
 router.get('/status/video/:videoId', assignmentController.getVideoStatus);
 router.get('/status/lesson/:lessonId', assignmentController.getLessonStatus);
 router.get('/lock-check', assignmentController.getLockStatus);

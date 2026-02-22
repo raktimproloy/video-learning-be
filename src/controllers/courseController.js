@@ -60,6 +60,7 @@ class CourseController {
                 fullDescription,
                 category,
                 subcategory,
+                admin_category_id,
                 tags,
                 language,
                 subtitle,
@@ -72,12 +73,15 @@ class CourseController {
                 hasAssignments
             } = req.body;
 
-            // Validate required fields
-            if (!title || !shortDescription || !fullDescription || !category || !level || !courseType || !price || !currency) {
+            // Validate required fields (admin_category_id or category for backward compat)
+            if (!title || !shortDescription || !fullDescription || !level || !courseType || !price || !currency) {
                 return res.status(400).json({ 
                     error: 'Missing required fields',
-                    required: ['title', 'shortDescription', 'fullDescription', 'category', 'level', 'courseType', 'price', 'currency']
+                    required: ['title', 'shortDescription', 'fullDescription', 'level', 'courseType', 'price', 'currency']
                 });
+            }
+            if (!admin_category_id && !category) {
+                return res.status(400).json({ error: 'Please select a category for your course.' });
             }
 
             // Parse tags (should be JSON string from FormData)
@@ -172,8 +176,9 @@ class CourseController {
                 title: title.trim(),
                 shortDescription: shortDescription.trim(),
                 fullDescription: fullDescription.trim(),
-                category: category.trim(),
+                category: (category || '').trim() || null,
                 subcategory: subcategory ? subcategory.trim() : null,
+                admin_category_id: admin_category_id || null,
                 tags: parsedTags,
                 language: language || 'English',
                 subtitle: subtitle ? subtitle.trim() : null,
@@ -532,6 +537,19 @@ class CourseController {
         }
     }
 
+    async getCourseByInviteCode(req, res) {
+        try {
+            const course = await courseService.getCourseByInviteCode(req.params.code);
+            if (!course) {
+                return res.status(404).json({ error: 'Invalid or expired invite code' });
+            }
+            res.json({ courseId: course.id });
+        } catch (error) {
+            console.error('Get course by invite error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
     async getCourseById(req, res) {
         try {
             // Pass userId if authenticated to check purchase/ownership status
@@ -571,6 +589,7 @@ class CourseController {
                 fullDescription,
                 category,
                 subcategory,
+                admin_category_id,
                 tags,
                 language,
                 subtitle,
@@ -590,8 +609,9 @@ class CourseController {
             if (title !== undefined) courseData.title = title.trim();
             if (shortDescription !== undefined) courseData.shortDescription = shortDescription.trim();
             if (fullDescription !== undefined) courseData.fullDescription = fullDescription.trim();
-            if (category !== undefined) courseData.category = category.trim();
+            if (category !== undefined) courseData.category = (category || '').trim();
             if (subcategory !== undefined) courseData.subcategory = subcategory ? subcategory.trim() : null;
+            if (admin_category_id !== undefined) courseData.admin_category_id = admin_category_id || null;
             if (tags !== undefined) {
                 try {
                     courseData.tags = typeof tags === 'string' ? JSON.parse(tags) : tags;
@@ -856,7 +876,7 @@ class CourseController {
         try {
             const courseId = req.params.id;
             const userId = req.user.id;
-            const { payment_method: paymentMethod, payment_reference: paymentReference } = req.body || {};
+            const { payment_method: paymentMethod, payment_reference: paymentReference, invite_code: inviteCode, coupon_code: couponCode } = req.body || {};
             const course = await courseService.getCourseByIdSimple(courseId);
             if (!course) {
                 return res.status(404).json({ error: 'Course not found' });
@@ -864,13 +884,26 @@ class CourseController {
             if (course.status && course.status !== 'active') {
                 return res.status(400).json({ error: 'This course is not available for purchase' });
             }
-            // In production: validate payment with gateway using paymentMethod/paymentReference before enrolling
-            await courseService.enrollUser(userId, courseId);
+            if (couponCode) {
+                const couponApplyService = require('../services/couponApplyService');
+                await couponApplyService.applyCoupon(couponCode, userId);
+            }
+            await courseService.enrollUser(userId, courseId, { inviteCode: inviteCode || undefined });
             res.json({
                 message: 'Course purchased successfully',
                 payment_method: paymentMethod || null,
             });
         } catch (error) {
+            const msg = error && error.message;
+            const couponErrors = [
+                'Coupon code is required',
+                'Invalid or inactive coupon',
+                'Coupon has expired or is not yet valid',
+                'This coupon has already been used with your account',
+            ];
+            if (msg && couponErrors.includes(msg)) {
+                return res.status(400).json({ error: msg });
+            }
             console.error('Purchase course error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
@@ -882,6 +915,16 @@ class CourseController {
             res.json(courses);
         } catch (error) {
             console.error('Get purchased courses error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async getStudentPurchaseHistory(req, res) {
+        try {
+            const purchases = await courseService.getStudentPurchaseHistory(req.user.id);
+            res.json(purchases);
+        } catch (error) {
+            console.error('Get student purchase history error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     }
@@ -938,6 +981,18 @@ class CourseController {
                 return res.status(404).send('Media not found');
             }
             res.status(500).send('Internal server error');
+        }
+    }
+
+    async getCourseAssignmentsAndNotes(req, res) {
+        try {
+            const userId = req.user.id;
+            const { id: courseId } = req.params;
+            const data = await courseService.getCourseAssignmentsAndNotes(courseId, userId);
+            res.json(data);
+        } catch (error) {
+            console.error('Get course assignments and notes error:', error);
+            res.status(500).json({ error: error.message || 'Internal server error' });
         }
     }
 }

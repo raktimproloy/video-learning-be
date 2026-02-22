@@ -39,6 +39,8 @@ router.get('/:id/live/materials', authMiddleware, lessonController.getLiveMateri
 router.get('/:id/live/started-at', authMiddleware, lessonController.getLiveStartedAt);
 router.get('/:id/live/viewers', authMiddleware, lessonController.getLiveViewers);
 router.get('/:id/live/stats', authMiddleware, lessonController.getLiveStats);
+router.put('/:id/live/broadcast-status', authMiddleware, lessonController.setBroadcastStatus);
+router.put('/:id/live/session', authMiddleware, lessonController.updateLiveSession);
 router.put('/:id/live', authMiddleware, lessonController.setLiveAndGetToken);
 router.post('/:id/live/save-recording', authMiddleware, uploadRecording, lessonController.saveLiveRecording);
 router.post('/:id/live/watch/join', authMiddleware, lessonController.liveWatchJoin);

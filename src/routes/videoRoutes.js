@@ -19,6 +19,9 @@ router.get(/^\/([^/]+)\/stream\/(.+)$/, verifyToken, (req, res, next) => {
 // Get signed URL for playback
 router.get('/:videoId/sign', verifyToken, videoController.getSignedUrl);
 
+// Get archived live chat for a video saved from live (video_id = live_session_id)
+router.get('/:videoId/live-chat', verifyToken, videoController.getLiveChat);
+
 // Get video details (title, description, notes, assignments, lesson_id, order)
 router.get('/:videoId', verifyToken, videoController.getVideoDetails);
 

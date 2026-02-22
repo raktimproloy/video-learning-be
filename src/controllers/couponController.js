@@ -1,6 +1,46 @@
 const couponService = require('../services/couponService');
+const couponApplyService = require('../services/couponApplyService');
 
 module.exports = {
+    /** POST /v1/coupons/validate - Student validates coupon (preview discount, does NOT consume) */
+    async validate(req, res) {
+        try {
+            const studentId = req.user.id;
+            const { couponCode } = req.body || {};
+            const result = await couponApplyService.validateCoupon(couponCode, studentId);
+            res.status(200).json(result);
+        } catch (error) {
+            const msg = error.message;
+            if (msg === 'Coupon code is required' || msg === 'Invalid or inactive coupon' || msg === 'Coupon has expired or is not yet valid' || msg === 'This coupon has already been used with your account') {
+                return res.status(400).json({ error: msg });
+            }
+            console.error('Validate coupon error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    },
+
+    /** POST /v1/coupons/apply - Student applies a coupon (validates and records one-time use) */
+    async apply(req, res) {
+        try {
+            const studentId = req.user.id;
+            const { couponCode } = req.body || {};
+            const result = await couponApplyService.applyCoupon(couponCode, studentId);
+            res.status(200).json(result);
+        } catch (error) {
+            const msg = error.message;
+            if (
+                msg === 'Coupon code is required' ||
+                msg === 'Invalid or inactive coupon' ||
+                msg === 'Coupon has expired or is not yet valid' ||
+                msg === 'This coupon has already been used with your account'
+            ) {
+                return res.status(400).json({ error: msg });
+            }
+            console.error('Apply coupon error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    },
+
     async list(req, res) {
         try {
             const teacherId = req.user.id;

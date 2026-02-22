@@ -1,7 +1,7 @@
 const db = require('../../db');
 
 class LiveWatchService {
-    async join(lessonId, studentId) {
+    async join(lessonId, studentId, liveSessionId = null) {
         await db.query(
             `UPDATE live_watch_records SET left_at = NOW(),
              watch_seconds = GREATEST(0, EXTRACT(EPOCH FROM (NOW() - joined_at))::INTEGER)
@@ -9,10 +9,10 @@ class LiveWatchService {
             [lessonId, studentId]
         );
         const result = await db.query(
-            `INSERT INTO live_watch_records (lesson_id, student_id, joined_at, watch_seconds)
-             VALUES ($1, $2, NOW(), 0)
+            `INSERT INTO live_watch_records (lesson_id, student_id, joined_at, watch_seconds, live_session_id)
+             VALUES ($1, $2, NOW(), 0, $3)
              RETURNING *`,
-            [lessonId, studentId]
+            [lessonId, studentId, liveSessionId]
         );
         return result.rows[0];
     }
@@ -40,11 +40,19 @@ class LiveWatchService {
         return r.rows[0];
     }
 
-    async getViewerCount(lessonId) {
+    /**
+     * Get viewer count for a lesson. Excludes the course owner (teacher) - only counts students.
+     * @param {string} lessonId
+     * @param {string} [excludeTeacherId] - course owner id to exclude from count
+     */
+    async getViewerCount(lessonId, excludeTeacherId = null) {
+        const args = excludeTeacherId ? [lessonId, excludeTeacherId] : [lessonId];
+        const cond = excludeTeacherId
+            ? 'WHERE lesson_id = $1 AND left_at IS NULL AND student_id != $2'
+            : 'WHERE lesson_id = $1 AND left_at IS NULL';
         const r = await db.query(
-            `SELECT COUNT(*)::int as count FROM live_watch_records
-             WHERE lesson_id = $1 AND left_at IS NULL`,
-            [lessonId]
+            `SELECT COUNT(*)::int as count FROM live_watch_records ${cond}`,
+            args
         );
         return r.rows[0]?.count ?? 0;
     }
@@ -57,6 +65,17 @@ class LiveWatchService {
             [lessonId]
         );
         return r.rows;
+    }
+
+    /** Count distinct students who attended a specific live session (for setting initial view_count when saving). */
+    async getAttendeeCountBySession(liveSessionId) {
+        const r = await db.query(
+            `SELECT COUNT(DISTINCT student_id)::int as count
+             FROM live_watch_records
+             WHERE live_session_id = $1`,
+            [liveSessionId]
+        );
+        return r.rows[0]?.count ?? 0;
     }
 
     /** Which students watched this live */

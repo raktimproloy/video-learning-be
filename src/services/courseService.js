@@ -1,4 +1,5 @@
 const db = require('../../db');
+const adminCategoryService = require('./adminCategoryService');
 
 class CourseService {
     async createCourse(teacherId, courseData) {
@@ -8,6 +9,7 @@ class CourseService {
             fullDescription,
             category,
             subcategory,
+            admin_category_id,
             tags,
             language,
             subtitle,
@@ -25,10 +27,10 @@ class CourseService {
         const result = await db.query(
             `INSERT INTO courses (
                 teacher_id, title, description, short_description, full_description,
-                category, subcategory, tags, language, subtitle, level, course_type,
+                category, subcategory, admin_category_id, tags, language, subtitle, level, course_type,
                 thumbnail_path, intro_video_path, price, discount_price, currency,
                 has_live_class, has_assignments
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
             RETURNING *`,
             [
                 teacherId,
@@ -38,6 +40,7 @@ class CourseService {
                 fullDescription || null,
                 category || null,
                 subcategory || null,
+                admin_category_id || null,
                 JSON.stringify(tags || []),
                 language || 'English',
                 subtitle || null,
@@ -52,7 +55,11 @@ class CourseService {
                 hasAssignments || false
             ]
         );
-        return result.rows[0];
+        const course = result.rows[0];
+        if (admin_category_id) {
+            await adminCategoryService.incrementCourseCountForPath(admin_category_id);
+        }
+        return course;
     }
 
     async getCoursesByTeacher(teacherId) {
@@ -255,11 +262,19 @@ class CourseService {
             paramIndex++;
         }
 
-        const categoryFilter = (category && typeof category === 'string') ? category.trim().toLowerCase().replace(/\s+/g, '-') : '';
+        const categoryFilter = (category && typeof category === 'string') ? category.trim() : '';
         if (categoryFilter) {
-            conditions.push(`(LOWER(REPLACE(TRIM(COALESCE(courses.category, '')), ' ', '-')) = $${paramIndex})`);
-            params.push(categoryFilter);
-            paramIndex++;
+            const categoryIds = await adminCategoryService.getCategoryAndDescendantIds(categoryFilter);
+            if (categoryIds.length > 0) {
+                const placeholders = categoryIds.map(() => `$${paramIndex++}`).join(', ');
+                params.push(...categoryIds);
+                conditions.push(`(courses.admin_category_id IN (${placeholders}))`);
+            } else {
+                const legacySlug = categoryFilter.toLowerCase().replace(/\s+/g, '-');
+                conditions.push(`(LOWER(REPLACE(TRIM(COALESCE(courses.category, '')), ' ', '-')) = $${paramIndex})`);
+                params.push(legacySlug);
+                paramIndex++;
+            }
         }
 
         const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -581,6 +596,15 @@ class CourseService {
         return course;
     }
 
+    async getCourseByInviteCode(code) {
+        if (!code || typeof code !== 'string') return null;
+        const result = await db.query(
+            'SELECT id FROM courses WHERE invite_code = $1 AND (status IS NULL OR status = $2)',
+            [String(code).trim().toUpperCase(), 'active']
+        );
+        return result.rows[0] || null;
+    }
+
     async updateCourse(id, courseData) {
         const {
             title,
@@ -588,6 +612,7 @@ class CourseService {
             fullDescription,
             category,
             subcategory,
+            admin_category_id,
             tags,
             language,
             subtitle,
@@ -627,6 +652,18 @@ class CourseService {
         if (subcategory !== undefined) {
             updates.push(`subcategory = $${paramIndex++}`);
             values.push(subcategory);
+        }
+        if (admin_category_id !== undefined) {
+            const existingRow = (await db.query('SELECT admin_category_id FROM courses WHERE id = $1', [id])).rows[0];
+            const oldCatId = existingRow?.admin_category_id;
+            if (oldCatId && oldCatId !== admin_category_id) {
+                await adminCategoryService.decrementCourseCountForPath(oldCatId);
+            }
+            if (admin_category_id && admin_category_id !== oldCatId) {
+                await adminCategoryService.incrementCourseCountForPath(admin_category_id);
+            }
+            updates.push(`admin_category_id = $${paramIndex++}`);
+            values.push(admin_category_id || null);
         }
         if (tags !== undefined) {
             updates.push(`tags = $${paramIndex++}`);
@@ -695,13 +732,29 @@ class CourseService {
     }
 
     async deleteCourse(id) {
+        const row = (await db.query('SELECT admin_category_id FROM courses WHERE id = $1', [id])).rows[0];
+        if (row?.admin_category_id) {
+            await adminCategoryService.decrementCourseCountForPath(row.admin_category_id);
+        }
         await db.query('DELETE FROM courses WHERE id = $1', [id]);
     }
 
-    async enrollUser(userId, courseId) {
+    async enrollUser(userId, courseId, options = {}) {
+        const { inviteCode } = options;
+        let isInvited = false;
+        if (inviteCode) {
+            const row = await db.query(
+                'SELECT id FROM courses WHERE invite_code = $1 AND id = $2',
+                [String(inviteCode).trim().toUpperCase(), courseId]
+            );
+            isInvited = !!row.rows[0];
+        }
         const result = await db.query(
-            'INSERT INTO course_enrollments (user_id, course_id) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING *',
-            [userId, courseId]
+            `INSERT INTO course_enrollments (user_id, course_id, is_invited)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (user_id, course_id) DO UPDATE SET is_invited = EXCLUDED.is_invited
+             RETURNING *`,
+            [userId, courseId, isInvited]
         );
         return result.rows[0];
     }
@@ -984,6 +1037,7 @@ class CourseService {
                 ce.user_id,
                 ce.course_id,
                 ce.enrolled_at,
+                COALESCE(ce.is_invited, false) as is_invited,
                 c.title as course_title,
                 COALESCE(c.discount_price, c.price, 0)::float as amount,
                 c.currency,
@@ -1002,6 +1056,7 @@ class CourseService {
             userId: row.user_id,
             courseId: row.course_id,
             enrolledAt: row.enrolled_at,
+            isInvited: !!row.is_invited,
             courseTitle: row.course_title,
             amount: row.amount,
             currency: row.currency || 'USD',
@@ -1010,6 +1065,82 @@ class CourseService {
         }));
 
         return { purchases, total };
+    }
+
+    /** Student purchase history: all enrollments for a student with course details. */
+    async getStudentPurchaseHistory(userId) {
+        const result = await db.query(
+            `SELECT 
+                ce.course_id,
+                ce.enrolled_at,
+                c.id,
+                c.title,
+                c.thumbnail_path,
+                c.price,
+                c.discount_price,
+                c.currency,
+                COALESCE(tp.name, u.email) as teacher_name,
+                u.email as teacher_email
+             FROM course_enrollments ce
+             JOIN courses c ON ce.course_id = c.id
+             LEFT JOIN users u ON c.teacher_id = u.id
+             LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
+             WHERE ce.user_id = $1
+             ORDER BY ce.enrolled_at DESC`,
+            [userId]
+        );
+
+        const r2Storage = require('./r2StorageService');
+        const apiUrl = process.env.BASE_URL || 'http://localhost:5000';
+        const v1Url = `${apiUrl}/v1`;
+
+        return result.rows.map((row, index) => {
+            // Generate order number from enrollment date and index
+            const date = new Date(row.enrolled_at);
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const orderIndex = String(index + 1).padStart(3, '0');
+            const orderNumber = `ORD-${year}${month}${day}-${orderIndex}`;
+            
+            // Get thumbnail URL
+            let thumbnailUrl = null;
+            if (row.thumbnail_path) {
+                const publicUrl = r2Storage.getPublicUrl ? r2Storage.getPublicUrl(row.thumbnail_path) : null;
+                if (publicUrl) {
+                    thumbnailUrl = publicUrl;
+                } else if (row.thumbnail_path.startsWith('teachers/')) {
+                    thumbnailUrl = `${v1Url}/courses/media/${encodeURIComponent(row.thumbnail_path)}`;
+                } else if (row.thumbnail_path.startsWith('/uploads/')) {
+                    thumbnailUrl = `${apiUrl}${row.thumbnail_path}`;
+                } else {
+                    thumbnailUrl = `${apiUrl}${row.thumbnail_path.startsWith('/') ? '' : '/'}${row.thumbnail_path}`;
+                }
+            }
+
+            const price = parseFloat(row.price) || 0;
+            const discountPrice = row.discount_price ? parseFloat(row.discount_price) : null;
+            const finalPrice = discountPrice || price;
+
+            return {
+                id: row.course_id,
+                orderNumber,
+                date: row.enrolled_at,
+                course: {
+                    id: row.course_id,
+                    title: row.title,
+                    thumbnail: thumbnailUrl || '/placeholder-course.jpg',
+                    teacherName: row.teacher_name || row.teacher_email || 'Unknown Teacher',
+                },
+                type: 'single', // Currently only single courses, bundles can be added later
+                price,
+                discountPrice,
+                finalPrice,
+                currency: row.currency || 'USD',
+                paymentMethod: 'Online Payment', // Default since payment method isn't stored
+                status: 'completed', // All enrollments are considered completed
+            };
+        });
     }
 
     /**
@@ -1090,6 +1221,156 @@ class CourseService {
                 course_title: latestVideo.course_title,
                 lesson_title: latestVideo.lesson_title,
             } : null,
+        };
+    }
+
+    /**
+     * Get all assignments and notes for a course with submission status
+     */
+    async getCourseAssignmentsAndNotes(courseId, userId) {
+        const db = require('../../db');
+        const lessonService = require('./lessonService');
+        const videoService = require('./videoService');
+        const assignmentService = require('./assignmentService');
+
+        // Check enrollment
+        const enrolled = await db.query(
+            'SELECT 1 FROM course_enrollments WHERE user_id = $1 AND course_id = $2',
+            [userId, courseId]
+        );
+        if (!enrolled.rows.length) {
+            throw new Error('Not enrolled in this course');
+        }
+
+        // Get all lessons
+        const course = await this.getCourseByIdSimple(courseId);
+        const lessons = await lessonService.getLessonsByCourse(courseId, userId, course?.teacher_id);
+
+        const assignments = [];
+        const notes = [];
+
+        // Process each lesson
+        for (const lesson of lessons) {
+            // Lesson-level assignments
+            if (lesson.assignments && Array.isArray(lesson.assignments)) {
+                for (const assignment of lesson.assignments) {
+                    if (assignment && assignment.id) {
+                        const submissionStatus = await assignmentService.getSubmissionByAssignmentAndUser(
+                            userId,
+                            'lesson',
+                            null,
+                            lesson.id,
+                            assignment.id
+                        );
+                        assignments.push({
+                            id: assignment.id,
+                            title: assignment.title || 'Untitled Assignment',
+                            type: assignment.type || 'file',
+                            content: assignment.content,
+                            filePath: assignment.filePath,
+                            fileName: assignment.fileName,
+                            isRequired: assignment.isRequired || false,
+                            assignmentType: 'lesson',
+                            lessonId: lesson.id,
+                            lessonTitle: lesson.title,
+                            videoId: null,
+                            videoTitle: null,
+                            submissionStatus: submissionStatus ? {
+                                status: submissionStatus.status || 'pending',
+                                submittedAt: submissionStatus.submitted_at,
+                                marks: submissionStatus.marks,
+                                gradedAt: submissionStatus.graded_at,
+                            } : null,
+                        });
+                    }
+                }
+            }
+
+            // Lesson-level notes
+            if (lesson.notes && Array.isArray(lesson.notes)) {
+                for (const note of lesson.notes) {
+                    if (note && note.id) {
+                        notes.push({
+                            id: note.id,
+                            type: note.type || 'text',
+                            content: note.content,
+                            filePath: note.filePath,
+                            fileName: note.fileName,
+                            assignmentType: 'lesson',
+                            lessonId: lesson.id,
+                            lessonTitle: lesson.title,
+                            videoId: null,
+                            videoTitle: null,
+                        });
+                    }
+                }
+            }
+
+            // Get videos for this lesson
+            const videos = await videoService.getVideosByLesson(lesson.id, userId, lesson.isLocked || false, false);
+            
+            // Process each video
+            for (const video of videos) {
+                // Video-level assignments
+                if (video.assignments && Array.isArray(video.assignments)) {
+                    for (const assignment of video.assignments) {
+                        if (assignment && assignment.id) {
+                            const submissionStatus = await assignmentService.getSubmissionByAssignmentAndUser(
+                                userId,
+                                'video',
+                                video.id,
+                                null,
+                                assignment.id
+                            );
+                            assignments.push({
+                                id: assignment.id,
+                                title: assignment.title || 'Untitled Assignment',
+                                type: assignment.type || 'file',
+                                content: assignment.content,
+                                filePath: assignment.filePath,
+                                fileName: assignment.fileName,
+                                isRequired: assignment.isRequired || false,
+                                assignmentType: 'video',
+                                lessonId: lesson.id,
+                                lessonTitle: lesson.title,
+                                videoId: video.id,
+                                videoTitle: video.title,
+                                submissionStatus: submissionStatus ? {
+                                    status: submissionStatus.status || 'pending',
+                                    submittedAt: submissionStatus.submitted_at,
+                                    marks: submissionStatus.marks,
+                                    gradedAt: submissionStatus.graded_at,
+                                } : null,
+                            });
+                        }
+                    }
+                }
+
+                // Video-level notes
+                if (video.notes && Array.isArray(video.notes)) {
+                    for (const note of video.notes) {
+                        if (note && note.id) {
+                            notes.push({
+                                id: note.id,
+                                type: note.type || 'text',
+                                content: note.content,
+                                filePath: note.filePath,
+                                fileName: note.fileName,
+                                assignmentType: 'video',
+                                lessonId: lesson.id,
+                                lessonTitle: lesson.title,
+                                videoId: video.id,
+                                videoTitle: video.title,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        return {
+            assignments,
+            notes,
         };
     }
 }

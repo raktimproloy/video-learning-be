@@ -3,7 +3,7 @@ const adminSettingsService = require('../services/adminSettingsService');
 
 /**
  * Public settings API - no auth required.
- * Returns platform settings: categories, share percentages, coupons, discounts.
+ * Returns platform settings: categories, share percentages, discounts.
  */
 async function getSettings(req, res) {
     try {
@@ -17,10 +17,12 @@ async function getSettings(req, res) {
                 name: c.name,
                 slug: c.slug || c.name.toLowerCase().replace(/\s+/g, '-'),
                 path: c.path,
-                level: c.level,
+                level: c.level ?? 0,
+                parentId: c.parentId ?? null,
+                courseCount: c.courseCount ?? 0,
+                displayOrder: c.displayOrder ?? 0,
             })),
             share: platformSettings.share,
-            coupons: platformSettings.coupons,
             discounts: platformSettings.discounts,
         });
     } catch (error) {
