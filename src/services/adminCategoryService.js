@@ -128,6 +128,73 @@ class AdminCategoryService {
     }
 
     /**
+     * Get full tree for admin UI: roots with nested children.
+     * Each node: { id, name, slug, level, courseCount, displayOrder, childrenCount, children: [] }
+     */
+    async getFullTree(statusFilter = null) {
+        const statusClause = statusFilter === 'active' ? "AND status = 'active'" : '';
+        const rootsRes = await db.query(
+            `SELECT id, name, slug, parent_id, COALESCE(level, 0) as level, 
+                    COALESCE(course_count, 0) as course_count, COALESCE(display_order, 0) as display_order,
+                    status,
+                    (SELECT COUNT(*)::int FROM admin_categories ch WHERE ch.parent_id = admin_categories.id) as children_count
+             FROM admin_categories 
+             WHERE parent_id IS NULL ${statusClause}
+             ORDER BY COALESCE(display_order, 0), name ASC`
+        );
+
+        const buildChildren = async (parentId) => {
+            const res = await db.query(
+                `SELECT id, name, slug, parent_id, COALESCE(level, 0) as level,
+                        COALESCE(course_count, 0) as course_count, COALESCE(display_order, 0) as display_order,
+                        status,
+                        (SELECT COUNT(*)::int FROM admin_categories ch WHERE ch.parent_id = admin_categories.id) as children_count
+                 FROM admin_categories
+                 WHERE parent_id = $1 ${statusClause}
+                 ORDER BY COALESCE(display_order, 0), name ASC`,
+                [parentId]
+            );
+            const nodes = [];
+            for (const row of res.rows) {
+                const children = parseInt(row.children_count, 10) > 0
+                    ? await buildChildren(row.id)
+                    : [];
+                nodes.push({
+                    id: row.id,
+                    name: row.name,
+                    slug: row.slug,
+                    level: parseInt(row.level, 10) || 0,
+                    courseCount: parseInt(row.course_count, 10) || 0,
+                    displayOrder: parseInt(row.display_order, 10) || 0,
+                    status: row.status,
+                    childrenCount: parseInt(row.children_count, 10) || 0,
+                    children,
+                });
+            }
+            return nodes;
+        };
+
+        const result = [];
+        for (const row of rootsRes.rows) {
+            const children = parseInt(row.children_count, 10) > 0
+                ? await buildChildren(row.id)
+                : [];
+            result.push({
+                id: row.id,
+                name: row.name,
+                slug: row.slug,
+                level: 0,
+                courseCount: parseInt(row.course_count, 10) || 0,
+                displayOrder: parseInt(row.display_order, 10) || 0,
+                status: row.status,
+                childrenCount: parseInt(row.children_count, 10) || 0,
+                children,
+            });
+        }
+        return result;
+    }
+
+    /**
      * Get full tree for dropdown (all levels, flattened with path).
      * Each item: { id, name, slug, path, level, parentId, courseCount }
      * Max 3 levels: 0 (root), 1 (child), 2 (grandchild).
@@ -402,6 +469,13 @@ class AdminCategoryService {
     }
 
     async delete(id) {
+        const children = await db.query(
+            'SELECT id FROM admin_categories WHERE parent_id = $1',
+            [id]
+        );
+        for (const row of children.rows) {
+            await this.delete(row.id);
+        }
         const result = await db.query(
             'DELETE FROM admin_categories WHERE id = $1 RETURNING id',
             [id]

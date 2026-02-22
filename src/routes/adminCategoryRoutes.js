@@ -8,6 +8,7 @@ router.use(verifyAdmin);
 
 router.get('/', adminCategoryController.list);
 router.get('/tree', adminCategoryController.getTree);
+router.get('/full-tree', adminCategoryController.getFullTree);
 router.get('/:id', adminCategoryController.getById);
 
 router.post(

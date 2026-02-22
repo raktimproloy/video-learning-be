@@ -5,7 +5,7 @@ class AdminUserController {
     async getList(req, res) {
         try {
             const skip = Math.max(0, parseInt(req.query.skip, 10) || 0);
-            const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+            const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
 
             const { admins, total } = await adminUserService.findAll(skip, limit);
 

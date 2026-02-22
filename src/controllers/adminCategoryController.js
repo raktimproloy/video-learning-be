@@ -29,6 +29,17 @@ class AdminCategoryController {
         }
     }
 
+    async getFullTree(req, res) {
+        try {
+            const status = req.query.status || null;
+            const tree = await adminCategoryService.getFullTree(status);
+            res.json({ categories: tree });
+        } catch (error) {
+            console.error('Get full category tree error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
     async getById(req, res) {
         try {
             const category = await adminCategoryService.findById(req.params.id);
