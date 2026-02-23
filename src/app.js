@@ -37,12 +37,26 @@ app.use(helmet({
     crossOriginEmbedderPolicy: false,
 }));
 
-// CORS Middleware - Allow all origins for media files
+// CORS Middleware - Allow whitelisted origins
+const corsOrigins = [
+    'https://video-learning-admin.vercel.app',
+    'https://video-learning-fe.vercel.app',
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:3001',
+    ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',').map(o => o.trim()).filter(Boolean) : []),
+];
 app.use(cors({
-    origin: '*',
+    origin: (origin, cb) => {
+        if (!origin) return cb(null, true);
+        if (corsOrigins.includes(origin)) return cb(null, true);
+        if (process.env.NODE_ENV !== 'production') return cb(null, true);
+        return cb(null, false);
+    },
     credentials: false,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
 // Logging Middleware
