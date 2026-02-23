@@ -715,27 +715,26 @@ class LessonController {
                 ...(m.file_path && { filePath: m.file_path, fileName: m.file_name || 'file' })
             }));
 
+            const stagingVideoDir = path.join(STAGING_DIR, videoId);
             const video = await adminService.createVideoWithId(
                 videoId,
                 title,
-                'staging_placeholder',
+                useR2 ? 'r2_staging' : stagingVideoDir,
                 ownerId,
                 lessonId,
                 liveOrder,
                 { storageProvider: useR2 ? 'r2' : 'local', r2Key: null, description: liveDesc, notes, assignments }
             );
 
-            const stagingVideoDir = path.join(STAGING_DIR, video.id);
-            if (!fs.existsSync(STAGING_DIR)) fs.mkdirSync(STAGING_DIR, { recursive: true });
-            if (!fs.existsSync(stagingVideoDir)) fs.mkdirSync(stagingVideoDir, { recursive: true });
-
-            const inputPath = path.join(stagingVideoDir, 'input.webm');
-            fs.writeFileSync(inputPath, req.file.buffer);
-
-            await adminService.updateVideoStoragePath(video.id, stagingVideoDir);
             if (useR2) {
                 const r2Prefix = r2Storage.getVideoKeyPrefix(ownerId, course.id, lessonId, video.id);
+                const r2StagingKey = `${r2Prefix}/staging/input.webm`;
+                await r2Storage.uploadFile(r2StagingKey, req.file.buffer, 'video/webm');
                 await adminService.updateVideoR2(video.id, r2Prefix);
+            } else {
+                if (!fs.existsSync(STAGING_DIR)) fs.mkdirSync(STAGING_DIR, { recursive: true });
+                if (!fs.existsSync(stagingVideoDir)) fs.mkdirSync(stagingVideoDir, { recursive: true });
+                fs.writeFileSync(path.join(stagingVideoDir, 'input.webm'), req.file.buffer);
             }
 
             await adminService.createProcessingTask(ownerId, video.id, 'h264', ['360p', '720p', '1080p'], 28, false);

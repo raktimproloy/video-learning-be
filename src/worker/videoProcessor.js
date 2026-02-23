@@ -47,24 +47,67 @@ class VideoProcessor {
             if (videoRes.rows.length === 0) throw new Error('Video not found');
             const video = videoRes.rows[0];
             const useR2 = video.storage_provider === 'r2' && video.r2_key && r2Storage.isConfigured;
+            const isR2Staging = video.storage_path === 'r2_staging';
 
             let sourcePath;
             let outputDir;
             let stagingDirToDelete = null;
 
             if (useR2) {
-                sourcePath = video.storage_path;
-                if (fs.existsSync(sourcePath) && fs.statSync(sourcePath).isDirectory()) {
-                    const dir = sourcePath;
-                    const mp4 = path.join(dir, 'input.mp4');
-                    const webm = path.join(dir, 'input.webm');
-                    sourcePath = fs.existsSync(mp4) ? mp4 : fs.existsSync(webm) ? webm : mp4;
-                }
-                if (!fs.existsSync(sourcePath)) throw new Error(`Staging file not found at ${sourcePath}`);
                 workDir = path.join(os.tmpdir(), `video-${task.id}`);
                 fs.mkdirSync(workDir, { recursive: true });
                 outputDir = workDir;
-                stagingDirToDelete = path.dirname(sourcePath);
+
+                if (isR2Staging) {
+                    // Source is in R2 staging - download to workDir
+                    const r2Mp4 = `${video.r2_key}/staging/input.mp4`;
+                    const r2Webm = `${video.r2_key}/staging/input.webm`;
+                    const localMp4 = path.join(workDir, 'input.mp4');
+                    const localWebm = path.join(workDir, 'input.webm');
+                    if (await r2Storage.objectExists(r2Mp4)) {
+                        await r2Storage.downloadToPath(r2Mp4, localMp4);
+                        sourcePath = localMp4;
+                    } else if (await r2Storage.objectExists(r2Webm)) {
+                        await r2Storage.downloadToPath(r2Webm, localWebm);
+                        sourcePath = localWebm;
+                    } else {
+                        throw new Error('Staging file not found in R2. Try re-uploading the video.');
+                    }
+                    stagingDirToDelete = null; // R2 staging deleted separately after success
+                } else {
+                    // Legacy: local staging path (or path missing - try R2 staging as fallback)
+                    let localPath = video.storage_path;
+                    let found = false;
+                    if (localPath && fs.existsSync(localPath)) {
+                        if (fs.statSync(localPath).isDirectory()) {
+                            const mp4 = path.join(localPath, 'input.mp4');
+                            const webm = path.join(localPath, 'input.webm');
+                            sourcePath = fs.existsSync(mp4) ? mp4 : fs.existsSync(webm) ? webm : mp4;
+                        } else {
+                            sourcePath = localPath;
+                        }
+                        found = fs.existsSync(sourcePath);
+                    }
+                    if (!found) {
+                        // Fallback: try R2 staging (e.g. after migrating to Render)
+                        const r2Mp4 = `${video.r2_key}/staging/input.mp4`;
+                        const r2Webm = `${video.r2_key}/staging/input.webm`;
+                        const localMp4 = path.join(workDir, 'input.mp4');
+                        const localWebm = path.join(workDir, 'input.webm');
+                        if (await r2Storage.objectExists(r2Mp4)) {
+                            await r2Storage.downloadToPath(r2Mp4, localMp4);
+                            sourcePath = localMp4;
+                        } else if (await r2Storage.objectExists(r2Webm)) {
+                            await r2Storage.downloadToPath(r2Webm, localWebm);
+                            sourcePath = localWebm;
+                        } else {
+                            throw new Error(`Staging file not found. The video was uploaded before R2 staging was enabled. Please delete and re-upload the video.`);
+                        }
+                        stagingDirToDelete = null;
+                    } else {
+                        stagingDirToDelete = path.dirname(sourcePath);
+                    }
+                }
             } else {
                 sourcePath = video.storage_path;
                 if (fs.existsSync(sourcePath) && fs.statSync(sourcePath).isDirectory()) {
@@ -262,6 +305,13 @@ class VideoProcessor {
                 }
                 if (stagingDirToDelete && fs.existsSync(stagingDirToDelete)) {
                     fs.rmSync(stagingDirToDelete, { recursive: true, force: true });
+                }
+                if (isR2Staging) {
+                    try {
+                        await r2Storage.deletePrefix(`${video.r2_key}/staging`);
+                    } catch (e) {
+                        console.warn('Failed to delete R2 staging:', e.message);
+                    }
                 }
                 await db.query('UPDATE videos SET storage_path = $1 WHERE id = $2', ['r2_only', task.video_id]);
             }

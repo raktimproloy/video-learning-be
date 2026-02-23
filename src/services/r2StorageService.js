@@ -202,6 +202,20 @@ async function uploadFromPath(localPath, key, contentType) {
 }
 
 /**
+ * Download R2 object to a local file path.
+ */
+async function downloadToPath(key, localPath) {
+  const fs = require('fs');
+  const { pipeline } = require('stream/promises');
+  const stream = await getObjectStream(key);
+  const dir = require('path').dirname(localPath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const writeStream = fs.createWriteStream(localPath);
+  await pipeline(stream, writeStream);
+  return localPath;
+}
+
+/**
  * Get object as stream (for proxying to client).
  */
 async function getObjectStream(key) {
@@ -323,6 +337,7 @@ module.exports = {
   uploadFile,
   uploadStream,
   uploadFromPath,
+  downloadToPath,
   uploadCourseMedia,
   getObjectStream,
   objectExists,

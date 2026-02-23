@@ -130,20 +130,18 @@ class AdminController {
             };
 
             if (useR2) {
-                const video = await adminService.createVideo(title, 'staging_placeholder', ownerId, lesson_id, parseInt(order, 10) || 0, {
+                const video = await adminService.createVideo(title, 'r2_staging', ownerId, lesson_id, parseInt(order, 10) || 0, {
                     ...videoOptions,
                     storageProvider: 'r2',
                     r2Key: null,
                 });
                 const r2Prefix = r2Storage.getVideoKeyPrefix(ownerId, effectiveCourseId, effectiveLessonId, video.id);
-                const stagingVideoDir = path.join(STAGING_DIR, video.id);
-                if (!fs.existsSync(STAGING_DIR)) fs.mkdirSync(STAGING_DIR, { recursive: true });
-                if (!fs.existsSync(stagingVideoDir)) fs.mkdirSync(stagingVideoDir, { recursive: true });
-                const inputPath = path.join(stagingVideoDir, 'input.mp4');
+                const r2StagingKey = `${r2Prefix}/staging/input.mp4`;
                 const uploadedPath = path.isAbsolute(videoFile.path) ? videoFile.path : path.resolve(process.cwd(), videoFile.path);
                 if (!fs.existsSync(uploadedPath)) throw new Error(`Uploaded file not found at ${uploadedPath}. Ensure uploads directory exists.`);
-                fs.renameSync(uploadedPath, inputPath);
-                await adminService.updateVideoStoragePath(video.id, stagingVideoDir);
+                const fileBuffer = fs.readFileSync(uploadedPath);
+                await r2Storage.uploadFile(r2StagingKey, fileBuffer, 'video/mp4');
+                try { fs.unlinkSync(uploadedPath); } catch (e) {}
                 await adminService.updateVideoR2(video.id, r2Prefix);
 
                 if (notes.length > 0 || assignments.length > 0) {
