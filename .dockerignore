@@ -1,0 +1,42 @@
+# Dependencies (reinstalled in container)
+node_modules
+npm-debug.log
+yarn-error.log
+yarn.lock
+
+# Environment files (use Render/env vars instead)
+.env
+.env.local
+.env.*.local
+
+# Git
+.git
+.gitignore
+
+# IDE and OS
+.idea
+.vscode
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs and temp
+logs
+*.log
+tmp
+temp
+
+# Test and dev files
+test
+tests
+*.test.js
+*.spec.js
+coverage
+.nyc_output
+create_test_video.js
+verifyPhaseA.js
+test-api-flow.js
+
+# Documentation (optional - exclude to keep image smaller)
+*.md
+!README.md

@@ -354,6 +354,7 @@ class LessonController {
     async getLiveChat(req, res) {
         try {
             const lessonId = req.params.id;
+            const { liveSessionId: querySessionId } = req.query;
             const lesson = await lessonService.getLessonById(lessonId);
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             const course = await courseService.getCourseById(lesson.course_id);
@@ -364,7 +365,9 @@ class LessonController {
                 const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
                 if (!enrolled) return res.status(403).json({ error: 'Access denied' });
             } else if (!isTeacher) return res.status(403).json({ error: 'Access denied' });
-            const liveSessionId = lesson.current_live_session_id || null;
+            const liveSessionId = querySessionId && String(querySessionId).trim()
+                ? String(querySessionId).trim()
+                : (lesson.current_live_session_id || null);
             const messages = await liveChatService.getMessages(lessonId, liveSessionId);
             res.json({ messages });
         } catch (error) {

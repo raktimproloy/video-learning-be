@@ -185,11 +185,14 @@ async function getCourseProgress(userId, courseId) {
     totalTimeSpentSeconds += totalSec;
   });
 
+  const completedVideoIds = Object.keys(videoCompleted90 || {}).filter((vid) => videoCompleted90[vid]);
+
   return {
     courseId,
     totalVideos,
     totalLessons,
     videosCompleted90,
+    completedVideoIds,
     lessonsCompleted,
     assignmentsSubmitted,
     assignmentsTotal,
