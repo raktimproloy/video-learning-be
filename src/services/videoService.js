@@ -2,8 +2,7 @@ const db = require('../../db');
 const fs = require('fs');
 const path = require('path');
 const r2Storage = require('./r2StorageService');
-
-const KEYS_ROOT_DIR = process.env.KEYS_ROOT_DIR || path.join(__dirname, '../../keys');
+const keyStorage = require('./keyStorageService');
 
 class VideoService {
     /**
@@ -293,15 +292,7 @@ class VideoService {
             throw new Error('Access denied');
         }
 
-        // Construct path to the key file
-        // e.g., KEYS_ROOT_DIR/<videoId>/enc.key
-        const keyPath = path.join(KEYS_ROOT_DIR, videoId, 'enc.key');
-
-        if (!fs.existsSync(keyPath)) {
-            throw new Error('Key file not found');
-        }
-
-        return fs.readFileSync(keyPath);
+        return keyStorage.getKey(videoId);
     }
 }
 

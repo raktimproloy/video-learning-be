@@ -14,6 +14,7 @@ const initDb = async () => {
         database: 'postgres', // Connect to default DB
         password: process.env.DB_PASSWORD,
         port: process.env.DB_PORT,
+        ssl: process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: false },
     });
 
     try {

@@ -6,6 +6,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "init-db": "node initDb.js",
+    "setup-db": "node setupDb.js",
     "migrate": "node run_migrations.js",
     "seed-admin": "node scripts/seed-admin.js",
     "start": "node index.js",

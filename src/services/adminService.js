@@ -3,8 +3,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const r2Storage = require('./r2StorageService');
-
-const KEYS_ROOT_DIR = process.env.KEYS_ROOT_DIR || path.join(__dirname, '../../keys');
+const keyStorage = require('./keyStorageService');
 
 class AdminService {
     /**
@@ -30,14 +29,9 @@ class AdminService {
         const video = result.rows[0];
 
         try {
-            const keyDir = path.join(KEYS_ROOT_DIR, video.id);
-            if (!fs.existsSync(keyDir)) {
-                fs.mkdirSync(keyDir, { recursive: true });
-            }
-            const keyPath = path.join(keyDir, 'enc.key');
             const key = crypto.randomBytes(16);
-            fs.writeFileSync(keyPath, key);
-            console.log(`Generated key for video ${video.id} at ${keyPath}`);
+            await keyStorage.saveKey(video.id, key);
+            console.log(`Generated key for video ${video.id}`);
         } catch (err) {
             console.error('Failed to generate key file:', err);
         }
@@ -67,14 +61,9 @@ class AdminService {
         const video = result.rows[0];
 
         try {
-            const keyDir = path.join(KEYS_ROOT_DIR, video.id);
-            if (!fs.existsSync(keyDir)) {
-                fs.mkdirSync(keyDir, { recursive: true });
-            }
-            const keyPath = path.join(keyDir, 'enc.key');
             const key = crypto.randomBytes(16);
-            fs.writeFileSync(keyPath, key);
-            console.log(`Generated key for video ${video.id} at ${keyPath}`);
+            await keyStorage.saveKey(video.id, key);
+            console.log(`Generated key for video ${video.id}`);
         } catch (err) {
             console.error('Failed to generate key file:', err);
         }
@@ -233,8 +222,9 @@ class AdminService {
             }
         }
 
-        // 3. Delete local staging / keys (best-effort)
+        // 3. Delete encryption key (R2 or local) and local staging
         try {
+            await keyStorage.deleteKey(videoId);
             if (video.storage_path && fs.existsSync(video.storage_path)) {
                 fs.rmSync(video.storage_path, { recursive: true, force: true });
             }
@@ -242,12 +232,8 @@ class AdminService {
             if (fs.existsSync(fallbackPath)) {
                 fs.rmSync(fallbackPath, { recursive: true, force: true });
             }
-            const keyDir = path.join(KEYS_ROOT_DIR, videoId);
-            if (fs.existsSync(keyDir)) {
-                fs.rmSync(keyDir, { recursive: true, force: true });
-            }
         } catch (err) {
-            console.error(`Failed to cleanup local files for video ${videoId}:`, err);
+            console.error(`Failed to cleanup files for video ${videoId}:`, err);
         }
 
         // 4. Delete from DB only after R2 (and local) cleanup

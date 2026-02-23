@@ -99,7 +99,7 @@ In **Environment** section, add these variables (use your real values):
 ### 2.6 Important Notes for Render Free Tier
 - Service sleeps after **15 minutes** of no traffic (cold start ~1 min)
 - **750 free hours/month** per account
-- **Ephemeral disk** – uploaded files in `./keys` are lost on restart (use R2 for persistent storage)
+- **Video encryption keys** are stored in R2 when configured (see `keys/<videoId>/enc.key`), so they persist across restarts
 
 ---
 

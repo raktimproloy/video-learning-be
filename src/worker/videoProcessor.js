@@ -4,8 +4,7 @@ const os = require('os');
 const ffmpeg = require('fluent-ffmpeg');
 const db = require('../../db');
 const r2Storage = require('../services/r2StorageService');
-
-const KEYS_ROOT_DIR = process.env.KEYS_ROOT_DIR || path.join(__dirname, '../../keys');
+const keyStorage = require('../services/keyStorageService');
 
 const getDirSize = (dirPath) => {
     let size = 0;
@@ -80,18 +79,17 @@ class VideoProcessor {
             }
 
             // 3. Prepare Encryption Key Info
-            const keyDir = path.join(KEYS_ROOT_DIR, task.video_id);
-            const keyPath = path.join(keyDir, 'enc.key');
-            
-            if (!fs.existsSync(keyPath)) {
-                throw new Error(`Encryption key not found at ${keyPath}`);
+            // keyStorage returns local path (downloads from R2 to targetDir if needed)
+            const keyTargetDir = workDir || path.join(os.tmpdir(), `video-key-${task.id}`);
+            if (!fs.existsSync(keyTargetDir)) {
+                fs.mkdirSync(keyTargetDir, { recursive: true });
             }
+            const keyPath = await keyStorage.getKeyLocalPath(task.video_id, keyTargetDir);
 
-            const keyInfoPath = path.join(keyDir, 'key_info');
-            const keyUri = `/v1/video/get-key?id=${task.video_id}`; 
-            
+            const keyInfoPath = path.join(keyTargetDir, 'key_info');
+            const keyUri = `/v1/video/get-key?id=${task.video_id}`;
             // Format: URI\nKeyPath\nIV(optional)
-            const keyInfoContent = `${keyUri}\n${path.resolve(keyPath)}`;
+            const keyInfoContent = `${keyUri}\n${keyPath}`;
             fs.writeFileSync(keyInfoPath, keyInfoContent);
 
             // 3b. Remux WebM to MP4 if needed (MediaRecorder WebM can be malformed for ffprobe)
