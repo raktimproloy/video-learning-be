@@ -57,6 +57,7 @@ router.get('/student/purchase-history', authMiddleware, requireRole(['student', 
 router.get('/student/available', authMiddleware, requireRole(['student', 'teacher']), courseController.getAvailableCourses);
 router.get('/:id/assignments-notes', authMiddleware, requireRole(['student', 'teacher']), courseController.getCourseAssignmentsAndNotes);
 router.post('/:id/purchase', authMiddleware, requireRole(['student', 'teacher']), courseController.purchaseCourse);
+router.post('/:id/payment-request', authMiddleware, requireRole(['student', 'teacher']), courseController.createPaymentRequest);
 
 // Course media streaming from R2 - PUBLIC (no auth) so img/video tags work
 // Thumbnails and intro videos are preview content, R2 keys are not guessable

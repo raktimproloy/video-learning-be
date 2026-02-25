@@ -482,8 +482,22 @@ class CourseService {
             // bundle_courses table may not exist in older deployments
         }
 
+        // If student is logged in, check for pending payment request for this course (for "Payment pending" link)
+        let pendingPaymentRequestId = null;
+        if (userId) {
+            try {
+                const paymentRequestService = require('./paymentRequestService');
+                const pendingList = await paymentRequestService.getByStudent(userId, { status: 'pending', limit: 100 });
+                const forThisCourse = (pendingList || []).find((pr) => pr.courseId === course.id);
+                if (forThisCourse) pendingPaymentRequestId = forThisCourse.id;
+            } catch (e) {
+                // ignore
+            }
+        }
+
         return {
             course: courseWithMeta,
+            pendingPaymentRequestId,
             teacher: teacher ? {
                 id: teacher.id,
                 email: teacher.email,
@@ -570,12 +584,26 @@ class CourseService {
         const isActive = !course.status || course.status === 'active';
         if (!isOwner && !isActive) return null;
 
+        // If student is logged in, check for pending payment request (for "Payment pending" link)
+        let pendingPaymentRequestId = null;
+        if (userId && !course.is_purchased) {
+            try {
+                const paymentRequestService = require('./paymentRequestService');
+                const pendingList = await paymentRequestService.getByStudent(userId, { status: 'pending', limit: 100 });
+                const forThisCourse = (pendingList || []).find((pr) => pr.courseId === course.id);
+                if (forThisCourse) pendingPaymentRequestId = forThisCourse.id;
+            } catch (e) {
+                // ignore
+            }
+        }
+
         // Parse tags if they're stored as JSON string
         return {
             ...course,
             tags: typeof course.tags === 'string' ? JSON.parse(course.tags) : (course.tags || []),
             is_purchased: course.is_purchased || false,
             is_owned: course.is_owned || false,
+            pending_payment_request_id: pendingPaymentRequestId,
             rating: parseFloat(course.rating) || 0,
             review_count: course.review_count || 0,
             purchase_count: course.purchase_count || 0,

@@ -529,7 +529,8 @@ class CourseController {
                 videos: details.videos || [],
                 otherCourses: enrichedOtherCourses,
                 reviews: enrichedReviews,
-                bundles: details.bundles || []
+                bundles: details.bundles || [],
+                pendingPaymentRequestId: details.pendingPaymentRequestId || null,
             });
         } catch (error) {
             console.error('Get course details error:', error);
@@ -905,6 +906,67 @@ class CourseController {
                 return res.status(400).json({ error: msg });
             }
             console.error('Purchase course error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    /** Student submits payment request (bKash/Nagad/Rocket). Stored for admin to accept; enrollment happens on accept. */
+    async createPaymentRequest(req, res) {
+        try {
+            const courseId = req.params.id;
+            const userId = req.user.id;
+            const {
+                payment_method: paymentMethod,
+                sender_phone: senderPhone,
+                transaction_id: transactionId,
+                amount,
+                currency,
+                coupon_code: couponCode,
+                invite_code: inviteCode,
+            } = req.body || {};
+
+            if (!paymentMethod || !transactionId) {
+                return res.status(400).json({ error: 'Payment method and transaction ID are required' });
+            }
+            if (!['bkash', 'nagad', 'rocket'].includes(paymentMethod)) {
+                return res.status(400).json({ error: 'Invalid payment method' });
+            }
+
+            const course = await courseService.getCourseByIdSimple(courseId);
+            if (!course) {
+                return res.status(404).json({ error: 'Course not found' });
+            }
+            if (course.status && course.status !== 'active') {
+                return res.status(400).json({ error: 'This course is not available for purchase' });
+            }
+
+            const alreadyEnrolled = await courseService.isEnrolled(userId, courseId);
+            if (alreadyEnrolled) {
+                return res.status(400).json({ error: 'You are already enrolled in this course' });
+            }
+
+            const finalAmount = amount != null ? parseFloat(amount) : (course.discount_price ?? course.price);
+            const finalCurrency = currency || course.currency || 'BDT';
+
+            const paymentRequestService = require('../services/paymentRequestService');
+            const request = await paymentRequestService.createPaymentRequest({
+                courseId,
+                userId,
+                paymentMethod,
+                senderPhone: senderPhone || '',
+                transactionId: String(transactionId).trim(),
+                amount: finalAmount,
+                currency: finalCurrency,
+                couponCode: couponCode || null,
+                inviteCode: inviteCode || null,
+            });
+
+            res.status(201).json({
+                message: 'Payment request submitted. It will be verified within 5–10 minutes.',
+                requestId: request.id,
+            });
+        } catch (error) {
+            console.error('Create payment request error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     }

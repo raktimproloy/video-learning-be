@@ -16,6 +16,7 @@ const adminStudentsRoutes = require('./routes/adminStudentsRoutes');
 const adminCoursesRoutes = require('./routes/adminCoursesRoutes');
 const adminCategoryRoutes = require('./routes/adminCategoryRoutes');
 const adminSettingsRoutes = require('./routes/adminSettingsRoutes');
+const adminPaymentRequestsRoutes = require('./routes/adminPaymentRequestsRoutes');
 const courseRoutes = require('./routes/courseRoutes');
 const lessonRoutes = require('./routes/lessonRoutes');
 const assignmentRoutes = require('./routes/assignmentRoutes');
@@ -55,7 +56,7 @@ app.use(cors({
         return cb(null, false);
     },
     credentials: false,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
@@ -83,6 +84,7 @@ app.use('/v1/admin/students', adminStudentsRoutes);
 app.use('/v1/admin/courses', adminCoursesRoutes);
 app.use('/v1/admin/categories', adminCategoryRoutes);
 app.use('/v1/admin/settings', adminSettingsRoutes);
+app.use('/v1/admin/payment-requests', adminPaymentRequestsRoutes);
 app.use('/v1/admin', adminRoutes);
 app.use('/v1/courses', courseRoutes);
 app.use('/v1/lessons', lessonRoutes);

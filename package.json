@@ -11,7 +11,8 @@
     "seed-admin": "node scripts/seed-admin.js",
     "start": "node index.js",
     "worker": "node src/worker/index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "docker:build": "sh build.sh"
   },
   "keywords": [],
   "author": "",
