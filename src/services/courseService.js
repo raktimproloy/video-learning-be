@@ -1033,20 +1033,107 @@ class CourseService {
 
     /** Teacher revenue: total from enrollments in their courses. Amount = COALESCE(discount_price, price) per enrollment. */
     async getTeacherRevenue(teacherId) {
+        const detailed = await this.getTeacherRevenueDetailed(teacherId);
+        return {
+            totalRevenue: detailed.totalEarn,
+            purchaseCount: detailed.totalPurchases,
+            currency: detailed.currency,
+        };
+    }
+
+    /**
+     * Teacher revenue detailed: platform share % per enrollment, then withdrawable.
+     * Rules:
+     * - Student from site (not invited): platform 50%, teacher 50%.
+     * - Student invited (teacher's link): if course has live → platform 10%, teacher 90%; if normal course → platform 3%, teacher 97%.
+     * Percentages come from admin share settings; defaults 50, 3, 10 if not set.
+     */
+    async getTeacherRevenueDetailed(teacherId) {
+        const adminSettingsService = require('./adminSettingsService');
+        const share = await adminSettingsService.getShareSettings();
+        const ourPercent = share != null && share.ourStudentPercent != null ? Number(share.ourStudentPercent) : 50;
+        const teacherPercent = share != null && share.teacherStudentPercent != null ? Number(share.teacherStudentPercent) : 3;
+        const livePercent = share != null && share.liveCoursesPercent != null ? Number(share.liveCoursesPercent) : 10;
+
         const result = await db.query(
             `SELECT 
-                COALESCE(SUM(COALESCE(c.discount_price, c.price, 0)::numeric), 0)::float as total_revenue,
-                COUNT(ce.user_id) as purchase_count,
-                (SELECT c2.currency FROM courses c2 WHERE c2.teacher_id = $1 LIMIT 1) as currency
+                ce.enrolled_at,
+                COALESCE(ce.is_invited, false) as is_invited,
+                COALESCE(c.has_live_class, false) as has_live_class,
+                COALESCE(c.discount_price, c.price, 0)::float as amount,
+                c.currency
              FROM course_enrollments ce
-             JOIN courses c ON ce.course_id = c.id AND c.teacher_id = $1`,
+             JOIN courses c ON ce.course_id = c.id AND c.teacher_id = $1
+             ORDER BY ce.enrolled_at DESC`,
             [teacherId]
         );
-        const row = result.rows[0];
+
+        const currency = result.rows[0]?.currency || 'USD';
+        const now = new Date();
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+        let totalEarn = 0;
+        let totalEarnThisMonth = 0;
+        let totalPlatformFee = 0;
+        let totalPurchases = 0;
+        let totalPurchasesThisMonth = 0;
+        let invitedCount = 0;
+        let fromSiteCount = 0;
+        let liveCourseStudents = 0;
+        let normalCourseStudents = 0;
+
+        for (const row of result.rows) {
+            const amount = parseFloat(row.amount) || 0;
+            const isInvited = !!row.is_invited;
+            const hasLive = !!row.has_live_class;
+            const enrolledAt = row.enrolled_at ? new Date(row.enrolled_at) : null;
+            const isThisMonth = enrolledAt && enrolledAt >= startOfMonth;
+
+            totalEarn += amount;
+            totalPurchases += 1;
+            if (isThisMonth) {
+                totalEarnThisMonth += amount;
+                totalPurchasesThisMonth += 1;
+            }
+
+            if (isInvited) invitedCount += 1;
+            else fromSiteCount += 1;
+            if (hasLive) liveCourseStudents += 1;
+            else normalCourseStudents += 1;
+
+            let platformSharePercent;
+            if (!isInvited) {
+                platformSharePercent = ourPercent;
+            } else if (hasLive) {
+                platformSharePercent = livePercent;
+            } else {
+                platformSharePercent = teacherPercent;
+            }
+            const platformFee = (amount * platformSharePercent) / 100;
+            totalPlatformFee += platformFee;
+        }
+
+        const withdrawable = Math.max(0, totalEarn - totalPlatformFee);
+
         return {
-            totalRevenue: parseFloat(row?.total_revenue || '0') || 0,
-            purchaseCount: parseInt(row?.purchase_count || '0', 10) || 0,
-            currency: row?.currency || 'USD',
+            currency,
+            share_settings: {
+                ourStudentPercent: ourPercent,
+                teacherStudentPercent: teacherPercent,
+                liveCoursesPercent: livePercent,
+            },
+            totalPurchases,
+            totalPurchasesThisMonth,
+            totalEarn,
+            totalEarnThisMonth,
+            platform_fee: totalPlatformFee,
+            withdrawable,
+            breakdown: {
+                invitedCount,
+                fromSiteCount,
+                liveCourseStudents,
+                normalCourseStudents,
+            },
         };
     }
 

@@ -350,17 +350,17 @@ class CourseController {
     async getTeacherRevenue(req, res) {
         try {
             const teacherId = req.user.id;
-            const revenue = await courseService.getTeacherRevenue(teacherId);
-            const platformFeePercent = 20;
-            const platformFee = (revenue.totalRevenue * platformFeePercent) / 100;
-            const withdrawable = revenue.totalRevenue - platformFee;
+            const data = await courseService.getTeacherRevenueDetailed(teacherId);
             res.json({
-                total_revenue: revenue.totalRevenue,
-                currency: revenue.currency,
-                purchase_count: revenue.purchaseCount,
-                platform_fee_percent: platformFeePercent,
-                platform_fee: platformFee,
-                withdrawable,
+                currency: data.currency,
+                share_settings: data.share_settings,
+                total_purchases: data.totalPurchases,
+                total_purchases_this_month: data.totalPurchasesThisMonth,
+                total_earn: data.totalEarn,
+                total_earn_this_month: data.totalEarnThisMonth,
+                platform_fee: data.platform_fee,
+                withdrawable: data.withdrawable,
+                breakdown: data.breakdown,
             });
         } catch (error) {
             console.error('Get teacher revenue error:', error);
@@ -404,21 +404,19 @@ class CourseController {
         try {
             const teacherId = req.user.id;
             const { amount } = req.body || {};
-            const revenue = await courseService.getTeacherRevenue(teacherId);
-            const platformFeePercent = 20;
-            const withdrawable = revenue.totalRevenue - (revenue.totalRevenue * platformFeePercent) / 100;
+            const data = await courseService.getTeacherRevenueDetailed(teacherId);
             const requestedAmount = parseFloat(amount);
             if (!requestedAmount || requestedAmount <= 0) {
                 return res.status(400).json({ error: 'Invalid amount' });
             }
-            if (requestedAmount > withdrawable) {
+            if (requestedAmount > data.withdrawable) {
                 return res.status(400).json({ error: 'Amount exceeds withdrawable balance' });
             }
             // In production: create withdraw_requests record and notify admin
             res.json({
                 message: 'Withdrawal request submitted. You will be notified when processed.',
                 requested_amount: requestedAmount,
-                currency: revenue.currency,
+                currency: data.currency,
             });
         } catch (error) {
             console.error('Request withdraw error:', error);

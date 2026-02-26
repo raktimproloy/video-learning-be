@@ -1,7 +1,9 @@
 const db = require('../../db');
+const smsService = require('../utils/smsService');
 
 /**
  * Create a payment request (student checkout). Does not enroll; enrollment happens on admin accept.
+ * Sends an SMS to sender_phone if provided: "Your order is on pending. Please wait some time."
  */
 async function createPaymentRequest(data) {
     const {
@@ -34,6 +36,15 @@ async function createPaymentRequest(data) {
             inviteCode || null,
         ]
     );
+
+    // Notify student by SMS (fire-and-forget; do not fail the request if SMS fails)
+    const phone = senderPhone && String(senderPhone).trim() ? String(senderPhone).trim() : null;
+    if (phone) {
+        smsService.sendPaymentPendingSms(phone).catch((err) => {
+            console.error('Payment pending SMS failed:', err.message);
+        });
+    }
+
     return result.rows[0];
 }
 
@@ -176,19 +187,11 @@ async function acceptPaymentRequest(requestId, adminUserId) {
             courseId: row.course_id,
         });
 
-        // Optional: call message API (e.g. SMS gateway) with the phone number from the payment request
-        const messageApiUrl = process.env.PAYMENT_MESSAGE_API_URL || process.env.MESSAGE_API_URL;
-        if (messageApiUrl && row.sender_phone) {
-            const message = `Your payment for "${courseTitle}" has been accepted. You now have access to the course.`;
-            try {
-                const axios = require('axios');
-                await axios.post(messageApiUrl, { phone: row.sender_phone, message }, {
-                    headers: { 'Content-Type': 'application/json' },
-                    timeout: 10000,
-                });
-            } catch (err) {
-                console.error('Payment message API call failed:', err.message);
-            }
+        // Optional: send payment-accepted SMS via BulkSMS BD (same util as pending SMS)
+        if (row.sender_phone) {
+            smsService.sendPaymentAcceptedSms(row.sender_phone, courseTitle).catch((err) => {
+                console.error('Payment accepted SMS failed:', err.message);
+            });
         }
 
         return { accepted: true, requestId };
@@ -295,9 +298,19 @@ async function getByIdForStudent(requestId, userId) {
 }
 
 /**
- * Reject a payment request.
+ * Reject a payment request. Sends decline SMS to sender_phone if present.
  */
 async function rejectPaymentRequest(requestId, adminUserId) {
+    const selectResult = await db.query(
+        `SELECT pr.sender_phone, c.title AS course_title
+         FROM course_payment_requests pr
+         JOIN courses c ON c.id = pr.course_id
+         WHERE pr.id = $1 AND pr.status = 'pending'`,
+        [requestId]
+    );
+    const row = selectResult.rows[0];
+    if (!row) return null;
+
     const result = await db.query(
         `UPDATE course_payment_requests
          SET status = 'rejected', reviewed_at = NOW(), reviewed_by = $1, updated_at = NOW()
@@ -305,7 +318,15 @@ async function rejectPaymentRequest(requestId, adminUserId) {
          RETURNING id`,
         [adminUserId, requestId]
     );
-    return result.rows[0] ? { rejected: true, requestId } : null;
+    if (!result.rows[0]) return null;
+
+    if (row.sender_phone) {
+        smsService.sendPaymentDeclinedSms(row.sender_phone, row.course_title).catch((err) => {
+            console.error('Payment declined SMS failed:', err.message);
+        });
+    }
+
+    return { rejected: true, requestId };
 }
 
 module.exports = {

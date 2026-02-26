@@ -24,6 +24,7 @@ async function getSettings(req, res) {
             })),
             share: platformSettings.share,
             discounts: platformSettings.discounts,
+            live: platformSettings.live || { liveClassEnabled: true, agoraEnabled: true, awsIvsEnabled: false, youtubeEnabled: true },
         });
     } catch (error) {
         console.error('Get settings error:', error);

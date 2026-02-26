@@ -338,17 +338,109 @@ class AdminSettingsService {
         };
     }
 
-    /** Get all settings for public API (categories, share, coupons, discounts) */
+    /** Get all settings for public API (categories, share, coupons, discounts, live) */
     async getAllForPublic() {
-        const [shareRes, couponRes, discountRes] = await Promise.all([
+        const [shareRes, couponRes, discountRes, liveRes] = await Promise.all([
             this.getShareSettings(),
             db.query(`SELECT * FROM admin_coupons WHERE status = 'active' ORDER BY created_at DESC`),
             db.query(`SELECT * FROM admin_discounts WHERE status = 'active' ORDER BY created_at DESC`),
+            this.getLiveSettings(),
         ]);
         return {
             share: shareRes || { ourStudentPercent: 0, teacherStudentPercent: 0, liveCoursesPercent: 0 },
             coupons: couponRes.rows.map(this.mapCouponRow),
             discounts: discountRes.rows.map(this.mapDiscountRow),
+            live: liveRes || { liveClassEnabled: true, agoraEnabled: true, awsIvsEnabled: false, youtubeEnabled: true },
+        };
+    }
+
+    /** Live settings (single row). When liveClassEnabled is false, all live is disabled. */
+    async getLiveSettings() {
+        const result = await db.query(
+            `SELECT * FROM admin_live_settings WHERE id = $1`,
+            ['00000000-0000-0000-0000-000000000002']
+        );
+        const row = result.rows[0];
+        if (!row) return null;
+        return {
+            liveClassEnabled: !!row.live_class_enabled,
+            agoraEnabled: !!row.agora_enabled,
+            awsIvsEnabled: !!row.aws_ivs_enabled,
+            youtubeEnabled: !!row.youtube_enabled,
+        };
+    }
+
+    /** Update live settings. */
+    async updateLiveSettings(adminId, data) {
+        const { liveClassEnabled, agoraEnabled, awsIvsEnabled, youtubeEnabled } = data;
+        const result = await db.query(
+            `UPDATE admin_live_settings SET
+                live_class_enabled = COALESCE($1, live_class_enabled),
+                agora_enabled = COALESCE($2, agora_enabled),
+                aws_ivs_enabled = COALESCE($3, aws_ivs_enabled),
+                youtube_enabled = COALESCE($4, youtube_enabled),
+                updated_by_admin_id = $5,
+                updated_at = NOW()
+             WHERE id = '00000000-0000-0000-0000-000000000002'
+             RETURNING *`,
+            [
+                liveClassEnabled != null ? !!liveClassEnabled : null,
+                agoraEnabled != null ? !!agoraEnabled : null,
+                awsIvsEnabled != null ? !!awsIvsEnabled : null,
+                youtubeEnabled != null ? !!youtubeEnabled : null,
+                adminId,
+            ]
+        );
+        const row = result.rows[0];
+        return row ? {
+            liveClassEnabled: !!row.live_class_enabled,
+            agoraEnabled: !!row.agora_enabled,
+            awsIvsEnabled: !!row.aws_ivs_enabled,
+            youtubeEnabled: !!row.youtube_enabled,
+        } : null;
+    }
+
+    /** Usage stats: how many teachers and students use each live provider (by live_sessions.provider). */
+    async getLiveUsageStats() {
+        const providers = ['agora', 'aws_ivs', 'youtube'];
+        const teachersByService = { agora: 0, aws_ivs: 0, youtube: 0 };
+        const studentsByService = { agora: 0, aws_ivs: 0, youtube: 0 };
+        const sessionsByService = { agora: 0, aws_ivs: 0, youtube: 0 };
+        let activeNow = 0;
+
+        const teacherCountRes = await db.query(
+            `SELECT provider, COUNT(DISTINCT owner_id)::int AS teachers, COUNT(*)::int AS sessions
+             FROM live_sessions
+             WHERE status IN ('active', 'saved')
+             GROUP BY provider`
+        );
+        for (const r of teacherCountRes.rows) {
+            const p = r.provider && providers.includes(r.provider) ? r.provider : 'agora';
+            teachersByService[p] = parseInt(r.teachers, 10) || 0;
+            sessionsByService[p] = parseInt(r.sessions, 10) || 0;
+        }
+
+        const studentCountRes = await db.query(
+            `SELECT ls.provider, COUNT(DISTINCT lwr.student_id)::int AS students
+             FROM live_watch_records lwr
+             JOIN live_sessions ls ON ls.id = lwr.live_session_id
+             GROUP BY ls.provider`
+        );
+        for (const r of studentCountRes.rows) {
+            const p = r.provider && providers.includes(r.provider) ? r.provider : 'agora';
+            studentsByService[p] = parseInt(r.students, 10) || 0;
+        }
+
+        const activeRes = await db.query(
+            `SELECT COUNT(*)::int AS n FROM live_sessions WHERE status = 'active'`
+        );
+        activeNow = parseInt(activeRes.rows[0]?.n, 10) || 0;
+
+        return {
+            teachersByService,
+            studentsByService,
+            sessionsByService,
+            activeNow,
         };
     }
 }

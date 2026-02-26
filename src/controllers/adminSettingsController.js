@@ -165,4 +165,49 @@ module.exports = {
             res.status(500).json({ error: 'Internal server error' });
         }
     },
+
+    /** GET /admin/settings/live — settings + usage (teachers/students per service) */
+    async getLiveSettings(req, res) {
+        try {
+            const [settings, usage] = await Promise.all([
+                adminSettingsService.getLiveSettings(),
+                adminSettingsService.getLiveUsageStats(),
+            ]);
+            res.json({
+                ...(settings || {
+                    liveClassEnabled: true,
+                    agoraEnabled: true,
+                    awsIvsEnabled: false,
+                    youtubeEnabled: true,
+                }),
+                usage: usage || {
+                    teachersByService: { agora: 0, aws_ivs: 0, youtube: 0 },
+                    studentsByService: { agora: 0, aws_ivs: 0, youtube: 0 },
+                    sessionsByService: { agora: 0, aws_ivs: 0, youtube: 0 },
+                    activeNow: 0,
+                },
+            });
+        } catch (error) {
+            console.error('Get live settings error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    },
+
+    /** PUT /admin/settings/live — update live toggles */
+    async updateLiveSettings(req, res) {
+        try {
+            const adminId = getAdminId(req);
+            const { liveClassEnabled, agoraEnabled, awsIvsEnabled, youtubeEnabled } = req.body || {};
+            const settings = await adminSettingsService.updateLiveSettings(adminId, {
+                liveClassEnabled,
+                agoraEnabled,
+                awsIvsEnabled,
+                youtubeEnabled,
+            });
+            res.json(settings);
+        } catch (error) {
+            console.error('Update live settings error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    },
 };

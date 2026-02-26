@@ -5,15 +5,16 @@ class LiveSessionService {
     /**
      * Create a new live session when teacher starts live.
      * Returns the session (id will become video_id when saved).
-     * broadcast_status starts as 'starting' (teacher testing setup, students see "Live Starting Soon").
+     * broadcast_status starts as 'starting'. provider: 'agora' | 'aws_ivs' | 'youtube'.
      */
-    async create(lessonId, courseId, ownerId, { liveName, liveOrder, liveDescription }) {
+    async create(lessonId, courseId, ownerId, { liveName, liveOrder, liveDescription, provider = 'agora' }) {
         const id = randomUUID();
+        const prov = ['agora', 'aws_ivs', 'youtube'].includes(provider) ? provider : 'agora';
         const result = await db.query(
-            `INSERT INTO live_sessions (id, lesson_id, course_id, owner_id, live_name, live_order, live_description, status, broadcast_status)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', 'starting')
+            `INSERT INTO live_sessions (id, lesson_id, course_id, owner_id, live_name, live_order, live_description, status, broadcast_status, provider)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', 'starting', $8)
              RETURNING *`,
-            [id, lessonId, courseId, ownerId, liveName ?? null, liveOrder ?? 0, liveDescription ?? null]
+            [id, lessonId, courseId, ownerId, liveName ?? null, liveOrder ?? 0, liveDescription ?? null, prov]
         );
         return result.rows[0];
     }

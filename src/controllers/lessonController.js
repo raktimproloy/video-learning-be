@@ -9,6 +9,7 @@ const { isImage, compressImage } = require('../utils/imageCompress');
 const videoService = require('../services/videoService');
 const agoraService = require('../services/agoraService');
 const adminService = require('../services/adminService');
+const adminSettingsService = require('../services/adminSettingsService');
 const r2Storage = require('../services/r2StorageService');
 const fs = require('fs');
 const path = require('path');
@@ -284,13 +285,29 @@ class LessonController {
             if (req.user.role === 'teacher') {
                 if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
                 if (is_live === true) {
+                    const liveSettings = await adminSettingsService.getLiveSettings();
+                    if (!liveSettings?.liveClassEnabled) {
+                        return res.status(503).json({ error: 'Live classes are currently disabled by the platform.' });
+                    }
+                    const provider = (req.body?.provider && ['agora', 'aws_ivs', 'youtube'].includes(req.body.provider))
+                        ? req.body.provider : 'agora';
+                    if (provider === 'agora' && !liveSettings.agoraEnabled) {
+                        return res.status(503).json({ error: 'Agora live service is currently disabled.' });
+                    }
+                    if (provider === 'aws_ivs' && !liveSettings.awsIvsEnabled) {
+                        return res.status(503).json({ error: 'AWS IVS live service is currently disabled.' });
+                    }
+                    if (provider === 'youtube' && !liveSettings.youtubeEnabled) {
+                        return res.status(503).json({ error: 'YouTube live service is currently disabled.' });
+                    }
                     const { live_name, live_order, live_description } = req.body || {};
                     const liveOrder = live_order != null ? parseInt(live_order, 10) : 0;
                     const liveName = (live_name && String(live_name).trim()) ? String(live_name).trim() : (lesson.title || 'Live');
                     const liveSession = await liveSessionService.create(id, lesson.course_id, req.user.id, {
                         liveName: liveName || lesson.title,
                         liveOrder,
-                        liveDescription: (live_description && String(live_description).trim()) || null
+                        liveDescription: (live_description && String(live_description).trim()) || null,
+                        provider,
                     });
                     const sessionData = {
                         live_session_name: liveName,
@@ -325,6 +342,23 @@ class LessonController {
 
             const course = await courseService.getCourseById(lesson.course_id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
+
+            const liveSettings = await adminSettingsService.getLiveSettings();
+            if (!liveSettings?.liveClassEnabled) {
+                return res.status(503).json({ error: 'Live classes are currently disabled by the platform.' });
+            }
+            const activeSession = await liveSessionService.getActiveByLesson(id);
+            const provider = (activeSession?.provider && ['agora', 'aws_ivs', 'youtube'].includes(activeSession.provider))
+                ? activeSession.provider : 'agora';
+            if (provider === 'agora' && !liveSettings.agoraEnabled) {
+                return res.status(503).json({ error: 'Agora live service is currently disabled.' });
+            }
+            if (provider === 'aws_ivs' && !liveSettings.awsIvsEnabled) {
+                return res.status(503).json({ error: 'AWS IVS live service is currently disabled.' });
+            }
+            if (provider === 'youtube' && !liveSettings.youtubeEnabled) {
+                return res.status(503).json({ error: 'YouTube live service is currently disabled.' });
+            }
 
             if (req.user.role === 'teacher') {
                 if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });

@@ -9,6 +9,10 @@ router.use(verifyAdmin);
 router.get('/share', adminSettingsController.getShareSettings);
 router.put('/share', adminSettingsController.updateShareSettings);
 
+// Live settings (master switch + per-provider; includes usage stats)
+router.get('/live', adminSettingsController.getLiveSettings);
+router.put('/live', adminSettingsController.updateLiveSettings);
+
 // Coupons
 router.get('/coupons', adminSettingsController.listCoupons);
 router.get('/coupons/:id', adminSettingsController.getCouponById);
