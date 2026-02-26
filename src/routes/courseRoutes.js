@@ -4,6 +4,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const courseController = require('../controllers/courseController');
+const teacherPaymentController = require('../controllers/teacherPaymentController');
 const authMiddleware = require('../middleware/authMiddleware');
 const optionalAuth = require('../middleware/optionalAuthMiddleware');
 const { requireRole } = require('../middleware/roleMiddleware');
@@ -72,6 +73,7 @@ router.get('/', optionalAuth, courseController.getAllCourses);
 router.get('/search', optionalAuth, courseController.searchCourses);
 router.get('/by-invite/:code', courseController.getCourseByInviteCode);
 router.get('/:id/details', optionalAuth, courseController.getCourseDetails);
+router.get('/:id/teacher/live-report', authMiddleware, requireRole(['teacher']), courseController.getCourseLiveReport);
 router.get('/:id', optionalAuth, courseController.getCourseById);
 
 // Teacher only routes
@@ -80,6 +82,12 @@ router.get('/teacher/my-students', authMiddleware, requireRole(['teacher']), cou
 router.get('/teacher/revenue', authMiddleware, requireRole(['teacher']), courseController.getTeacherRevenue);
 router.get('/teacher/purchase-history', authMiddleware, requireRole(['teacher']), courseController.getTeacherPurchaseHistory);
 router.get('/teacher/dashboard-stats', authMiddleware, requireRole(['teacher']), courseController.getTeacherDashboardStats);
+router.get('/teacher/payment-methods', authMiddleware, requireRole(['teacher']), teacherPaymentController.listPaymentMethods);
+router.post('/teacher/payment-methods', authMiddleware, requireRole(['teacher']), teacherPaymentController.addPaymentMethod);
+router.patch('/teacher/payment-methods/:id', authMiddleware, requireRole(['teacher']), teacherPaymentController.updatePaymentMethod);
+router.delete('/teacher/payment-methods/:id', authMiddleware, requireRole(['teacher']), teacherPaymentController.deletePaymentMethod);
+router.get('/teacher/withdraw-requests', authMiddleware, requireRole(['teacher']), teacherPaymentController.listWithdrawRequests);
+router.get('/teacher/withdraw-requests/:id', authMiddleware, requireRole(['teacher']), teacherPaymentController.getWithdrawRequest);
 router.post('/teacher/withdraw', authMiddleware, requireRole(['teacher']), courseController.requestWithdraw);
 router.post('/', 
     authMiddleware, 
@@ -99,6 +107,7 @@ router.put('/:id',
     ]),
     courseController.updateCourse
 );
+router.post('/:id/request-live', authMiddleware, requireRole(['teacher']), courseController.requestLive);
 router.delete('/:id', authMiddleware, requireRole(['teacher']), courseController.deleteCourse);
 
 module.exports = router;

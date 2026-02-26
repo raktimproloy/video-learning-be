@@ -350,7 +350,7 @@ class AdminSettingsService {
             share: shareRes || { ourStudentPercent: 0, teacherStudentPercent: 0, liveCoursesPercent: 0 },
             coupons: couponRes.rows.map(this.mapCouponRow),
             discounts: discountRes.rows.map(this.mapDiscountRow),
-            live: liveRes || { liveClassEnabled: true, agoraEnabled: true, awsIvsEnabled: false, youtubeEnabled: true },
+            live: liveRes || { liveClassEnabled: true, agoraEnabled: true, hundredMsEnabled: true, awsIvsEnabled: false, youtubeEnabled: true },
         };
     }
 
@@ -365,6 +365,7 @@ class AdminSettingsService {
         return {
             liveClassEnabled: !!row.live_class_enabled,
             agoraEnabled: !!row.agora_enabled,
+            hundredMsEnabled: !!row.hundred_ms_enabled,
             awsIvsEnabled: !!row.aws_ivs_enabled,
             youtubeEnabled: !!row.youtube_enabled,
         };
@@ -372,20 +373,22 @@ class AdminSettingsService {
 
     /** Update live settings. */
     async updateLiveSettings(adminId, data) {
-        const { liveClassEnabled, agoraEnabled, awsIvsEnabled, youtubeEnabled } = data;
+        const { liveClassEnabled, agoraEnabled, hundredMsEnabled, awsIvsEnabled, youtubeEnabled } = data;
         const result = await db.query(
             `UPDATE admin_live_settings SET
                 live_class_enabled = COALESCE($1, live_class_enabled),
                 agora_enabled = COALESCE($2, agora_enabled),
-                aws_ivs_enabled = COALESCE($3, aws_ivs_enabled),
-                youtube_enabled = COALESCE($4, youtube_enabled),
-                updated_by_admin_id = $5,
+                hundred_ms_enabled = COALESCE($3, hundred_ms_enabled),
+                aws_ivs_enabled = COALESCE($4, aws_ivs_enabled),
+                youtube_enabled = COALESCE($5, youtube_enabled),
+                updated_by_admin_id = $6,
                 updated_at = NOW()
              WHERE id = '00000000-0000-0000-0000-000000000002'
              RETURNING *`,
             [
                 liveClassEnabled != null ? !!liveClassEnabled : null,
                 agoraEnabled != null ? !!agoraEnabled : null,
+                hundredMsEnabled != null ? !!hundredMsEnabled : null,
                 awsIvsEnabled != null ? !!awsIvsEnabled : null,
                 youtubeEnabled != null ? !!youtubeEnabled : null,
                 adminId,
@@ -395,6 +398,7 @@ class AdminSettingsService {
         return row ? {
             liveClassEnabled: !!row.live_class_enabled,
             agoraEnabled: !!row.agora_enabled,
+            hundredMsEnabled: !!row.hundred_ms_enabled,
             awsIvsEnabled: !!row.aws_ivs_enabled,
             youtubeEnabled: !!row.youtube_enabled,
         } : null;
@@ -402,10 +406,10 @@ class AdminSettingsService {
 
     /** Usage stats: how many teachers and students use each live provider (by live_sessions.provider). */
     async getLiveUsageStats() {
-        const providers = ['agora', 'aws_ivs', 'youtube'];
-        const teachersByService = { agora: 0, aws_ivs: 0, youtube: 0 };
-        const studentsByService = { agora: 0, aws_ivs: 0, youtube: 0 };
-        const sessionsByService = { agora: 0, aws_ivs: 0, youtube: 0 };
+        const providers = ['agora', '100ms', 'aws_ivs', 'youtube'];
+        const teachersByService = { agora: 0, '100ms': 0, aws_ivs: 0, youtube: 0 };
+        const studentsByService = { agora: 0, '100ms': 0, aws_ivs: 0, youtube: 0 };
+        const sessionsByService = { agora: 0, '100ms': 0, aws_ivs: 0, youtube: 0 };
         let activeNow = 0;
 
         const teacherCountRes = await db.query(

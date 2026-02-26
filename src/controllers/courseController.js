@@ -1,4 +1,6 @@
 const courseService = require('../services/courseService');
+const teacherLiveReportService = require('../services/teacherLiveReportService');
+const liveClassRequestService = require('../services/liveClassRequestService');
 const r2Storage = require('../services/r2StorageService');
 const path = require('path');
 const fs = require('fs');
@@ -403,22 +405,22 @@ class CourseController {
     async requestWithdraw(req, res) {
         try {
             const teacherId = req.user.id;
-            const { amount } = req.body || {};
-            const data = await courseService.getTeacherRevenueDetailed(teacherId);
-            const requestedAmount = parseFloat(amount);
-            if (!requestedAmount || requestedAmount <= 0) {
-                return res.status(400).json({ error: 'Invalid amount' });
-            }
-            if (requestedAmount > data.withdrawable) {
-                return res.status(400).json({ error: 'Amount exceeds withdrawable balance' });
-            }
-            // In production: create withdraw_requests record and notify admin
-            res.json({
+            const { amount, currency, payment_method_id: paymentMethodId } = req.body || {};
+            const teacherWithdrawRequestService = require('../services/teacherWithdrawRequestService');
+            const request = await teacherWithdrawRequestService.create(teacherId, {
+                amount,
+                currency,
+                paymentMethodId,
+            });
+            res.status(201).json({
                 message: 'Withdrawal request submitted. You will be notified when processed.',
-                requested_amount: requestedAmount,
-                currency: data.currency,
+                request,
             });
         } catch (error) {
+            if (error.message === 'Invalid amount' || error.message === 'Amount exceeds withdrawable balance' ||
+                error.message === 'Payment method is required' || error.message === 'Payment method not found') {
+                return res.status(400).json({ error: error.message });
+            }
             console.error('Request withdraw error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
@@ -549,17 +551,37 @@ class CourseController {
         }
     }
 
+    async getCourseLiveReport(req, res) {
+        try {
+            if (req.user.role !== 'teacher') {
+                return res.status(403).json({ error: 'Access denied. Teachers only.' });
+            }
+            const courseId = req.params.id;
+            const report = await teacherLiveReportService.getCourseLiveReport(req.user.id, courseId);
+            if (!report) {
+                return res.status(404).json({ error: 'Course not found or you do not own this course.' });
+            }
+            res.json(report);
+        } catch (error) {
+            console.error('Get course live report error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
     async getCourseById(req, res) {
         try {
-            // Pass userId if authenticated to check purchase/ownership status
             const userId = req.user?.id || null;
             const course = await courseService.getCourseById(req.params.id, userId);
             if (!course) {
                 return res.status(404).json({ error: 'Course not found' });
             }
-            // Enrich with media URLs
             const enriched = enrichCourseMediaUrls([course], req);
-            res.json(enriched[0]);
+            const out = enriched[0];
+            if (req.user && out.teacher_id === req.user.id) {
+                const pending = await liveClassRequestService.getPendingByCourseId(out.id);
+                out.pendingLiveRequest = !!pending;
+            }
+            res.json(out);
         } catch (error) {
             console.error('Get course error:', error);
             res.status(500).json({ error: 'Internal server error' });
@@ -803,8 +825,40 @@ class CourseController {
             const course = await courseService.updateCourse(req.params.id, courseData);
             res.json(course);
         } catch (error) {
+            if (error.message && error.message.includes('Live class cannot be turned off')) {
+                return res.status(400).json({ error: error.message });
+            }
             console.error('Update course error:', error);
-            res.status(500).json({ error: 'Internal server error', details: error.message });
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    /** Teacher requests to enable live class for a course. Course must not have live yet and no pending request. */
+    async requestLive(req, res) {
+        try {
+            if (req.user.role !== 'teacher') {
+                return res.status(403).json({ error: 'Access denied. Teachers only.' });
+            }
+            const courseId = req.params.id;
+            const course = await courseService.getCourseById(courseId, req.user.id);
+            if (!course) {
+                return res.status(404).json({ error: 'Course not found' });
+            }
+            if (course.teacher_id !== req.user.id) {
+                return res.status(403).json({ error: 'Not authorized to request for this course.' });
+            }
+            if (course.has_live_class) {
+                return res.status(400).json({ error: 'This course already has live class enabled.' });
+            }
+            const pending = await liveClassRequestService.getPendingByCourseId(courseId);
+            if (pending) {
+                return res.status(400).json({ error: 'A request is already pending for this course.' });
+            }
+            const request = await liveClassRequestService.create(courseId, req.user.id);
+            res.status(201).json({ message: 'Live class request submitted.', request: { id: request.id, status: request.status } });
+        } catch (error) {
+            console.error('Request live error:', error);
+            res.status(500).json({ error: 'Internal server error' });
         }
     }
 
@@ -883,11 +937,24 @@ class CourseController {
             if (course.status && course.status !== 'active') {
                 return res.status(400).json({ error: 'This course is not available for purchase' });
             }
+            let finalAmount = course.discount_price != null ? parseFloat(course.discount_price) : parseFloat(course.price) || 0;
+            const finalCurrency = course.currency || 'USD';
             if (couponCode) {
                 const couponApplyService = require('../services/couponApplyService');
-                await couponApplyService.applyCoupon(couponCode, userId);
+                const applied = await couponApplyService.applyCoupon(couponCode, userId);
+                if (applied.type === 'original') {
+                    finalAmount = 0;
+                } else if (applied.discountType === 'percentage' && applied.discountAmount != null) {
+                    finalAmount = Math.max(0, finalAmount * (1 - Number(applied.discountAmount) / 100));
+                } else if (applied.discountType === 'fixed' && applied.discountAmount != null) {
+                    finalAmount = Math.max(0, finalAmount - Number(applied.discountAmount));
+                }
             }
-            await courseService.enrollUser(userId, courseId, { inviteCode: inviteCode || undefined });
+            await courseService.enrollUser(userId, courseId, {
+                inviteCode: inviteCode || undefined,
+                amountPaid: finalAmount,
+                currency: finalCurrency,
+            });
             res.json({
                 message: 'Course purchased successfully',
                 payment_method: paymentMethod || null,

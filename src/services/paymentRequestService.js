@@ -167,8 +167,12 @@ async function acceptPaymentRequest(requestId, adminUserId) {
             await couponApplyService.applyCoupon(row.coupon_code, row.user_id);
         }
         const courseService = require('./courseService');
+        const amountPaid = row.amount != null && !Number.isNaN(parseFloat(row.amount)) ? parseFloat(row.amount) : null;
+        const currency = (row.currency && String(row.currency).trim()) || null;
         await courseService.enrollUser(row.user_id, row.course_id, {
             inviteCode: row.invite_code || undefined,
+            amountPaid: amountPaid ?? undefined,
+            currency: currency || undefined,
         });
         await db.query(
             `UPDATE course_payment_requests

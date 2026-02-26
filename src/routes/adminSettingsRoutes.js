@@ -13,6 +13,11 @@ router.put('/share', adminSettingsController.updateShareSettings);
 router.get('/live', adminSettingsController.getLiveSettings);
 router.put('/live', adminSettingsController.updateLiveSettings);
 
+// Live usage: packages (free minute caps) and usage report
+router.get('/live-usage/packages', adminSettingsController.getLiveUsagePackages);
+router.put('/live-usage/packages/:provider', adminSettingsController.updateLiveUsagePackage);
+router.get('/live-usage/report', adminSettingsController.getLiveUsageReport);
+
 // Coupons
 router.get('/coupons', adminSettingsController.listCoupons);
 router.get('/coupons/:id', adminSettingsController.getCouponById);

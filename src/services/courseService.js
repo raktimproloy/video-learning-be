@@ -734,6 +734,11 @@ class CourseService {
             values.push(currency);
         }
         if (hasLiveClass !== undefined) {
+            const existing = (await db.query('SELECT has_live_class FROM courses WHERE id = $1', [id])).rows[0];
+            if (existing?.has_live_class === true && hasLiveClass === false) {
+                // Once live class is enabled (at creation or after admin approval), it cannot be turned off
+                throw new Error('Live class cannot be turned off once enabled.');
+            }
             updates.push(`has_live_class = $${paramIndex++}`);
             values.push(hasLiveClass);
         }
@@ -768,7 +773,7 @@ class CourseService {
     }
 
     async enrollUser(userId, courseId, options = {}) {
-        const { inviteCode } = options;
+        const { inviteCode, amountPaid, currency } = options;
         let isInvited = false;
         if (inviteCode) {
             const row = await db.query(
@@ -777,12 +782,18 @@ class CourseService {
             );
             isInvited = !!row.rows[0];
         }
+        const hasAmount = amountPaid != null && !Number.isNaN(parseFloat(amountPaid));
+        const amount = hasAmount ? parseFloat(amountPaid) : null;
+        const curr = (currency && String(currency).trim()) || null;
         const result = await db.query(
-            `INSERT INTO course_enrollments (user_id, course_id, is_invited)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (user_id, course_id) DO UPDATE SET is_invited = EXCLUDED.is_invited
+            `INSERT INTO course_enrollments (user_id, course_id, is_invited, amount_paid, currency)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (user_id, course_id) DO UPDATE SET
+                is_invited = EXCLUDED.is_invited,
+                amount_paid = COALESCE(EXCLUDED.amount_paid, course_enrollments.amount_paid),
+                currency = COALESCE(EXCLUDED.currency, course_enrollments.currency)
              RETURNING *`,
-            [userId, courseId, isInvited]
+            [userId, courseId, isInvited, amount, curr]
         );
         return result.rows[0];
     }
@@ -1031,7 +1042,7 @@ class CourseService {
         return result.rowCount > 0;
     }
 
-    /** Teacher revenue: total from enrollments in their courses. Amount = COALESCE(discount_price, price) per enrollment. */
+    /** Teacher revenue: total from enrollments in their courses. Amount = COALESCE(ce.amount_paid, course discount_price, price) per enrollment. */
     async getTeacherRevenue(teacherId) {
         const detailed = await this.getTeacherRevenueDetailed(teacherId);
         return {
@@ -1060,8 +1071,8 @@ class CourseService {
                 ce.enrolled_at,
                 COALESCE(ce.is_invited, false) as is_invited,
                 COALESCE(c.has_live_class, false) as has_live_class,
-                COALESCE(c.discount_price, c.price, 0)::float as amount,
-                c.currency
+                COALESCE(ce.amount_paid, c.discount_price, c.price, 0)::float as amount,
+                COALESCE(ce.currency, c.currency) as currency
              FROM course_enrollments ce
              JOIN courses c ON ce.course_id = c.id AND c.teacher_id = $1
              ORDER BY ce.enrolled_at DESC`,
@@ -1113,7 +1124,9 @@ class CourseService {
             totalPlatformFee += platformFee;
         }
 
-        const withdrawable = Math.max(0, totalEarn - totalPlatformFee);
+        const teacherWithdrawRequestService = require('./teacherWithdrawRequestService');
+        const acceptedWithdrawTotal = await teacherWithdrawRequestService.getAcceptedWithdrawTotal(teacherId);
+        const withdrawable = Math.max(0, totalEarn - totalPlatformFee - acceptedWithdrawTotal);
 
         return {
             currency,
@@ -1154,8 +1167,8 @@ class CourseService {
                 ce.enrolled_at,
                 COALESCE(ce.is_invited, false) as is_invited,
                 c.title as course_title,
-                COALESCE(c.discount_price, c.price, 0)::float as amount,
-                c.currency,
+                COALESCE(ce.amount_paid, c.discount_price, c.price, 0)::float as amount,
+                COALESCE(ce.currency, c.currency) as currency,
                 u.email as student_email,
                 COALESCE(sp.name, u.email) as student_name
              FROM course_enrollments ce
@@ -1283,7 +1296,7 @@ class CourseService {
                 [teacherId]
             ),
             db.query(
-                `SELECT COALESCE(SUM(COALESCE(c.discount_price, c.price, 0)::numeric), 0)::float as revenue
+                `SELECT COALESCE(SUM(COALESCE(ce.amount_paid, c.discount_price, c.price, 0)::numeric), 0)::float as revenue
                  FROM course_enrollments ce
                  JOIN courses c ON c.id = ce.course_id AND c.teacher_id = $1
                  WHERE ce.enrolled_at >= date_trunc('month', CURRENT_DATE)`,

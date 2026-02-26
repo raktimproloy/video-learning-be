@@ -1,6 +1,11 @@
 const userService = require('../services/userService');
 const jwt = require('jsonwebtoken');
+const axios = require('axios');
+const { OAuth2Client } = require('google-auth-library');
 const { validationResult } = require('express-validator');
+
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
 
 class AuthController {
     async register(req, res) {
@@ -11,7 +16,11 @@ class AuthController {
         }
 
         try {
-            const { email, password } = req.body;
+            const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+            const password = req.body.password;
+            if (!email) {
+                return res.status(400).json({ error: 'Valid email is required' });
+            }
 
             // Check if user exists
             const existingUser = await userService.findByEmail(email);
@@ -40,12 +49,19 @@ class AuthController {
         }
 
         try {
-            const { email, password } = req.body;
+            const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+            const password = req.body.password;
+            if (!email) {
+                return res.status(400).json({ error: 'Valid email is required' });
+            }
 
             // Find user
             const user = await userService.findByEmail(email);
             if (!user) {
                 return res.status(400).json({ error: 'Invalid credentials' });
+            }
+            if (!user.password_hash) {
+                return res.status(400).json({ error: 'This account uses Google sign-in. Please use Continue with Google.' });
             }
 
             // Check password
@@ -71,11 +87,17 @@ class AuthController {
     async joinTeacher(req, res) {
         try {
             const userId = req.user.id;
-            
-            // Check if user is already a teacher
+
             const user = await userService.findById(userId);
             if (user.role === 'teacher') {
                 return res.status(400).json({ error: 'You are already a teacher' });
+            }
+            // Teachers must have a linked Gmail account (verification)
+            if (!user.google_id) {
+                return res.status(403).json({
+                    error: 'Please link your Gmail account to become a teacher.',
+                    code: 'GMAIL_LINK_REQUIRED'
+                });
             }
 
             // Update role to teacher
@@ -128,7 +150,12 @@ class AuthController {
             
             // Check if user is trying to switch to teacher
             if (role === 'teacher') {
-                // Check if user has teacher profile (they joined as teacher)
+                if (!user.google_id) {
+                    return res.status(403).json({
+                        error: 'Please link your Gmail account first.',
+                        code: 'GMAIL_LINK_REQUIRED'
+                    });
+                }
                 const teacherProfile = await userService.getTeacherProfile(userId);
                 if (!teacherProfile) {
                     return res.status(403).json({ error: 'You must join as a teacher first' });
@@ -171,6 +198,171 @@ class AuthController {
         }
     }
 
+    /**
+     * Google OAuth: frontend sends the authorization code. Backend exchanges code for tokens,
+     * verifies the ID token with Google (signature, audience, expiry), validates userinfo,
+     * then finds or creates the user and returns JWT + user. No client-supplied identity is trusted.
+     */
+    async postGoogleAuth(req, res) {
+        if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+            return res.status(503).json({ error: 'Google sign-in is not configured' });
+        }
+        const { code, redirectUri } = req.body || {};
+        if (!code || typeof redirectUri !== 'string' || !redirectUri.trim()) {
+            return res.status(400).json({ error: 'code and redirectUri are required' });
+        }
+
+        try {
+            // 1. Exchange authorization code for tokens (id_token + access_token)
+            const tokenRes = await axios.post(
+                'https://oauth2.googleapis.com/token',
+                new URLSearchParams({
+                    code: code.trim(),
+                    client_id: GOOGLE_CLIENT_ID,
+                    client_secret: GOOGLE_CLIENT_SECRET,
+                    redirect_uri: redirectUri.trim(),
+                    grant_type: 'authorization_code',
+                }),
+                { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+            );
+
+            const idToken = tokenRes.data?.id_token;
+            if (!idToken) {
+                console.error('Google token response missing id_token');
+                return res.status(401).json({ error: 'Google sign-in failed: invalid response' });
+            }
+
+            // 2. Verify ID token (signature, audience, expiration) — do not trust client data
+            const oauth2Client = new OAuth2Client(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET);
+            let ticket;
+            try {
+                ticket = await oauth2Client.verifyIdToken({
+                    idToken,
+                    audience: GOOGLE_CLIENT_ID,
+                });
+            } catch (verifyErr) {
+                console.error('Google ID token verification failed:', verifyErr.message);
+                return res.status(401).json({ error: 'Google sign-in failed: invalid or expired token' });
+            }
+
+            const payload = ticket.getPayload();
+            if (!payload) {
+                console.error('Google ID token has no payload');
+                return res.status(401).json({ error: 'Google sign-in failed' });
+            }
+
+            // 3. Validate required claims (sub = Google user id, email)
+            const { sub: googleId, email, email_verified, name } = payload;
+            if (!googleId || !email) {
+                console.error('Google ID token missing sub or email');
+                return res.status(401).json({ error: 'Google sign-in failed: missing identity' });
+            }
+            if (email_verified === false) {
+                console.error('Google email not verified');
+                return res.status(403).json({ error: 'Google email must be verified' });
+            }
+
+            // 4. Find or create user and issue app JWT
+            const user = await userService.findOrCreateByGoogle(googleId, email, name || null);
+            const token = jwt.sign(
+                { id: user.id, email: user.email, role: user.role || 'student' },
+                process.env.JWT_SECRET || 'your_jwt_secret',
+                { expiresIn: '24h' }
+            );
+            res.json({ token, user: { id: user.id, email: user.email, role: user.role || 'student' } });
+        } catch (err) {
+            const status = err.response?.status;
+            const data = err.response?.data;
+            if (status === 400 && data) {
+                // Google returns 400 with error_description e.g. "redirect_uri_mismatch" or "Bad Request" (code already used)
+                const reason = data.error_description || data.error || 'invalid or expired code';
+                console.error('Google token exchange failed:', reason, data);
+                return res.status(401).json({
+                    error: 'Google sign-in failed: invalid or expired code',
+                    hint: typeof reason === 'string' ? reason : undefined,
+                });
+            }
+            console.error('Google OAuth error:', data || err.message);
+            res.status(401).json({ error: 'Google sign-in failed' });
+        }
+    }
+
+    /**
+     * Link Gmail to the current user (for teachers who signed up with email/password).
+     * Requires auth. Exchanges code with Google, verifies ID token, ensures Google email
+     * matches the account email, then sets google_id on the user.
+     */
+    async postLinkGoogle(req, res) {
+        if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+            return res.status(503).json({ error: 'Google sign-in is not configured' });
+        }
+        const { code, redirectUri } = req.body || {};
+        if (!code || typeof redirectUri !== 'string' || !redirectUri.trim()) {
+            return res.status(400).json({ error: 'code and redirectUri are required' });
+        }
+        const userId = req.user.id;
+        const currentUser = await userService.findById(userId);
+        if (!currentUser) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        try {
+            const tokenRes = await axios.post(
+                'https://oauth2.googleapis.com/token',
+                new URLSearchParams({
+                    code: code.trim(),
+                    client_id: GOOGLE_CLIENT_ID,
+                    client_secret: GOOGLE_CLIENT_SECRET,
+                    redirect_uri: redirectUri.trim(),
+                    grant_type: 'authorization_code',
+                }),
+                { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+            );
+
+            const idToken = tokenRes.data?.id_token;
+            if (!idToken) {
+                return res.status(401).json({ error: 'Invalid Google response' });
+            }
+
+            const oauth2Client = new OAuth2Client(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET);
+            let ticket;
+            try {
+                ticket = await oauth2Client.verifyIdToken({
+                    idToken,
+                    audience: GOOGLE_CLIENT_ID,
+                });
+            } catch (verifyErr) {
+                return res.status(401).json({ error: 'Invalid or expired Google sign-in' });
+            }
+
+            const payload = ticket.getPayload();
+            const { sub: googleId, email: googleEmail, email_verified } = payload || {};
+            if (!googleId || !googleEmail) {
+                return res.status(401).json({ error: 'Could not get Gmail from Google' });
+            }
+            if (email_verified === false) {
+                return res.status(403).json({ error: 'Gmail must be verified' });
+            }
+
+            const accountEmail = (currentUser.email || '').trim().toLowerCase();
+            const gmail = (googleEmail || '').trim().toLowerCase();
+            if (accountEmail !== gmail) {
+                return res.status(400).json({
+                    error: 'Gmail must match your account email. Sign in with the same email you use on this site.'
+                });
+            }
+
+            await userService.linkGoogle(userId, googleId);
+            return res.json({ success: true, linkedGoogle: true });
+        } catch (err) {
+            if (err.response?.status === 400) {
+                return res.status(401).json({ error: 'Invalid or expired code. Please try linking again.' });
+            }
+            console.error('Link Google error:', err.response?.data || err.message);
+            return res.status(401).json({ error: 'Failed to link Gmail' });
+        }
+    }
+
     async getCurrentUser(req, res) {
         try {
             const userId = req.user.id;
@@ -183,7 +375,8 @@ class AuthController {
             const userData = { 
                 id: user.id, 
                 email: user.email, 
-                role: user.role || 'student'
+                role: user.role || 'student',
+                linkedGoogle: !!user.google_id
             };
 
             // Always check if teacher profile exists, regardless of current role

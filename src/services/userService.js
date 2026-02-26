@@ -16,17 +16,45 @@ class UserService {
         return result.rows[0];
     }
 
+    async findByGoogleId(googleId) {
+        const result = await db.query('SELECT * FROM users WHERE google_id = $1', [googleId]);
+        return result.rows[0];
+    }
+
+    /** Create user from Google OAuth (no password). If email exists, link google_id to that user. */
+    async findOrCreateByGoogle(googleId, email, name) {
+        let user = await this.findByGoogleId(googleId);
+        if (user) return user;
+        user = await this.findByEmail(email);
+        if (user) {
+            await db.query('UPDATE users SET google_id = $1 WHERE id = $2', [googleId, user.id]);
+            return (await this.findById(user.id)) || user;
+        }
+        const result = await db.query(
+            'INSERT INTO users (email, password_hash, role, google_id) VALUES ($1, NULL, $2, $3) RETURNING id, email, role, created_at',
+            [email, 'student', googleId]
+        );
+        return result.rows[0];
+    }
+
     async findByEmail(email) {
         const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
         return result.rows[0];
     }
 
     async findById(id) {
-        const result = await db.query('SELECT id, email, role, created_at FROM users WHERE id = $1', [id]);
+        const result = await db.query('SELECT id, email, role, created_at, google_id FROM users WHERE id = $1', [id]);
         return result.rows[0];
     }
 
+    /** Link a Google account to an existing user (same email). Used when joining as teacher. */
+    async linkGoogle(userId, googleId) {
+        await db.query('UPDATE users SET google_id = $1 WHERE id = $2', [googleId, userId]);
+        return this.findById(userId);
+    }
+
     async validatePassword(user, password) {
+        if (!user.password_hash) return false;
         return await bcrypt.compare(password, user.password_hash);
     }
 

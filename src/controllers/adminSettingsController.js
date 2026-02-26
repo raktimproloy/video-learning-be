@@ -1,4 +1,5 @@
 const adminSettingsService = require('../services/adminSettingsService');
+const liveUsageService = require('../services/liveUsageService');
 
 function getAdminId(req) {
     return req.user?.id || req.admin?.id;
@@ -177,13 +178,14 @@ module.exports = {
                 ...(settings || {
                     liveClassEnabled: true,
                     agoraEnabled: true,
+                    hundredMsEnabled: true,
                     awsIvsEnabled: false,
                     youtubeEnabled: true,
                 }),
                 usage: usage || {
-                    teachersByService: { agora: 0, aws_ivs: 0, youtube: 0 },
-                    studentsByService: { agora: 0, aws_ivs: 0, youtube: 0 },
-                    sessionsByService: { agora: 0, aws_ivs: 0, youtube: 0 },
+                    teachersByService: { agora: 0, '100ms': 0, aws_ivs: 0, youtube: 0 },
+                    studentsByService: { agora: 0, '100ms': 0, aws_ivs: 0, youtube: 0 },
+                    sessionsByService: { agora: 0, '100ms': 0, aws_ivs: 0, youtube: 0 },
                     activeNow: 0,
                 },
             });
@@ -197,16 +199,57 @@ module.exports = {
     async updateLiveSettings(req, res) {
         try {
             const adminId = getAdminId(req);
-            const { liveClassEnabled, agoraEnabled, awsIvsEnabled, youtubeEnabled } = req.body || {};
+            const { liveClassEnabled, agoraEnabled, hundredMsEnabled, awsIvsEnabled, youtubeEnabled } = req.body || {};
             const settings = await adminSettingsService.updateLiveSettings(adminId, {
                 liveClassEnabled,
                 agoraEnabled,
+                hundredMsEnabled,
                 awsIvsEnabled,
                 youtubeEnabled,
             });
             res.json(settings);
         } catch (error) {
             console.error('Update live settings error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    },
+
+    /** GET /admin/settings/live-usage/packages — list provider packages (cap, used, remaining minutes) */
+    async getLiveUsagePackages(req, res) {
+        try {
+            const packages = await liveUsageService.getProviderPackages();
+            res.json({ packages });
+        } catch (error) {
+            console.error('Get live usage packages error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    },
+
+    /** PUT /admin/settings/live-usage/packages/:provider — update free minute cap for a provider */
+    async updateLiveUsagePackage(req, res) {
+        try {
+            const { provider } = req.params;
+            const { freeMinutesCap } = req.body || {};
+            if (!liveUsageService.PROVIDERS.includes(provider)) {
+                return res.status(400).json({ error: 'Invalid provider' });
+            }
+            await liveUsageService.updateProviderPackage(provider, freeMinutesCap);
+            const packages = await liveUsageService.getProviderPackages();
+            const pkg = packages.find(p => p.provider === provider);
+            res.json(pkg || { provider, freeMinutesCap: Number(freeMinutesCap) });
+        } catch (error) {
+            console.error('Update live usage package error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    },
+
+    /** GET /admin/settings/live-usage/report — full usage report (by provider, teacher, student) */
+    async getLiveUsageReport(req, res) {
+        try {
+            const report = await liveUsageService.getUsageReport();
+            res.json(report);
+        } catch (error) {
+            console.error('Get live usage report error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     },

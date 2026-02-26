@@ -7,7 +7,7 @@ const verifyToken = require('../middleware/authMiddleware');
 router.post(
     '/register',
     [
-        check('email', 'Please include a valid email').isEmail(),
+        check('email', 'Please include a valid email').isEmail().normalizeEmail(),
         check('password', 'Password must be at least 6 characters').isLength({ min: 6 })
     ],
     authController.register
@@ -16,8 +16,8 @@ router.post(
 router.post(
     '/login',
     [
-        check('email', 'Please include a valid email').isEmail(),
-        check('password', 'Password is required').exists()
+        check('email', 'Please include a valid email').isEmail().normalizeEmail(),
+        check('password', 'Password is required').exists().notEmpty().withMessage('Password is required')
     ],
     authController.login
 );
@@ -42,6 +42,14 @@ router.get(
     '/me',
     verifyToken,
     authController.getCurrentUser
+);
+
+router.post('/google', authController.postGoogleAuth);
+
+router.post(
+    '/link-google',
+    verifyToken,
+    authController.postLinkGoogle
 );
 
 module.exports = router;

@@ -223,13 +223,13 @@ class LessonService {
              FROM lessons l
              JOIN courses c ON l.course_id = c.id
              JOIN users u ON c.teacher_id = u.id
-             WHERE l.is_live = true 
+             WHERE l.is_live = true AND COALESCE(c.has_live_class, false) = true
              ORDER BY l.updated_at DESC`
         );
         return result.rows;
     }
 
-    /** Live lessons only for courses the student is enrolled in (purchased). */
+    /** Live lessons only for courses the student is enrolled in (purchased) and that have live enabled. */
     async getLiveLessonsForStudent(studentId) {
         const result = await db.query(
             `SELECT l.*, c.title as course_title, u.email as teacher_email, c.id as course_id
@@ -237,19 +237,20 @@ class LessonService {
              JOIN courses c ON l.course_id = c.id
              JOIN users u ON c.teacher_id = u.id
              JOIN course_enrollments ce ON ce.course_id = c.id AND ce.user_id = $1
-             WHERE l.is_live = true 
+             WHERE l.is_live = true AND COALESCE(c.has_live_class, false) = true
              ORDER BY l.updated_at DESC`,
             [studentId]
         );
         return result.rows;
     }
 
+    /** Only lessons from courses that have live class enabled. */
     async getTeacherLiveLessons(teacherId) {
         const result = await db.query(
             `SELECT l.*, c.title as course_title, c.id as course_id
              FROM lessons l
              JOIN courses c ON l.course_id = c.id
-             WHERE l.is_live = true AND c.teacher_id = $1
+             WHERE l.is_live = true AND c.teacher_id = $1 AND COALESCE(c.has_live_class, false) = true
              ORDER BY l.updated_at DESC`,
             [teacherId]
         );

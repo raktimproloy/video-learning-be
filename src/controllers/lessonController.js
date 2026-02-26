@@ -10,12 +10,32 @@ const videoService = require('../services/videoService');
 const agoraService = require('../services/agoraService');
 const adminService = require('../services/adminService');
 const adminSettingsService = require('../services/adminSettingsService');
+const liveUsageService = require('../services/liveUsageService');
+const awsIvsService = require('../services/awsIvsService');
+const hundredMsService = require('../services/hundredMsService');
 const r2Storage = require('../services/r2StorageService');
 const fs = require('fs');
 const path = require('path');
 
 const STAGING_DIR = path.resolve(__dirname, '../../staging');
 const UPLOADS_LESSONS = path.resolve(__dirname, '../../uploads/lessons');
+
+/** Return live credentials for the given provider (agora | 100ms | aws_ivs | youtube). */
+async function getLiveCredsForProvider(provider, channelName, uid, role) {
+    if (provider === 'agora') {
+        return agoraService.generateRtcToken(channelName, uid, role);
+    }
+    if (provider === '100ms') {
+        return hundredMsService.getCredentials(channelName, uid, role);
+    }
+    if (provider === 'aws_ivs') {
+        return awsIvsService.getCredentials(channelName, uid, role);
+    }
+    if (provider === 'youtube') {
+        return null; // YouTube: not implemented; configure and add YouTube Live API if needed
+    }
+    return null;
+}
 
 function parseNotesAndAssignments(body) {
     let notes = [];
@@ -285,14 +305,23 @@ class LessonController {
             if (req.user.role === 'teacher') {
                 if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
                 if (is_live === true) {
+                    if (!course.has_live_class) {
+                        return res.status(403).json({
+                            error: 'This course does not have live class enabled. Request to enable it from the course page or course settings.',
+                            code: 'LIVE_NOT_ENABLED_FOR_COURSE',
+                        });
+                    }
                     const liveSettings = await adminSettingsService.getLiveSettings();
                     if (!liveSettings?.liveClassEnabled) {
                         return res.status(503).json({ error: 'Live classes are currently disabled by the platform.' });
                     }
-                    const provider = (req.body?.provider && ['agora', 'aws_ivs', 'youtube'].includes(req.body.provider))
-                        ? req.body.provider : 'agora';
+                    // Auto-select provider: use first enabled service with free minutes; else AWS IVS (fallback).
+                    const { provider } = await liveUsageService.getProviderWithFreeMinutes(liveSettings);
                     if (provider === 'agora' && !liveSettings.agoraEnabled) {
                         return res.status(503).json({ error: 'Agora live service is currently disabled.' });
+                    }
+                    if (provider === '100ms' && !liveSettings.hundredMsEnabled) {
+                        return res.status(503).json({ error: '100ms live service is currently disabled.' });
                     }
                     if (provider === 'aws_ivs' && !liveSettings.awsIvsEnabled) {
                         return res.status(503).json({ error: 'AWS IVS live service is currently disabled.' });
@@ -317,9 +346,11 @@ class LessonController {
                     };
                     const updatedLesson = await lessonService.updateLiveStatus(id, true, sessionData);
                     const uid = Math.abs(req.user.id.split('').reduce((a, c) => ((a << 5) - a) + c.charCodeAt(0), 0)) % 2147483647;
-                    const creds = agoraService.generateRtcToken(id, uid, 'publisher');
-                    if (!creds) return res.status(503).json({ error: 'Agora not configured. Set AGORA_APP_ID.' });
-                    return res.json({ ...creds, lesson: updatedLesson || lesson, is_live: true, live_session_id: liveSession.id });
+                    const creds = await getLiveCredsForProvider(provider, id, uid, req.user.role === 'teacher' ? 'publisher' : 'subscriber');
+                    if (!creds) {
+                        return res.status(503).json({ error: `${provider} is not configured. Configure credentials for this live provider.` });
+                    }
+                    return res.json({ ...creds, provider, lesson: updatedLesson || lesson, is_live: true, live_session_id: liveSession.id });
                 }
                 if (is_live === false) {
                     await liveSessionService.endDiscarded(id);
@@ -348,10 +379,13 @@ class LessonController {
                 return res.status(503).json({ error: 'Live classes are currently disabled by the platform.' });
             }
             const activeSession = await liveSessionService.getActiveByLesson(id);
-            const provider = (activeSession?.provider && ['agora', 'aws_ivs', 'youtube'].includes(activeSession.provider))
+            const provider = (activeSession?.provider && liveUsageService.PROVIDERS.includes(activeSession.provider))
                 ? activeSession.provider : 'agora';
             if (provider === 'agora' && !liveSettings.agoraEnabled) {
                 return res.status(503).json({ error: 'Agora live service is currently disabled.' });
+            }
+            if (provider === '100ms' && !liveSettings.hundredMsEnabled) {
+                return res.status(503).json({ error: '100ms live service is currently disabled.' });
             }
             if (provider === 'aws_ivs' && !liveSettings.awsIvsEnabled) {
                 return res.status(503).json({ error: 'AWS IVS live service is currently disabled.' });
@@ -360,23 +394,19 @@ class LessonController {
                 return res.status(503).json({ error: 'YouTube live service is currently disabled.' });
             }
 
-            if (req.user.role === 'teacher') {
-                if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
-                const uid = Math.abs(req.user.id.split('').reduce((a, c) => ((a << 5) - a) + c.charCodeAt(0), 0)) % 2147483647;
-                const creds = agoraService.generateRtcToken(id, uid, 'publisher');
-                if (!creds) return res.status(503).json({ error: 'Agora not configured.' });
-                return res.json(creds);
+            const uid = Math.abs(req.user.id.split('').reduce((a, c) => ((a << 5) - a) + c.charCodeAt(0), 0)) % 2147483647;
+            const role = req.user.role === 'teacher' ? 'publisher' : 'subscriber';
+            if (req.user.role === 'teacher' && course.teacher_id !== req.user.id) {
+                return res.status(403).json({ error: 'Not authorized' });
             }
-
             if (req.user.role === 'student') {
                 const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
                 if (!enrolled) return res.status(403).json({ error: 'Purchase this course to watch the live stream.' });
                 if (!lesson.is_live) return res.status(404).json({ error: 'This lesson is not live.' });
-                const uid = Math.abs(req.user.id.split('').reduce((a, c) => ((a << 5) - a) + c.charCodeAt(0), 0)) % 2147483647;
-                const creds = agoraService.generateRtcToken(id, uid, 'subscriber');
-                if (!creds) return res.status(503).json({ error: 'Agora not configured.' });
-                return res.json(creds);
             }
+            const creds = await getLiveCredsForProvider(provider, id, uid, role);
+            if (!creds) return res.status(503).json({ error: `${provider} is not configured.` });
+            return res.json({ ...creds, provider });
 
             return res.status(403).json({ error: 'Access denied' });
         } catch (error) {

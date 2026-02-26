@@ -1,15 +1,16 @@
 const db = require('../../db');
 const { randomUUID } = require('crypto');
+const liveUsageService = require('./liveUsageService');
 
 class LiveSessionService {
     /**
      * Create a new live session when teacher starts live.
      * Returns the session (id will become video_id when saved).
-     * broadcast_status starts as 'starting'. provider: 'agora' | 'aws_ivs' | 'youtube'.
+     * broadcast_status starts as 'starting'. provider: 'agora' | '100ms' | 'aws_ivs' | 'youtube'.
      */
     async create(lessonId, courseId, ownerId, { liveName, liveOrder, liveDescription, provider = 'agora' }) {
         const id = randomUUID();
-        const prov = ['agora', 'aws_ivs', 'youtube'].includes(provider) ? provider : 'agora';
+        const prov = liveUsageService.PROVIDERS.includes(provider) ? provider : 'agora';
         const result = await db.query(
             `INSERT INTO live_sessions (id, lesson_id, course_id, owner_id, live_name, live_order, live_description, status, broadcast_status, provider)
              VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', 'starting', $8)
@@ -93,6 +94,7 @@ class LiveSessionService {
     /**
      * End live session: set broadcast_status to 'ended', then clear lesson link, mark as discarded (no save).
      * Only updates sessions that are still 'active' (saved sessions are left as-is).
+     * Records usage (minutes) for this session so free-minute counters stay accurate.
      */
     async endDiscarded(lessonId) {
         const session = await this.getActiveByLesson(lessonId);
@@ -102,6 +104,11 @@ class LiveSessionService {
                  WHERE id = $1 AND status = 'active'`,
                 [session.id]
             );
+            try {
+                await liveUsageService.recordUsageForSession(session.id);
+            } catch (err) {
+                console.error('Live usage record (endDiscarded) failed:', err);
+            }
         }
         await db.query(
             'UPDATE lessons SET current_live_session_id = NULL WHERE id = $1',
@@ -111,6 +118,7 @@ class LiveSessionService {
 
     /**
      * Mark live session as saved (after video created with same id).
+     * Records usage (minutes) for this session.
      */
     async markSaved(liveSessionId) {
         await db.query(
@@ -118,6 +126,11 @@ class LiveSessionService {
              WHERE id = $1`,
             [liveSessionId]
         );
+        try {
+            await liveUsageService.recordUsageForSession(liveSessionId);
+        } catch (err) {
+            console.error('Live usage record (markSaved) failed:', err);
+        }
     }
 
     /**
