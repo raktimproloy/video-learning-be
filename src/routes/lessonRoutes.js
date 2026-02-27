@@ -49,8 +49,13 @@ router.post('/:id/live/watch/leave', authMiddleware, lessonController.liveWatchL
 router.post('/:id/live/watch/heartbeat', authMiddleware, lessonController.liveWatchHeartbeat);
 router.post('/:id/live/materials/note', authMiddleware, uploadLiveMaterial, lessonController.addLiveNote);
 router.post('/:id/live/materials/assignment', authMiddleware, uploadLiveMaterial, lessonController.addLiveAssignment);
+// Pre-live uploads: upload file to R2/local and return path only (no DB insert)
+router.post('/:id/live/prelive/materials/note', authMiddleware, uploadLiveMaterial, lessonController.uploadPreliveNoteFile);
+router.post('/:id/live/prelive/materials/assignment', authMiddleware, uploadLiveMaterial, lessonController.uploadPreliveAssignmentFile);
 router.post('/:id/live/exams', authMiddleware, requireRole(['teacher']), lessonController.saveLiveExam);
 router.put('/:id/live/exams/:examId/status', authMiddleware, requireRole(['teacher']), lessonController.setLiveExamStatus);
+router.post('/:id/live/exams/:examId/submit', authMiddleware, requireRole(['student']), lessonController.submitLiveExam);
+router.get('/:id/live/exams/:examId/leaderboard', authMiddleware, lessonController.getLiveExamLeaderboard);
 router.get('/:id', authMiddleware, lessonController.getLessonById);
 
 // Teacher only routes (with multer for notes/assignments file uploads)
