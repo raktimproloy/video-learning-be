@@ -3,6 +3,7 @@ const lessonService = require('../services/lessonService');
 const courseService = require('../services/courseService');
 const liveChatService = require('../services/liveChatService');
 const liveMaterialService = require('../services/liveMaterialService');
+const liveExamService = require('../services/liveExamService');
 const liveWatchService = require('../services/liveWatchService');
 const liveSessionService = require('../services/liveSessionService');
 const { isImage, compressImage } = require('../utils/imageCompress');
@@ -461,6 +462,79 @@ class LessonController {
             res.json({ materials });
         } catch (error) {
             console.error('Get live materials error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async getLiveExams(req, res) {
+        try {
+            const lessonId = req.params.id;
+            const lesson = await lessonService.getLessonById(lessonId);
+            if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
+            const course = await courseService.getCourseById(lesson.course_id);
+            if (!course) return res.status(404).json({ error: 'Course not found' });
+            const isTeacher = req.user.role === 'teacher' && course.teacher_id === req.user.id;
+            const isStudent = req.user.role === 'student';
+            const onlyPublished = isStudent;
+            if (isStudent) {
+                const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
+                if (!enrolled) return res.status(403).json({ error: 'Access denied' });
+            } else if (!isTeacher) return res.status(403).json({ error: 'Access denied' });
+            const exams = await liveExamService.listByLesson(lessonId, { onlyPublished });
+            res.json({ exams });
+        } catch (error) {
+            console.error('Get live exams error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async saveLiveExam(req, res) {
+        try {
+            if (req.user.role !== 'teacher') return res.status(403).json({ error: 'Teachers only' });
+            const lessonId = req.params.id;
+            const lesson = await lessonService.getLessonById(lessonId);
+            if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
+            const course = await courseService.getCourseById(lesson.course_id);
+            if (!course) return res.status(404).json({ error: 'Course not found' });
+            if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+            const { examId, title, timeLimitMinutes, questions } = req.body || {};
+            let exam;
+            if (examId) {
+                exam = await liveExamService.update(
+                    lessonId,
+                    examId,
+                    req.user.id,
+                    { title, timeLimitMinutes, questions: questions || [] },
+                );
+            } else {
+                exam = await liveExamService.create(
+                    lessonId,
+                    req.user.id,
+                    { title, timeLimitMinutes, questions: questions || [] },
+                );
+            }
+            res.json({ exam });
+        } catch (error) {
+            console.error('Save live exam error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async setLiveExamStatus(req, res) {
+        try {
+            if (req.user.role !== 'teacher') return res.status(403).json({ error: 'Teachers only' });
+            const lessonId = req.params.id;
+            const { examId } = req.params;
+            const { status } = req.body || {};
+            const lesson = await lessonService.getLessonById(lessonId);
+            if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
+            const course = await courseService.getCourseById(lesson.course_id);
+            if (!course) return res.status(404).json({ error: 'Course not found' });
+            if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+            const exam = await liveExamService.setStatus(lessonId, examId, req.user.id, status);
+            res.json({ exam });
+        } catch (error) {
+            console.error('Set live exam status error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     }

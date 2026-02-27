@@ -16,6 +16,12 @@ class LiveMaterialService {
         return result.rows;
     }
 
+    async listForTeacher(lessonId, liveSessionId = null, teacherId) {
+        const materials = await this.list(lessonId, liveSessionId);
+        // When we later add visibility/publish flags, filter here for teacher-specific view if needed.
+        return materials;
+    }
+
     async addNote(lessonId, teacherId, { content, filePath, fileName }, liveSessionId = null) {
         const result = await db.query(
             `INSERT INTO live_materials (lesson_id, type, content, file_path, file_name, created_by, live_session_id)

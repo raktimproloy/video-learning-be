@@ -36,6 +36,7 @@ router.get('/:id/videos', authMiddleware, lessonController.getLessonVideos);
 router.get('/:id/live/token', authMiddleware, lessonController.getLiveToken);
 router.get('/:id/live/chat', authMiddleware, lessonController.getLiveChat);
 router.get('/:id/live/materials', authMiddleware, lessonController.getLiveMaterials);
+router.get('/:id/live/exams', authMiddleware, lessonController.getLiveExams);
 router.get('/:id/live/started-at', authMiddleware, lessonController.getLiveStartedAt);
 router.get('/:id/live/viewers', authMiddleware, lessonController.getLiveViewers);
 router.get('/:id/live/stats', authMiddleware, lessonController.getLiveStats);
@@ -48,6 +49,8 @@ router.post('/:id/live/watch/leave', authMiddleware, lessonController.liveWatchL
 router.post('/:id/live/watch/heartbeat', authMiddleware, lessonController.liveWatchHeartbeat);
 router.post('/:id/live/materials/note', authMiddleware, uploadLiveMaterial, lessonController.addLiveNote);
 router.post('/:id/live/materials/assignment', authMiddleware, uploadLiveMaterial, lessonController.addLiveAssignment);
+router.post('/:id/live/exams', authMiddleware, requireRole(['teacher']), lessonController.saveLiveExam);
+router.put('/:id/live/exams/:examId/status', authMiddleware, requireRole(['teacher']), lessonController.setLiveExamStatus);
 router.get('/:id', authMiddleware, lessonController.getLessonById);
 
 // Teacher only routes (with multer for notes/assignments file uploads)
