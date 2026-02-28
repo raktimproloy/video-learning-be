@@ -16,13 +16,16 @@ class VideoService {
         );
         if (directPermission.rows.length > 0) return true;
 
-        // Check course enrollment permission
+        // Check course enrollment permission (only if course and lesson are active)
         const courseEnrollment = await db.query(
             `SELECT 1 
              FROM course_enrollments ce
              JOIN lessons l ON ce.course_id = l.course_id
+             JOIN courses c ON c.id = l.course_id
              JOIN videos v ON l.id = v.lesson_id
-             WHERE ce.user_id = $1 AND v.id = $2`,
+             WHERE ce.user_id = $1 AND v.id = $2
+             AND (COALESCE(c.status, 'active') = 'active')
+             AND (COALESCE(l.status, 'active') = 'active')`,
             [userId, videoId]
         );
         return courseEnrollment.rows.length > 0;
@@ -41,7 +44,7 @@ class VideoService {
 
     /**
      * Retrieves all videos with access status for a user (Student View).
-     * Excludes videos with status 'processing'.
+     * Only videos in active courses and active lessons; excludes processing/inactive videos.
      */
     async getAvailableVideos(userId) {
         const query = `
@@ -53,9 +56,14 @@ class VideoService {
             FROM videos v
             LEFT JOIN user_permissions up ON v.id = up.video_id AND up.user_id = $1 AND up.expires_at > NOW()
             LEFT JOIN lessons l ON v.lesson_id = l.id
+            LEFT JOIN courses c ON l.course_id = c.id
             LEFT JOIN course_enrollments ce ON l.course_id = ce.course_id AND ce.user_id = $1
             WHERE ((up.video_id IS NOT NULL) OR (ce.course_id IS NOT NULL))
-            AND (v.status IS NULL OR v.status != 'processing')
+            AND (
+                (up.video_id IS NOT NULL)
+                OR (ce.course_id IS NOT NULL AND (COALESCE(c.status, 'active') = 'active') AND (COALESCE(l.status, 'active') = 'active'))
+            )
+            AND (v.status IS NULL OR v.status = 'active' OR v.status = 'processing')
             ORDER BY v.title ASC
         `;
         const result = await db.query(query, [userId]);
@@ -240,6 +248,19 @@ class VideoService {
             throw new Error('Access denied');
         }
 
+        // Non-owners: course and lesson must be active (draft/inactive hidden from students)
+        if (video.owner_id !== userId && video.lesson_id) {
+            const courseLessonCheck = await db.query(
+                `SELECT 1 FROM lessons l
+                 JOIN courses c ON l.course_id = c.id
+                 WHERE l.id = $1 AND (COALESCE(c.status, 'active') = 'active') AND (COALESCE(l.status, 'active') = 'active')`,
+                [video.lesson_id]
+            );
+            if (courseLessonCheck.rows.length === 0) {
+                throw new Error('Access denied');
+            }
+        }
+
         // Increment view count when a non-owner (e.g. student) requests playback
         if (video.owner_id !== userId) {
             await db.query(
@@ -290,6 +311,19 @@ class VideoService {
         // Non-owners cannot access inactive videos
         if (video.owner_id !== userId && video.status === 'inactive') {
             throw new Error('Access denied');
+        }
+
+        // Non-owners: course and lesson must be active (draft/inactive hidden from students)
+        if (video.owner_id !== userId && video.lesson_id) {
+            const courseLessonCheck = await db.query(
+                `SELECT 1 FROM lessons l
+                 JOIN courses c ON l.course_id = c.id
+                 WHERE l.id = $1 AND (COALESCE(c.status, 'active') = 'active') AND (COALESCE(l.status, 'active') = 'active')`,
+                [video.lesson_id]
+            );
+            if (courseLessonCheck.rows.length === 0) {
+                throw new Error('Access denied');
+            }
         }
 
         return keyStorage.getKey(videoId);

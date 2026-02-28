@@ -12,8 +12,8 @@ class LessonService {
         } = lessonData;
 
         const result = await db.query(
-            `INSERT INTO lessons (course_id, title, description, "order", is_preview, notes, assignments)
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+            `INSERT INTO lessons (course_id, title, description, "order", is_preview, notes, assignments, status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft') RETURNING *`,
             [
                 courseId,
                 title || '',
@@ -229,7 +229,7 @@ class LessonService {
         return result.rows;
     }
 
-    /** Live lessons only for courses the student is enrolled in (purchased) and that have live enabled. */
+    /** Live lessons only for courses the student is enrolled in (purchased) and that have live enabled. Only active course and active lesson. */
     async getLiveLessonsForStudent(studentId) {
         const result = await db.query(
             `SELECT l.*, c.title as course_title, u.email as teacher_email, c.id as course_id
@@ -238,6 +238,8 @@ class LessonService {
              JOIN users u ON c.teacher_id = u.id
              JOIN course_enrollments ce ON ce.course_id = c.id AND ce.user_id = $1
              WHERE l.is_live = true AND COALESCE(c.has_live_class, false) = true
+             AND (COALESCE(c.status, 'active') = 'active')
+             AND (COALESCE(l.status, 'active') = 'active')
              ORDER BY l.updated_at DESC`,
             [studentId]
         );

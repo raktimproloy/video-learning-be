@@ -29,8 +29,8 @@ class CourseService {
                 teacher_id, title, description, short_description, full_description,
                 category, subcategory, admin_category_id, tags, language, subtitle, level, course_type,
                 thumbnail_path, intro_video_path, price, discount_price, currency,
-                has_live_class, has_assignments
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                has_live_class, has_assignments, status
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, 'draft')
             RETURNING *`,
             [
                 teacherId,

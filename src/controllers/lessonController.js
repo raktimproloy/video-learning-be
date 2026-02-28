@@ -130,7 +130,7 @@ class LessonController {
             const { courseId, title, description, order, isPreview } = req.body;
             const { notes, assignments } = parseNotesAndAssignments(req.body);
 
-            const course = await courseService.getCourseById(courseId);
+            const course = await courseService.getCourseById(courseId, req.user.id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
             if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
 
@@ -224,7 +224,8 @@ class LessonController {
             const existingLesson = await lessonService.getLessonById(req.params.id);
             if (!existingLesson) return res.status(404).json({ error: 'Lesson not found' });
 
-            const course = await courseService.getCourseById(existingLesson.course_id);
+            const course = await courseService.getCourseById(existingLesson.course_id, req.user.id);
+            if (!course) return res.status(404).json({ error: 'Course not found' });
             if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
 
             let finalNotes = notes.length > 0 ? notes : existingLesson.notes || [];
@@ -250,7 +251,13 @@ class LessonController {
             if (isPreview !== undefined) lessonData.isPreview = isPreview === 'true' || isPreview === true;
             if (notes.length > 0 || hasFiles) lessonData.notes = finalNotes;
             if (assignments.length > 0 || hasFiles) lessonData.assignments = finalAssignments;
-            if (status !== undefined) lessonData.status = status;
+            if (status !== undefined) {
+                const allowed = ['draft', 'active', 'inactive'];
+                if (!allowed.includes(String(status))) {
+                    return res.status(400).json({ error: 'Invalid status. Use: draft, active, or inactive.' });
+                }
+                lessonData.status = status;
+            }
 
             const effectivePreview = lessonData.isPreview === true;
             const effectiveOrder = lessonData.order !== undefined ? lessonData.order : existingLesson.order;

@@ -373,6 +373,7 @@ class TeacherProfileController {
 
             res.set({
                 'Content-Type': contentType,
+                'Content-Disposition': 'inline',
                 'Cache-Control': 'public, max-age=31536000',
                 'Access-Control-Allow-Origin': '*',
                 'Cross-Origin-Resource-Policy': 'cross-origin'

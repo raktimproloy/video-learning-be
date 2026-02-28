@@ -649,7 +649,13 @@ class CourseController {
             if (currency !== undefined) courseData.currency = currency;
             if (hasLiveClass !== undefined) courseData.hasLiveClass = hasLiveClass === 'true' || hasLiveClass === true;
             if (hasAssignments !== undefined) courseData.hasAssignments = hasAssignments === 'true' || hasAssignments === true;
-            if (status !== undefined) courseData.status = status;
+            if (status !== undefined) {
+                const allowed = ['draft', 'active', 'inactive', 'archived'];
+                if (!allowed.includes(String(status))) {
+                    return res.status(400).json({ error: 'Invalid status. Use: draft, active, inactive, or archived.' });
+                }
+                courseData.status = status;
+            }
 
             // Handle file uploads - upload to R2 if configured, otherwise use local storage
             if (req.files) {
@@ -1096,6 +1102,7 @@ class CourseController {
             res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
             res.set('Access-Control-Allow-Headers', 'Content-Type');
             res.set('Content-Type', contentType);
+            res.set('Content-Disposition', 'inline'); // Prevent browser from downloading as "image.bin" or similar
             res.set('Cache-Control', 'public, max-age=31536000'); // Cache for 1 year
             res.set('Cross-Origin-Resource-Policy', 'cross-origin');
 
