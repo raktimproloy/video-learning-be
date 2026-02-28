@@ -368,12 +368,13 @@ class AdminSettingsService {
             hundredMsEnabled: !!row.hundred_ms_enabled,
             awsIvsEnabled: !!row.aws_ivs_enabled,
             youtubeEnabled: !!row.youtube_enabled,
+            liveClassDurationMinutes: row.live_class_duration_minutes != null ? parseInt(row.live_class_duration_minutes, 10) : 60,
         };
     }
 
     /** Update live settings. */
     async updateLiveSettings(adminId, data) {
-        const { liveClassEnabled, agoraEnabled, hundredMsEnabled, awsIvsEnabled, youtubeEnabled } = data;
+        const { liveClassEnabled, agoraEnabled, hundredMsEnabled, awsIvsEnabled, youtubeEnabled, liveClassDurationMinutes } = data;
         const result = await db.query(
             `UPDATE admin_live_settings SET
                 live_class_enabled = COALESCE($1, live_class_enabled),
@@ -381,7 +382,8 @@ class AdminSettingsService {
                 hundred_ms_enabled = COALESCE($3, hundred_ms_enabled),
                 aws_ivs_enabled = COALESCE($4, aws_ivs_enabled),
                 youtube_enabled = COALESCE($5, youtube_enabled),
-                updated_by_admin_id = $6,
+                live_class_duration_minutes = COALESCE($6, live_class_duration_minutes),
+                updated_by_admin_id = $7,
                 updated_at = NOW()
              WHERE id = '00000000-0000-0000-0000-000000000002'
              RETURNING *`,
@@ -391,6 +393,7 @@ class AdminSettingsService {
                 hundredMsEnabled != null ? !!hundredMsEnabled : null,
                 awsIvsEnabled != null ? !!awsIvsEnabled : null,
                 youtubeEnabled != null ? !!youtubeEnabled : null,
+                liveClassDurationMinutes != null ? Math.max(1, Math.min(480, parseInt(liveClassDurationMinutes, 10) || 60)) : null,
                 adminId,
             ]
         );
@@ -401,6 +404,7 @@ class AdminSettingsService {
             hundredMsEnabled: !!row.hundred_ms_enabled,
             awsIvsEnabled: !!row.aws_ivs_enabled,
             youtubeEnabled: !!row.youtube_enabled,
+            liveClassDurationMinutes: row.live_class_duration_minutes != null ? parseInt(row.live_class_duration_minutes, 10) : 60,
         } : null;
     }
 
