@@ -41,15 +41,22 @@ class LiveWatchService {
     }
 
     /**
-     * Get viewer count for a lesson. Excludes the course owner (teacher) - only counts students.
+     * Get viewer count for the current live session. Excludes the course owner (teacher) - only counts students.
      * @param {string} lessonId
      * @param {string} [excludeTeacherId] - course owner id to exclude from count
+     * @param {string|null} [liveSessionId] - when set, count only watchers of this session (current live)
      */
-    async getViewerCount(lessonId, excludeTeacherId = null) {
-        const args = excludeTeacherId ? [lessonId, excludeTeacherId] : [lessonId];
-        const cond = excludeTeacherId
-            ? 'WHERE lesson_id = $1 AND left_at IS NULL AND student_id != $2'
-            : 'WHERE lesson_id = $1 AND left_at IS NULL';
+    async getViewerCount(lessonId, excludeTeacherId = null, liveSessionId = null) {
+        let cond = 'WHERE lesson_id = $1 AND left_at IS NULL';
+        const args = [lessonId];
+        if (excludeTeacherId) {
+            args.push(excludeTeacherId);
+            cond += ' AND student_id != $2';
+        }
+        if (liveSessionId) {
+            args.push(liveSessionId);
+            cond += ` AND live_session_id = $${args.length}`;
+        }
         const r = await db.query(
             `SELECT COUNT(*)::int as count FROM live_watch_records ${cond}`,
             args

@@ -55,35 +55,50 @@ class CourseController {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
 
-            // Parse form data
-            const {
-                title,
-                shortDescription,
-                fullDescription,
-                category,
-                subcategory,
-                admin_category_id,
-                tags,
-                language,
-                subtitle,
-                level,
-                courseType,
-                price,
-                discountPrice,
-                currency,
-                hasLiveClass,
-                hasAssignments
-            } = req.body;
+            // Parse form data (categories: main_category_id, sub_category_id, specific_category_id = leaf/specific)
+            const raw = req.body || {};
+            const trim = (v) => (typeof v === 'string' ? v.trim() : v);
+            const title = trim(raw.title);
+            const shortDescription = trim(raw.shortDescription);
+            const fullDescription = trim(raw.fullDescription);
+            const category = trim(raw.category);
+            const subcategory = trim(raw.subcategory);
+            const main_category_id = trim(raw.main_category_id) || null;
+            const sub_category_id = trim(raw.sub_category_id) || null;
+            const specific_category_id = trim(raw.specific_category_id) || null;
+            const admin_category_id = trim(raw.admin_category_id) || null;
+            const tags = raw.tags;
+            const language = trim(raw.language) || 'English';
+            const subtitle = trim(raw.subtitle) || null;
+            const level = trim(raw.level);
+            const courseType = trim(raw.courseType);
+            const price = trim(raw.price);
+            const discountPrice = trim(raw.discountPrice) || null;
+            const currency = trim(raw.currency);
+            const hasLiveClass = raw.hasLiveClass;
+            const hasAssignments = raw.hasAssignments;
 
-            // Validate required fields (admin_category_id or category for backward compat)
-            if (!title || !shortDescription || !fullDescription || !level || !courseType || !price || !currency) {
-                return res.status(400).json({ 
+            // Validate required fields and report which are missing
+            const required = [
+                { key: 'title', value: title },
+                { key: 'shortDescription', value: shortDescription },
+                { key: 'fullDescription', value: fullDescription },
+                { key: 'level', value: level },
+                { key: 'courseType', value: courseType },
+                { key: 'price', value: price },
+                { key: 'currency', value: currency },
+            ];
+            const missing = required.filter(({ value }) => value === undefined || value === null || value === '').map(({ key }) => key);
+            if (missing.length > 0) {
+                return res.status(400).json({
                     error: 'Missing required fields',
-                    required: ['title', 'shortDescription', 'fullDescription', 'level', 'courseType', 'price', 'currency']
+                    required: ['title', 'shortDescription', 'fullDescription', 'level', 'courseType', 'price', 'currency'],
+                    missing,
                 });
             }
-            if (!admin_category_id && !category) {
-                return res.status(400).json({ error: 'Please select a category for your course.' });
+            const effectiveSpecificId = specific_category_id || admin_category_id;
+            if (!effectiveSpecificId && !category) {
+                return res.status(400).json({ error: 'Please select a category for your course (at least the main/specific category).' });
             }
 
             // Parse tags (should be JSON string from FormData)
@@ -180,7 +195,9 @@ class CourseController {
                 fullDescription: fullDescription.trim(),
                 category: (category || '').trim() || null,
                 subcategory: subcategory ? subcategory.trim() : null,
-                admin_category_id: admin_category_id || null,
+                main_category_id: main_category_id || null,
+                sub_category_id: sub_category_id || null,
+                admin_category_id: effectiveSpecificId || null,
                 tags: parsedTags,
                 language: language || 'English',
                 subtitle: subtitle ? subtitle.trim() : null,
@@ -440,14 +457,52 @@ class CourseController {
         }
     }
 
+    async getPopularCourses(req, res) {
+        try {
+            const userId = req.user?.id || null;
+            const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+            const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 12, 1), 24);
+            const result = await courseService.getPopularCourses(userId, { page, limit });
+            const enriched = enrichCourseMediaUrls(result.courses, req);
+            res.json({
+                courses: enriched,
+                total: result.total,
+                page: result.page,
+                limit: result.limit,
+                totalPages: result.totalPages
+            });
+        } catch (error) {
+            console.error('Get popular courses error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async getHomeSections(req, res) {
+        try {
+            const userId = req.user?.id || null;
+            const limitPerSection = Math.min(Math.max(parseInt(req.query.limit, 10) || 8, 1), 20);
+            const { live, academic, skill } = await courseService.getHomeSections(userId, limitPerSection);
+            const enriched = {
+                live: enrichCourseMediaUrls(live, req),
+                academic: enrichCourseMediaUrls(academic, req),
+                skill: enrichCourseMediaUrls(skill, req),
+            };
+            res.json(enriched);
+        } catch (error) {
+            console.error('Get home sections error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
     async searchCourses(req, res) {
         try {
             const userId = req.user?.id || null;
             const q = req.query.q || req.query.search || '';
             const category = req.query.category || '';
+            const live = req.query.live === '1' || req.query.live === 'true';
             const page = req.query.page || 1;
             const limit = req.query.limit || 12;
-            const result = await courseService.searchCourses(userId, { q, category, page, limit });
+            const result = await courseService.searchCourses(userId, { q, category, live, page, limit });
             const enriched = enrichCourseMediaUrls(result.courses, req);
             res.json({
                 courses: enriched,
@@ -577,7 +632,7 @@ class CourseController {
             }
             const enriched = enrichCourseMediaUrls([course], req);
             const out = enriched[0];
-            if (req.user && out.teacher_id === req.user.id) {
+            if (req.user && String(out.teacher_id) === String(req.user.id)) {
                 const pending = await liveClassRequestService.getPendingByCourseId(out.id);
                 out.pendingLiveRequest = !!pending;
             }
@@ -603,13 +658,16 @@ class CourseController {
                 return res.status(403).json({ error: 'Not authorized' });
             }
 
-            // Parse form data
+            // Parse form data (categories: main_category_id, sub_category_id, specific_category_id = leaf)
             const {
                 title,
                 shortDescription,
                 fullDescription,
                 category,
                 subcategory,
+                main_category_id,
+                sub_category_id,
+                specific_category_id,
                 admin_category_id,
                 tags,
                 language,
@@ -632,7 +690,10 @@ class CourseController {
             if (fullDescription !== undefined) courseData.fullDescription = fullDescription.trim();
             if (category !== undefined) courseData.category = (category || '').trim();
             if (subcategory !== undefined) courseData.subcategory = subcategory ? subcategory.trim() : null;
-            if (admin_category_id !== undefined) courseData.admin_category_id = admin_category_id || null;
+            if (main_category_id !== undefined) courseData.main_category_id = main_category_id || null;
+            if (sub_category_id !== undefined) courseData.sub_category_id = sub_category_id || null;
+            const effectiveSpecificId = specific_category_id ?? admin_category_id;
+            if (effectiveSpecificId !== undefined) courseData.admin_category_id = effectiveSpecificId || null;
             if (tags !== undefined) {
                 try {
                     courseData.tags = typeof tags === 'string' ? JSON.parse(tags) : tags;
@@ -873,11 +934,12 @@ class CourseController {
             if (req.user.role !== 'teacher') {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
-            const existingCourse = await courseService.getCourseById(req.params.id);
+            // Pass userId so owner can delete their draft courses (getCourseById returns draft only to owner)
+            const existingCourse = await courseService.getCourseById(req.params.id, req.user.id);
             if (!existingCourse) {
                 return res.status(404).json({ error: 'Course not found' });
             }
-            if (existingCourse.teacher_id !== req.user.id) {
+            if (String(existingCourse.teacher_id) !== String(req.user.id)) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
 

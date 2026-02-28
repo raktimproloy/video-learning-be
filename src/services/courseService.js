@@ -9,6 +9,8 @@ class CourseService {
             fullDescription,
             category,
             subcategory,
+            main_category_id,
+            sub_category_id,
             admin_category_id,
             tags,
             language,
@@ -27,10 +29,10 @@ class CourseService {
         const result = await db.query(
             `INSERT INTO courses (
                 teacher_id, title, description, short_description, full_description,
-                category, subcategory, admin_category_id, tags, language, subtitle, level, course_type,
+                category, subcategory, main_category_id, sub_category_id, admin_category_id, tags, language, subtitle, level, course_type,
                 thumbnail_path, intro_video_path, price, discount_price, currency,
                 has_live_class, has_assignments, status
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, 'draft')
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, 'draft')
             RETURNING *`,
             [
                 teacherId,
@@ -40,6 +42,8 @@ class CourseService {
                 fullDescription || null,
                 category || null,
                 subcategory || null,
+                main_category_id || null,
+                sub_category_id || null,
                 admin_category_id || null,
                 JSON.stringify(tags || []),
                 language || 'English',
@@ -166,7 +170,8 @@ class CourseService {
                     WHEN courses.tags IS NULL THEN '[]'::jsonb
                     WHEN jsonb_typeof(courses.tags) = 'string' THEN courses.tags::jsonb
                     ELSE courses.tags
-                END as tags
+                END as tags,
+                COALESCE(ac.slug, LOWER(REPLACE(TRIM(COALESCE(courses.category, '')), ' ', '-'))) as category_slug
                 ${purchaseCheck}
                 ${ownershipCheck},
                 ${reviewsRatingQuery} as rating,
@@ -179,7 +184,8 @@ class CourseService {
             FROM courses 
             LEFT JOIN users ON courses.teacher_id = users.id 
             LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
-            WHERE (COALESCE(courses.status, 'active') = 'active' OR ${params.length ? '(courses.teacher_id = $1)' : 'false'})
+            LEFT JOIN admin_categories ac ON courses.admin_category_id = ac.id
+            WHERE COALESCE(courses.status, 'active') = 'active'
             ORDER BY courses.created_at DESC`,
             params
         );
@@ -195,34 +201,240 @@ class CourseService {
             review_count: row.review_count || 0,
             purchase_count: row.purchase_count || 0,
             total_lessons: row.total_lessons || 0,
-            total_videos: row.total_videos || 0
+            total_videos: row.total_videos || 0,
+            category_slug: row.category_slug || null
         }));
     }
 
     /**
-     * Search courses with optional text query, category filter, and pagination.
+     * Get popular courses with pagination (ordered by purchase_count, then rating).
      * @param {string|null} userId - Optional user id for purchase/ownership flags
-     * @param {Object} options - { q, category, page, limit }
-     * @returns {Promise<{ courses: Array, total: number, page: number, limit: number, hasMore: boolean }>}
+     * @param {Object} options - { page, limit }
+     * @returns {Promise<{ courses: Array, total: number, page: number, limit: number, totalPages: number }>}
      */
+    async getPopularCourses(userId = null, options = {}) {
+        const page = Math.max(1, parseInt(options.page, 10) || 1);
+        const limit = Math.min(Math.max(parseInt(options.limit, 10) || 12, 1), 24);
+        const offset = (page - 1) * limit;
+
+        let purchaseCheck = '';
+        let ownershipCheck = '';
+        const params = [];
+        if (userId) {
+            purchaseCheck = `, EXISTS(
+                SELECT 1 FROM course_enrollments ce 
+                WHERE ce.course_id = courses.id AND ce.user_id = $1
+            ) as is_purchased`;
+            ownershipCheck = `, (courses.teacher_id = $1) as is_owned`;
+            params.push(userId);
+        } else {
+            purchaseCheck = `, false as is_purchased`;
+            ownershipCheck = `, false as is_owned`;
+        }
+
+        const reviewsTableCheck = await db.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' AND table_name = 'reviews'
+            )
+        `);
+        const hasReviewsTable = reviewsTableCheck.rows[0]?.exists || false;
+        const reviewsRatingQuery = hasReviewsTable
+            ? `(SELECT COALESCE(AVG(r.rating), 0)::numeric(3,2) FROM reviews r WHERE r.course_id = courses.id)`
+            : `0::numeric(3,2)`;
+        const reviewsCountQuery = hasReviewsTable
+            ? `(SELECT COUNT(*)::int FROM reviews r WHERE r.course_id = courses.id)`
+            : `0::int`;
+
+        params.push(limit, offset);
+
+        const result = await db.query(
+            `SELECT 
+                courses.*,
+                users.email as teacher_email,
+                COALESCE(tp.name, users.email) as teacher_name,
+                users.id as teacher_id,
+                CASE 
+                    WHEN courses.tags IS NULL THEN '[]'::jsonb
+                    WHEN jsonb_typeof(courses.tags) = 'string' THEN courses.tags::jsonb
+                    ELSE courses.tags
+                END as tags,
+                COALESCE(ac.slug, LOWER(REPLACE(TRIM(COALESCE(courses.category, '')), ' ', '-'))) as category_slug
+                ${purchaseCheck}
+                ${ownershipCheck},
+                ${reviewsRatingQuery} as rating,
+                ${reviewsCountQuery} as review_count,
+                (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = courses.id) as purchase_count,
+                (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id) as total_lessons,
+                (SELECT COUNT(*)::int FROM videos v 
+                 JOIN lessons l ON v.lesson_id = l.id 
+                 WHERE l.course_id = courses.id) as total_videos
+            FROM courses 
+            LEFT JOIN users ON courses.teacher_id = users.id 
+            LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
+            LEFT JOIN admin_categories ac ON courses.admin_category_id = ac.id
+            WHERE COALESCE(courses.status, 'active') = 'active'
+            ORDER BY purchase_count DESC NULLS LAST, rating DESC NULLS LAST, courses.created_at DESC
+            LIMIT $${params.length - 1} OFFSET $${params.length}`,
+            params
+        );
+
+        const countResult = await db.query(
+            `SELECT COUNT(*)::int as total FROM courses WHERE COALESCE(status, 'active') = 'active'`
+        );
+        const total = countResult.rows[0]?.total || 0;
+
+        const courses = result.rows.map(row => ({
+            ...row,
+            tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : (row.tags || []),
+            teacher_name: row.teacher_name || row.teacher_email || 'Teacher',
+            teacher_id: row.teacher_id,
+            is_purchased: row.is_purchased || false,
+            is_owned: row.is_owned || false,
+            rating: parseFloat(row.rating) || 0,
+            review_count: row.review_count || 0,
+            purchase_count: row.purchase_count || 0,
+            total_lessons: row.total_lessons || 0,
+            total_videos: row.total_videos || 0,
+            category_slug: row.category_slug || null
+        }));
+
+        return {
+            courses,
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit) || 1
+        };
+    }
+
+    /**
+     * Get home page sections: live (8), academic (8), skill (8). No course appears in more than one section.
+     * Order: fill live first, then academic from remaining, then skill from remaining.
+     */
+    async getHomeSections(userId = null, limitPerSection = 8) {
+        const reviewsTableCheck = await db.query(`
+            SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'reviews')
+        `);
+        const hasReviewsTable = reviewsTableCheck.rows[0]?.exists || false;
+        const reviewsRatingQuery = hasReviewsTable
+            ? `(SELECT COALESCE(AVG(r.rating), 0)::numeric(3,2) FROM reviews r WHERE r.course_id = courses.id)`
+            : `0::numeric(3,2)`;
+        const reviewsCountQuery = hasReviewsTable
+            ? `(SELECT COUNT(*)::int FROM reviews r WHERE r.course_id = courses.id)`
+            : `0::int`;
+
+        let purchaseCheck = ', false as is_purchased';
+        let ownershipCheck = ', false as is_owned';
+        const params = [];
+        if (userId) {
+            purchaseCheck = `, EXISTS(SELECT 1 FROM course_enrollments ce WHERE ce.course_id = courses.id AND ce.user_id = $1) as is_purchased`;
+            ownershipCheck = `, (courses.teacher_id = $1) as is_owned`;
+            params.push(userId);
+        }
+
+        const baseSelect = `
+            courses.*,
+            users.email as teacher_email,
+            COALESCE(tp.name, users.email) as teacher_name,
+            users.id as teacher_id,
+            CASE WHEN courses.tags IS NULL THEN '[]'::jsonb WHEN jsonb_typeof(courses.tags) = 'string' THEN courses.tags::jsonb ELSE courses.tags END as tags,
+            COALESCE(ac.slug, LOWER(REPLACE(TRIM(COALESCE(courses.category, '')), ' ', '-'))) as category_slug
+            ${purchaseCheck} ${ownershipCheck},
+            ${reviewsRatingQuery} as rating,
+            ${reviewsCountQuery} as review_count,
+            (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = courses.id) as purchase_count,
+            (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id) as total_lessons,
+            (SELECT COUNT(*)::int FROM videos v JOIN lessons l ON v.lesson_id = l.id WHERE l.course_id = courses.id) as total_videos
+        `;
+        const baseFrom = `
+            FROM courses
+            LEFT JOIN users ON courses.teacher_id = users.id
+            LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
+            LEFT JOIN admin_categories ac ON courses.admin_category_id = ac.id
+        `;
+        const activeWhere = `WHERE COALESCE(courses.status, 'active') = 'active'`;
+
+        const parseRow = (row) => ({
+            ...row,
+            tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : (row.tags || []),
+            teacher_name: row.teacher_name || row.teacher_email || 'Teacher',
+            teacher_id: row.teacher_id,
+            is_purchased: row.is_purchased || false,
+            is_owned: row.is_owned || false,
+            rating: parseFloat(row.rating) || 0,
+            review_count: row.review_count || 0,
+            purchase_count: row.purchase_count || 0,
+            total_lessons: row.total_lessons || 0,
+            total_videos: row.total_videos || 0,
+            category_slug: row.category_slug || null,
+        });
+
+        const limitVal = Math.min(Math.max(parseInt(limitPerSection, 10) || 8, 1), 20);
+
+        const liveParams = [...params];
+        const liveResult = await db.query(
+            `SELECT ${baseSelect} ${baseFrom}
+             ${activeWhere} AND courses.has_live_class = true
+             ORDER BY purchase_count DESC NULLS LAST, rating DESC NULLS LAST, courses.created_at DESC
+             LIMIT ${limitVal}`,
+            liveParams
+        );
+        const live = liveResult.rows.map(parseRow);
+        const liveIds = live.map((c) => c.id);
+        const excludeLive = liveIds.length > 0 ? `AND courses.id != ALL($${params.length + 1}::uuid[])` : '';
+        const academicParams = [...params];
+        if (liveIds.length > 0) academicParams.push(liveIds);
+
+        const academicCategoryIds = await adminCategoryService.getCategoryAndDescendantIds('academic');
+        let academic = [];
+        if (academicCategoryIds.length > 0) {
+            const acParamStart = academicParams.length + 1;
+            const placeholders = academicCategoryIds.map((_, i) => `$${acParamStart + i}`).join(', ');
+            const acParams = [...academicParams, ...academicCategoryIds];
+            const acResult = await db.query(
+                `SELECT ${baseSelect} ${baseFrom}
+                 ${activeWhere} ${excludeLive} AND courses.admin_category_id IN (${placeholders})
+                 ORDER BY purchase_count DESC NULLS LAST, rating DESC NULLS LAST, courses.created_at DESC
+                 LIMIT ${limitVal}`,
+                acParams
+            );
+            academic = acResult.rows.map(parseRow);
+        }
+        const academicIds = academic.map((c) => c.id);
+        const usedIds = [...liveIds, ...academicIds];
+        const skillParams = [...params];
+        const excludeUsed = usedIds.length > 0 ? `AND courses.id != ALL($${params.length + 1}::uuid[])` : '';
+        if (usedIds.length > 0) skillParams.push(usedIds);
+
+        const skillResult = await db.query(
+            `SELECT ${baseSelect} ${baseFrom}
+             ${activeWhere} ${excludeUsed}
+             ORDER BY purchase_count DESC NULLS LAST, rating DESC NULLS LAST, courses.created_at DESC
+             LIMIT ${limitVal}`,
+            skillParams
+        );
+        const skill = skillResult.rows.map(parseRow);
+
+        return { live, academic, skill };
+    }
+
     async searchCourses(userId = null, options = {}) {
-        const { q = '', category = '', page = 1, limit: limitParam = 12 } = options;
+        const { q = '', category = '', live = false, page = 1, limit: limitParam = 12 } = options;
         const limit = Math.min(Math.max(parseInt(limitParam, 10) || 12, 1), 50);
         const offset = (Math.max(parseInt(page, 10) || 1, 1) - 1) * limit;
 
         let purchaseCheck = '';
         let ownershipCheck = '';
-        const params = [];
-        let paramIndex = 1;
+        const whereParams = [];
+        let whereIndex = 1;
 
         if (userId) {
             purchaseCheck = `, EXISTS(
                 SELECT 1 FROM course_enrollments ce 
-                WHERE ce.course_id = courses.id AND ce.user_id = $${paramIndex}
+                WHERE ce.course_id = courses.id AND ce.user_id = $1
             ) as is_purchased`;
-            ownershipCheck = `, (courses.teacher_id = $${paramIndex}) as is_owned`;
-            params.push(userId);
-            paramIndex++;
+            ownershipCheck = `, (courses.teacher_id = $1) as is_owned`;
         } else {
             purchaseCheck = `, false as is_purchased`;
             ownershipCheck = `, false as is_owned`;
@@ -244,55 +456,60 @@ class CourseService {
             : `0::int`;
 
         const conditions = [];
-        const statusCondition = params.length > 0
-            ? `(COALESCE(courses.status, 'active') = 'active' OR courses.teacher_id = $1)`
-            : `(COALESCE(courses.status, 'active') = 'active')`;
-        conditions.push(statusCondition);
-        let searchPattern = null;
+        conditions.push(`COALESCE(courses.status, 'active') = 'active'`);
+        if (live === true || live === '1' || live === 1) {
+            conditions.push('courses.has_live_class = true');
+        }
         const searchTerm = (q && typeof q === 'string') ? q.trim() : '';
         if (searchTerm) {
-            searchPattern = `%${searchTerm.replace(/%/g, '\\%').replace(/_/g, '\\_')}%`;
+            const searchPattern = `%${searchTerm.replace(/%/g, '\\%').replace(/_/g, '\\_')}%`;
+            whereParams.push(searchPattern);
             conditions.push(`(
-                courses.title ILIKE $${paramIndex}
-                OR courses.short_description ILIKE $${paramIndex}
-                OR courses.full_description ILIKE $${paramIndex}
-                OR (courses.tags::text ILIKE $${paramIndex})
+                courses.title ILIKE $${whereIndex}
+                OR courses.short_description ILIKE $${whereIndex}
+                OR courses.full_description ILIKE $${whereIndex}
+                OR (courses.tags::text ILIKE $${whereIndex})
             )`);
-            params.push(searchPattern);
-            paramIndex++;
+            whereIndex++;
         }
 
         const categoryFilter = (category && typeof category === 'string') ? category.trim() : '';
         if (categoryFilter) {
             const categoryIds = await adminCategoryService.getCategoryAndDescendantIds(categoryFilter);
             if (categoryIds.length > 0) {
-                const placeholders = categoryIds.map(() => `$${paramIndex++}`).join(', ');
-                params.push(...categoryIds);
-                conditions.push(`(courses.admin_category_id IN (${placeholders}))`);
+                whereParams.push(categoryIds.map((id) => String(id)));
+                conditions.push(`(
+                    courses.admin_category_id = ANY($${whereIndex}::uuid[])
+                    OR courses.main_category_id = ANY($${whereIndex}::uuid[])
+                    OR courses.sub_category_id = ANY($${whereIndex}::uuid[])
+                )`);
+                whereIndex++;
             } else {
                 const legacySlug = categoryFilter.toLowerCase().replace(/\s+/g, '-');
-                conditions.push(`(LOWER(REPLACE(TRIM(COALESCE(courses.category, '')), ' ', '-')) = $${paramIndex})`);
-                params.push(legacySlug);
-                paramIndex++;
+                whereParams.push(legacySlug);
+                conditions.push(`(LOWER(REPLACE(TRIM(COALESCE(courses.category, '')), ' ', '-')) = $${whereIndex})`);
+                whereIndex++;
             }
         }
 
         const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
-        // Count query: use only params that appear in WHERE (search pattern). Use $1 for search so we don't pass unused userId.
-        const countWhereClause = conditions.length
-            ? `WHERE ${conditions.join(' AND ')}`
-            : '';
-        const countParams = [...params];
+        // Count query: only pass WHERE params so $1, $2... match and PostgreSQL can infer types.
         const countResult = await db.query(
-            `SELECT COUNT(*)::int as total FROM courses ${countWhereClause}`,
-            countParams
+            `SELECT COUNT(*)::int as total FROM courses ${whereClause}`,
+            whereParams
         );
         const total = countResult.rows[0]?.total || 0;
 
-        params.push(limit, offset);
-        const limitParamIndex = params.length - 1;
-        const offsetParamIndex = params.length;
+        // Data query: userId first (for SELECT), then whereParams, then limit/offset.
+        const dataParams = (userId ? [userId, ...whereParams] : [...whereParams]).concat([limit, offset]);
+        const dataWhereClause = whereClause;
+        const limitParamIndex = dataParams.length - 1;
+        const offsetParamIndex = dataParams.length;
+        const shift = userId ? 1 : 0;
+        const dataWhereShifted = !dataWhereClause
+            ? ''
+            : dataWhereClause.replace(/\$(\d+)/g, (_, n) => `$${parseInt(n, 10) + shift}`);
         const dataQuery = `
             SELECT 
                 courses.*,
@@ -316,12 +533,12 @@ class CourseService {
             FROM courses 
             LEFT JOIN users ON courses.teacher_id = users.id 
             LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
-            ${whereClause}
+            ${dataWhereShifted}
             ORDER BY courses.created_at DESC
             LIMIT $${limitParamIndex}::integer OFFSET $${offsetParamIndex}::integer
         `;
 
-        const result = await db.query(dataQuery, params);
+        const result = await db.query(dataQuery, dataParams);
         const courses = result.rows.map(row => ({
             ...row,
             tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : (row.tags || []),
@@ -579,8 +796,8 @@ class CourseService {
         if (!result.rows[0]) return null;
 
         const course = result.rows[0];
-        // Students cannot see non-active courses; owners (teachers) can always see their own
-        const isOwner = userId && course.teacher_id === userId;
+        // Students cannot see non-active courses; owners (teachers) can always see their own (including draft)
+        const isOwner = userId && String(course.teacher_id) === String(userId);
         const isActive = !course.status || course.status === 'active';
         if (!isOwner && !isActive) return null;
 
@@ -640,6 +857,8 @@ class CourseService {
             fullDescription,
             category,
             subcategory,
+            main_category_id,
+            sub_category_id,
             admin_category_id,
             tags,
             language,
@@ -680,6 +899,14 @@ class CourseService {
         if (subcategory !== undefined) {
             updates.push(`subcategory = $${paramIndex++}`);
             values.push(subcategory);
+        }
+        if (main_category_id !== undefined) {
+            updates.push(`main_category_id = $${paramIndex++}`);
+            values.push(main_category_id || null);
+        }
+        if (sub_category_id !== undefined) {
+            updates.push(`sub_category_id = $${paramIndex++}`);
+            values.push(sub_category_id || null);
         }
         if (admin_category_id !== undefined) {
             const existingRow = (await db.query('SELECT admin_category_id FROM courses WHERE id = $1', [id])).rows[0];

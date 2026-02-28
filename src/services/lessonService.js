@@ -185,8 +185,9 @@ class LessonService {
     async updateLiveStatus(id, isLive, sessionData = {}) {
         const { live_session_name, live_session_order, live_session_description, current_live_session_id } = sessionData;
         if (isLive) {
+            // Do not set live_started_at here; it is set when teacher clicks "Start Live" (broadcast_status -> 'live').
             const result = await db.query(
-                `UPDATE lessons SET is_live = true, live_started_at = COALESCE(live_started_at, NOW()),
+                `UPDATE lessons SET is_live = true,
                  live_session_name = COALESCE($2, live_session_name),
                  live_session_order = COALESCE($3, live_session_order, 0),
                  live_session_description = COALESCE($4, live_session_description),
@@ -211,6 +212,14 @@ class LessonService {
         return r.rows[0]?.live_started_at || null;
     }
 
+    /** Set lesson live_started_at to NOW() when teacher first clicks "Start Live" (broadcast goes live). */
+    async setLiveBroadcastStartedAt(lessonId) {
+        await db.query(
+            `UPDATE lessons SET live_started_at = COALESCE(live_started_at, NOW()) WHERE id = $1`,
+            [lessonId]
+        );
+    }
+
     async updateLessonVod(id, vodUrl) {
         const query = 'UPDATE lessons SET video_url = $1 WHERE id = $2 RETURNING *';
         const { rows } = await db.query(query, [vodUrl, id]);
@@ -229,7 +238,7 @@ class LessonService {
         return result.rows;
     }
 
-    /** Live lessons only for courses the student is enrolled in (purchased) and that have live enabled. Only active course and active lesson. */
+    /** Live lessons only for courses the student is enrolled in (purchased) and that have live enabled. Include any lesson that is_live (teacher in room or streaming). */
     async getLiveLessonsForStudent(studentId) {
         const result = await db.query(
             `SELECT l.*, c.title as course_title, u.email as teacher_email, c.id as course_id
@@ -239,7 +248,6 @@ class LessonService {
              JOIN course_enrollments ce ON ce.course_id = c.id AND ce.user_id = $1
              WHERE l.is_live = true AND COALESCE(c.has_live_class, false) = true
              AND (COALESCE(c.status, 'active') = 'active')
-             AND (COALESCE(l.status, 'active') = 'active')
              ORDER BY l.updated_at DESC`,
             [studentId]
         );

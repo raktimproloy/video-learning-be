@@ -687,9 +687,9 @@ class LessonController {
                 const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
                 if (!enrolled) return res.status(403).json({ error: 'Access denied' });
             } else if (!isTeacher) return res.status(403).json({ error: 'Access denied' });
-            const live_started_at = await lessonService.getLiveStartedAt(lessonId);
-            const viewerCount = await liveWatchService.getViewerCount(lessonId, course.teacher_id);
             const live_session_id = lesson.current_live_session_id || null;
+            const live_started_at = await lessonService.getLiveStartedAt(lessonId);
+            const viewerCount = await liveWatchService.getViewerCount(lessonId, course.teacher_id, live_session_id);
             let broadcast_status = 'ended';
             let live_name = null;
             let live_description = null;
@@ -742,9 +742,12 @@ class LessonController {
                 return res.status(400).json({ error: 'broadcast_status must be live, paused, or ended' });
             }
             await liveSessionService.setBroadcastStatus(lessonId, broadcast_status);
-            const live_started_at = await lessonService.getLiveStartedAt(lessonId);
-            const viewerCount = await liveWatchService.getViewerCount(lessonId, course.teacher_id);
+            if (broadcast_status === 'live') {
+                await lessonService.setLiveBroadcastStartedAt(lessonId);
+            }
             const live_session_id = lesson.current_live_session_id || null;
+            const live_started_at = await lessonService.getLiveStartedAt(lessonId);
+            const viewerCount = await liveWatchService.getViewerCount(lessonId, course.teacher_id, live_session_id);
             let live_name = null;
             let live_description = null;
             if (live_session_id) {
@@ -781,7 +784,8 @@ class LessonController {
                 return res.status(403).json({ error: 'Access denied' });
             }
             const watchers = await liveWatchService.getWatchers(lessonId);
-            const viewerCount = await liveWatchService.getViewerCount(lessonId, course.teacher_id);
+            const live_session_id = lesson.current_live_session_id || null;
+            const viewerCount = await liveWatchService.getViewerCount(lessonId, course.teacher_id, live_session_id);
             res.json({ watchers, viewerCount });
         } catch (error) {
             console.error('Get live viewers error:', error);
@@ -802,13 +806,13 @@ class LessonController {
             if (!lesson.is_live) return res.status(400).json({ error: 'Lesson is not live' });
             const liveSessionId = lesson.current_live_session_id || null;
             await liveWatchService.join(lessonId, req.user.id, liveSessionId);
-            const viewerCount = await liveWatchService.getViewerCount(lessonId, course.teacher_id);
+            const viewerCount = await liveWatchService.getViewerCount(lessonId, course.teacher_id, liveSessionId);
             const live_started_at = await lessonService.getLiveStartedAt(lessonId);
             let broadcast_status = 'ended';
             let live_name = null;
             let live_description = null;
-            if (live_session_id) {
-                const session = await liveSessionService.getById(live_session_id);
+            if (liveSessionId) {
+                const session = await liveSessionService.getById(liveSessionId);
                 broadcast_status = session?.broadcast_status || 'starting';
                 live_name = session?.live_name ?? null;
                 live_description = session?.live_description ?? null;
@@ -819,12 +823,20 @@ class LessonController {
                     broadcast_status,
                     live_started_at,
                     viewerCount,
-                    live_session_id,
+                    live_session_id: liveSessionId,
                     live_name,
                     live_description,
                 });
             } catch (_) {}
-            res.json({ ok: true, viewerCount });
+            res.json({
+                ok: true,
+                viewerCount,
+                broadcast_status,
+                live_started_at,
+                live_session_id: liveSessionId,
+                live_name,
+                live_description,
+            });
         } catch (error) {
             console.error('Live watch join error:', error);
             res.status(500).json({ error: 'Internal server error' });
@@ -839,8 +851,8 @@ class LessonController {
             const lesson = await lessonService.getLessonById(lessonId);
             const course = lesson ? await courseService.getCourseById(lesson.course_id) : null;
             const teacherId = course?.teacher_id || null;
-            const viewerCount = teacherId ? await liveWatchService.getViewerCount(lessonId, teacherId) : 0;
             const live_session_id = lesson?.current_live_session_id || null;
+            const viewerCount = teacherId ? await liveWatchService.getViewerCount(lessonId, teacherId, live_session_id) : 0;
             let broadcast_status = 'ended';
             let live_started_at = null;
             let live_name = null;
@@ -878,7 +890,15 @@ class LessonController {
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             await liveWatchService.heartbeat(lessonId, req.user.id);
             const course = await courseService.getCourseById(lesson.course_id);
-            const viewerCount = await liveWatchService.getViewerCount(lessonId, course?.teacher_id);
+            const live_session_id = lesson?.current_live_session_id || null;
+            const viewerCount = await liveWatchService.getViewerCount(lessonId, course?.teacher_id, live_session_id);
+            try {
+                const getIo = require('../socket').getIo;
+                getIo().to(lessonId).emit('liveStatsUpdated', {
+                    viewerCount,
+                    live_session_id,
+                });
+            } catch (_) {}
             res.json({ ok: true, viewerCount });
         } catch (error) {
             console.error('Live watch heartbeat error:', error);
