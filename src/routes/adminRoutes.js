@@ -34,9 +34,9 @@ router.post(
     '/videos',
     upload.any(), // video + note_file_N + assignment_file_N
     [
-        check('title', 'Title is required').not().isEmpty(),
-        check('lesson_id', 'Lesson ID must be a UUID').optional().isUUID(),
-        check('order', 'Order must be an integer').optional().isInt(),
+        check('title', 'Video title is required').trim().not().isEmpty(),
+        check('lesson_id', 'Lesson ID is required and must be a valid UUID').optional().isUUID(),
+        check('order', 'Order must be a number').optional().isInt(),
     ],
     adminController.addVideo
 );

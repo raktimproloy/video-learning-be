@@ -36,10 +36,10 @@ async function processVideoFiles(req, notes, assignments, videoId, lessonId, cou
     const outNotes = [...notes];
     for (let i = 0; i < outNotes.length; i++) {
         const note = outNotes[i];
-        if (note.type === 'file' && noteFiles[i]) {
+        if (noteFiles[i]) {
             const f = noteFiles[i];
             let buffer = f.buffer || (f.path ? fs.readFileSync(f.path) : null);
-            if (buffer && isImage(f.originalname)) buffer = await compressImage(buffer, f.originalname);
+            if (buffer && isImage(f.originalname)) buffer = await compressImage(buffer, f.originalname, true);
             if (buffer && r2Storage.isConfigured && r2Storage.uploadVideoMedia) {
                 const r2Key = await r2Storage.uploadVideoMedia(teacherId, courseId, lessonId, videoId, buffer, f.originalname, 'notes');
                 note.filePath = r2Key;
@@ -60,10 +60,10 @@ async function processVideoFiles(req, notes, assignments, videoId, lessonId, cou
     const outAssignments = [...assignments];
     for (let i = 0; i < outAssignments.length; i++) {
         const a = outAssignments[i];
-        if (a.type === 'file' && assignmentFiles[i]) {
+        if (assignmentFiles[i]) {
             const f = assignmentFiles[i];
             let buffer = f.buffer || (f.path ? fs.readFileSync(f.path) : null);
-            if (buffer && isImage(f.originalname)) buffer = await compressImage(buffer, f.originalname);
+            if (buffer && isImage(f.originalname)) buffer = await compressImage(buffer, f.originalname, true);
             if (buffer && r2Storage.isConfigured && r2Storage.uploadVideoMedia) {
                 const r2Key = await r2Storage.uploadVideoMedia(teacherId, courseId, lessonId, videoId, buffer, f.originalname, 'assignments');
                 a.filePath = r2Key;
@@ -87,16 +87,25 @@ class AdminController {
     async addVideo(req, res) {
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
-            return res.status(400).json({ errors: errors.array() });
+            const errList = errors.array();
+            const firstMsg = errList[0]?.msg || 'Validation failed';
+            return res.status(400).json({
+                error: errList.length === 1 ? firstMsg : `Validation failed: ${errList.map(e => e.msg).join('; ')}`,
+                errors: errList,
+            });
+        }
+        const { lesson_id } = req.body;
+        if (!lesson_id) {
+            return res.status(400).json({ error: 'Lesson ID is required' });
         }
         const files = req.files || [];
         const videoFile = files.find((f) => f.fieldname === 'video');
         if (!videoFile) {
-            return res.status(400).json({ error: 'No video file uploaded' });
+            return res.status(400).json({ error: 'No video file uploaded. Please select a video file.' });
         }
 
         const ownerId = req.user.id;
-        const { title, description, lesson_id, order, isPreview } = req.body;
+        const { title, description, order, isPreview } = req.body;
         const { notes, assignments } = parseNotesAndAssignments(req.body);
         const useR2 = r2Storage.isConfigured;
 
@@ -185,8 +194,8 @@ class AdminController {
             cleanupPaths.forEach((p) => {
                 if (p && fs.existsSync(p)) { try { fs.unlinkSync(p); } catch (e) {} }
             });
-            if (error.code === '23503') return res.status(400).json({ error: 'Invalid user ID (owner_id). Please relogin.' });
-            const message = error.message || 'Internal Server Error';
+            if (error.code === '23503') return res.status(400).json({ error: 'Invalid user or lesson. Please sign in again and try again.' });
+            const message = error.message || 'Video upload failed. Please try again.';
             res.status(500).json({ error: message });
         }
     }

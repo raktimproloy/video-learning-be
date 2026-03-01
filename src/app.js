@@ -107,10 +107,17 @@ app.get('/health', (req, res) => {
     res.status(200).json({ status: 'ok' });
 });
 
-// Error Handling Middleware
+// Error Handling Middleware (multer, unhandled errors)
 app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).json({ error: 'Something went wrong!' });
+    console.error(err.stack || err);
+    if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: 'File too large. Maximum size is 550 MB per upload.' });
+    }
+    if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+        return res.status(400).json({ error: 'Unexpected file field. Use "video" for the video file.' });
+    }
+    const message = err.message || 'Something went wrong. Please try again.';
+    res.status(err.status || 500).json({ error: message });
 });
 
 module.exports = app;
