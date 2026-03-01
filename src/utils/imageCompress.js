@@ -1,34 +1,50 @@
 /**
- * Compress image buffer without changing resolution.
+ * Compress image buffer. Optionally resize and use stronger compression for notes/assignments (R2).
  * Uses sharp for JPEG/PNG/WebP - reduces file size by optimizing quality.
  */
 const sharp = require('sharp');
+const path = require('path');
 
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+const MAX_DIMENSION_NOTE_ASSIGNMENT = 1920; // max width/height for note/assignment images (smaller stored size)
+const QUALITY_DEFAULT = 85;
+const QUALITY_AGGRESSIVE = 78; // stronger compression for note/assignment uploads to R2
 
 function isImage(filename) {
-  const ext = require('path').extname(filename || '').toLowerCase();
+  const ext = path.extname(filename || '').toLowerCase();
   return IMAGE_EXTENSIONS.includes(ext);
 }
 
-async function compressImage(buffer, originalFilename) {
+/**
+ * @param {Buffer} buffer - image buffer
+ * @param {string} originalFilename - original file name (for format)
+ * @param {boolean} [aggressive=false] - if true, resize large images and use lower quality (for notes/assignments R2)
+ */
+async function compressImage(buffer, originalFilename, aggressive = false) {
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) return buffer;
   if (!isImage(originalFilename)) return buffer;
 
   try {
-    const ext = require('path').extname(originalFilename || '').toLowerCase();
-    let pipeline = sharp(buffer);
-
-    const metadata = await pipeline.metadata();
+    const ext = path.extname(originalFilename || '').toLowerCase();
+    const metadata = await sharp(buffer).metadata();
     if (!metadata.width || !metadata.height) return buffer;
 
-    const format = ext === '.png' ? 'png' : ext === '.webp' ? 'webp' : ext === '.gif' ? 'gif' : 'jpeg';
+    const quality = aggressive ? QUALITY_AGGRESSIVE : QUALITY_DEFAULT;
     let out = sharp(buffer);
-    if (format === 'jpeg') out = out.jpeg({ quality: 85, mozjpeg: true });
-    else if (format === 'png') out = out.png({ compressionLevel: 8 });
-    else if (format === 'webp') out = out.webp({ quality: 85 });
+
+    if (aggressive && (metadata.width > MAX_DIMENSION_NOTE_ASSIGNMENT || metadata.height > MAX_DIMENSION_NOTE_ASSIGNMENT)) {
+      out = out.resize(MAX_DIMENSION_NOTE_ASSIGNMENT, MAX_DIMENSION_NOTE_ASSIGNMENT, {
+        fit: 'inside',
+        withoutEnlargement: true,
+      });
+    }
+
+    const format = ext === '.png' ? 'png' : ext === '.webp' ? 'webp' : ext === '.gif' ? 'gif' : 'jpeg';
+    if (format === 'jpeg') out = out.jpeg({ quality, mozjpeg: true });
+    else if (format === 'png') out = out.png({ compressionLevel: aggressive ? 9 : 8 });
+    else if (format === 'webp') out = out.webp({ quality });
     else if (format === 'gif') out = out.gif();
-    else out = out.jpeg({ quality: 85 });
+    else out = out.jpeg({ quality, mozjpeg: true });
 
     const compressed = await out.toBuffer();
 

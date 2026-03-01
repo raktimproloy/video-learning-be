@@ -69,10 +69,10 @@ async function processLessonFiles(req, notes, assignments, lessonId, courseId, t
     const outNotes = [...notes];
     for (let i = 0; i < outNotes.length; i++) {
         const note = outNotes[i];
-        if (note.type === 'file' && noteFiles[i]) {
+        if (noteFiles[i]) {
             const f = noteFiles[i];
             let buffer = f.buffer || (f.path ? fs.readFileSync(f.path) : null);
-            if (buffer && isImage(f.originalname)) buffer = await compressImage(buffer, f.originalname);
+            if (buffer && isImage(f.originalname)) buffer = await compressImage(buffer, f.originalname, true);
             if (buffer) {
                 if (r2Storage.isConfigured && r2Storage.uploadLessonMedia) {
                     const r2Key = await r2Storage.uploadLessonMedia(teacherId, courseId, lessonId, buffer, f.originalname, 'notes');
@@ -95,10 +95,10 @@ async function processLessonFiles(req, notes, assignments, lessonId, courseId, t
     const outAssignments = [...assignments];
     for (let i = 0; i < outAssignments.length; i++) {
         const a = outAssignments[i];
-        if (a.type === 'file' && assignmentFiles[i]) {
+        if (assignmentFiles[i]) {
             const f = assignmentFiles[i];
             let buffer = f.buffer || (f.path ? fs.readFileSync(f.path) : null);
-            if (buffer && isImage(f.originalname)) buffer = await compressImage(buffer, f.originalname);
+            if (buffer && isImage(f.originalname)) buffer = await compressImage(buffer, f.originalname, true);
             if (buffer) {
                 if (r2Storage.isConfigured && r2Storage.uploadLessonMedia) {
                     const r2Key = await r2Storage.uploadLessonMedia(teacherId, courseId, lessonId, buffer, f.originalname, 'assignments');
