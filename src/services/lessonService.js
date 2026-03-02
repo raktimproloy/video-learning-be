@@ -8,12 +8,15 @@ class LessonService {
             order,
             isPreview,
             notes,
-            assignments
+            assignments,
+            status: statusOverride
         } = lessonData;
+
+        const status = (statusOverride === 'active') ? 'active' : 'draft';
 
         const result = await db.query(
             `INSERT INTO lessons (course_id, title, description, "order", is_preview, notes, assignments, status)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft') RETURNING *`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
             [
                 courseId,
                 title || '',
@@ -21,7 +24,8 @@ class LessonService {
                 order ?? 0,
                 isPreview ?? false,
                 JSON.stringify(notes || []),
-                JSON.stringify(assignments || [])
+                JSON.stringify(assignments || []),
+                status
             ]
         );
         return result.rows[0];
@@ -33,7 +37,8 @@ class LessonService {
         const result = await db.query(
             `SELECT l.*,
                     (SELECT COUNT(*)::int FROM videos v WHERE v.lesson_id = l.id) AS video_count,
-                    (SELECT COALESCE(SUM(v.duration_seconds), 0) FROM videos v WHERE v.lesson_id = l.id) AS total_duration_seconds
+                    (SELECT COALESCE(SUM(v.duration_seconds), 0) FROM videos v WHERE v.lesson_id = l.id) AS total_duration_seconds,
+                    (SELECT ls.broadcast_status FROM live_sessions ls WHERE ls.id = l.current_live_session_id) AS live_broadcast_status
              FROM lessons l
              WHERE l.course_id = $1 ${statusFilter}
              ORDER BY l."order" ASC, l.created_at ASC`,
@@ -49,6 +54,7 @@ class LessonService {
             lesson.isPreview = lesson.is_preview;
             lesson.videoCount = lesson.video_count ?? 0;
             lesson.duration = (lesson.total_duration_seconds ?? 0) / 60; // minutes for frontend
+            lesson.liveBroadcastStatus = lesson.live_broadcast_status ?? null;
             return lesson;
         });
 
@@ -232,13 +238,15 @@ class LessonService {
              FROM lessons l
              JOIN courses c ON l.course_id = c.id
              JOIN users u ON c.teacher_id = u.id
+             LEFT JOIN live_sessions ls ON ls.id = l.current_live_session_id AND ls.status = 'active'
              WHERE l.is_live = true AND COALESCE(c.has_live_class, false) = true
+             AND (ls.id IS NULL OR (ls.broadcast_status IS NOT NULL AND ls.broadcast_status != 'ended'))
              ORDER BY l.updated_at DESC`
         );
         return result.rows;
     }
 
-    /** Live lessons only for courses the student is enrolled in (purchased) and that have live enabled. Include any lesson that is_live (teacher in room or streaming). */
+    /** Live lessons only for courses the student is enrolled in. Exclude lessons whose current session has broadcast_status = 'ended'. */
     async getLiveLessonsForStudent(studentId) {
         const result = await db.query(
             `SELECT l.*, c.title as course_title, u.email as teacher_email, c.id as course_id
@@ -246,21 +254,25 @@ class LessonService {
              JOIN courses c ON l.course_id = c.id
              JOIN users u ON c.teacher_id = u.id
              JOIN course_enrollments ce ON ce.course_id = c.id AND ce.user_id = $1
+             LEFT JOIN live_sessions ls ON ls.id = l.current_live_session_id AND ls.status = 'active'
              WHERE l.is_live = true AND COALESCE(c.has_live_class, false) = true
              AND (COALESCE(c.status, 'active') = 'active')
+             AND (ls.id IS NULL OR (ls.broadcast_status IS NOT NULL AND ls.broadcast_status != 'ended'))
              ORDER BY l.updated_at DESC`,
             [studentId]
         );
         return result.rows;
     }
 
-    /** Only lessons from courses that have live class enabled. */
+    /** Only lessons from courses that have live class enabled. Exclude lessons whose current session has broadcast_status = 'ended'. */
     async getTeacherLiveLessons(teacherId) {
         const result = await db.query(
             `SELECT l.*, c.title as course_title, c.id as course_id
              FROM lessons l
              JOIN courses c ON l.course_id = c.id
+             LEFT JOIN live_sessions ls ON ls.id = l.current_live_session_id AND ls.status = 'active'
              WHERE l.is_live = true AND c.teacher_id = $1 AND COALESCE(c.has_live_class, false) = true
+             AND (ls.id IS NULL OR (ls.broadcast_status IS NOT NULL AND ls.broadcast_status != 'ended'))
              ORDER BY l.updated_at DESC`,
             [teacherId]
         );

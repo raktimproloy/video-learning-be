@@ -142,6 +142,48 @@ class LiveSessionService {
             [lessonId]
         );
     }
+
+    /**
+     * Mark the active session as limit-reached (teacher hit time limit). Used so backend can force-end after grace.
+     * Idempotent: safe to call multiple times.
+     */
+    async setLimitReachedAt(lessonId) {
+        const session = await this.getActiveByLesson(lessonId);
+        if (!session) return null;
+        await db.query(
+            `UPDATE live_sessions SET limit_reached_at = COALESCE(limit_reached_at, NOW()), updated_at = NOW()
+             WHERE id = $1 AND status = 'active'`,
+            [session.id]
+        );
+        return session;
+    }
+
+    /**
+     * Find active sessions where limit was reached at least graceMinutes ago and force-end them.
+     * Records usage (minutes) via endDiscarded so provider usage is always saved.
+     * @param {number} graceMinutes - minutes after limit_reached_at before force-ending (e.g. 5)
+     * @returns {Promise<Array<{ lessonId: string }>>} list of lesson IDs that were force-ended
+     */
+    async forceEndExpiredLimitSessions(graceMinutes = 5) {
+        const graceSeconds = Math.max(0, Number(graceMinutes) || 5) * 60;
+        const result = await db.query(
+            `SELECT id, lesson_id FROM live_sessions
+             WHERE status = 'active' AND limit_reached_at IS NOT NULL
+             AND (EXTRACT(EPOCH FROM (NOW() - limit_reached_at)) >= $1)
+             ORDER BY limit_reached_at ASC`,
+            [graceSeconds]
+        );
+        const ended = [];
+        for (const row of result.rows) {
+            try {
+                await this.endDiscarded(row.lesson_id);
+                ended.push({ lessonId: row.lesson_id });
+            } catch (err) {
+                console.error('forceEndExpiredLimitSessions: endDiscarded failed for lesson', row.lesson_id, err);
+            }
+        }
+        return ended;
+    }
 }
 
 module.exports = new LiveSessionService();

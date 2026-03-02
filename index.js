@@ -11,6 +11,10 @@ initSocket(server);
 // Start the video processing worker
 require('./src/worker/index');
 
+// Force-end live sessions that hit time limit and weren't stopped within grace period (saves usage minutes)
+const liveSessionForceEndJob = require('./src/jobs/liveSessionForceEndJob');
+liveSessionForceEndJob.start();
+
 server.listen(port, () => {
     console.log(`Server running on port ${port}`);
 });

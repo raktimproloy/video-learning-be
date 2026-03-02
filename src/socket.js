@@ -2,6 +2,9 @@ const socketIo = require('socket.io');
 const jwt = require('jsonwebtoken');
 const liveChatService = require('./services/liveChatService');
 const lessonService = require('./services/lessonService');
+const courseService = require('./services/courseService');
+const liveWatchService = require('./services/liveWatchService');
+const liveSessionService = require('./services/liveSessionService');
 
 let io;
 const roomNotes = {}; // legacy in-memory notes (LiveNote)
@@ -35,6 +38,39 @@ const initSocket = (server) => {
     socket.on('joinRoom', (roomId) => {
       socket.join(roomId);
       console.log(`Socket ${socket.id} joined room ${roomId}`);
+      // Emit current live stats (viewer count, etc.) to the room so teacher and students
+      // see the correct waiting count via WebSocket (e.g. before teacher clicks Start Live)
+      (async () => {
+        try {
+          const lesson = await lessonService.getLessonById(roomId).catch(() => null);
+          if (!lesson) return;
+          const course = await courseService.getCourseById(lesson.course_id).catch(() => null);
+          if (!course) return;
+          const live_session_id = lesson.current_live_session_id || null;
+          const viewerCount = await liveWatchService.getViewerCount(roomId, course.teacher_id, live_session_id);
+          let broadcast_status = 'ended';
+          let live_name = null;
+          let live_description = null;
+          let live_started_at = null;
+          if (live_session_id) {
+            const session = await liveSessionService.getById(live_session_id).catch(() => null);
+            broadcast_status = session?.broadcast_status || 'starting';
+            live_name = session?.live_name ?? null;
+            live_description = session?.live_description ?? null;
+            live_started_at = await lessonService.getLiveStartedAt(roomId).catch(() => null);
+          }
+          io.to(roomId).emit('liveStatsUpdated', {
+            viewerCount,
+            broadcast_status,
+            live_started_at,
+            live_session_id,
+            live_name,
+            live_description,
+          });
+        } catch (err) {
+          console.error('joinRoom sync live stats error:', err);
+        }
+      })();
     });
 
     socket.on('requestNotes', (roomId) => {
