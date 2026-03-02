@@ -24,7 +24,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
     storage,
-    limits: { fileSize: 550 * 1024 * 1024 }, // 550MB for video + notes/assignments
+    limits: { fileSize: 1024 * 1024 * 1024 }, // 550MB for video + notes/assignments
 });
 
 // Protect admin routes with JWT

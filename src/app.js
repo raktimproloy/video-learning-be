@@ -42,8 +42,8 @@ app.use(helmet({
 
 // CORS Middleware - Allow whitelisted origins
 const corsOrigins = [
-    'https://video-learning-admin.vercel.app',
     'https://video-learning-fe.vercel.app',
+    'https://video-learning-admin.vercel.app',
     'http://localhost:3000',
     'http://localhost:3001',
     'http://127.0.0.1:3000',
