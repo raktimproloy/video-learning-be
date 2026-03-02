@@ -127,7 +127,7 @@ class LessonController {
             if (req.user.role !== 'teacher') {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
-            const { courseId, title, description, order, isPreview } = req.body;
+            const { courseId, title, description, order, isPreview, status: reqStatus } = req.body;
             const { notes, assignments } = parseNotesAndAssignments(req.body);
 
             const course = await courseService.getCourseById(courseId, req.user.id);
@@ -141,6 +141,7 @@ class LessonController {
                 isPreview: isPreview === 'true' || isPreview === true,
                 notes,
                 assignments,
+                status: reqStatus === 'active' ? 'active' : undefined,
             };
 
             if (lessonData.isPreview) {
@@ -341,6 +342,8 @@ class LessonController {
                     const { live_name, live_order, live_description } = req.body || {};
                     const liveOrder = live_order != null ? parseInt(live_order, 10) : 0;
                     const liveName = (live_name && String(live_name).trim()) ? String(live_name).trim() : (lesson.title || 'Live');
+                    // End any existing active session for this lesson so each "Go Live" creates a fresh session
+                    await liveSessionService.endDiscarded(id);
                     const liveSession = await liveSessionService.create(id, lesson.course_id, req.user.id, {
                         liveName: liveName || lesson.title,
                         liveOrder,
@@ -416,8 +419,6 @@ class LessonController {
             const creds = await getLiveCredsForProvider(provider, id, uid, role);
             if (!creds) return res.status(503).json({ error: `${provider} is not configured.` });
             return res.json({ ...creds, provider });
-
-            return res.status(403).json({ error: 'Access denied' });
         } catch (error) {
             console.error('Get live token error:', error);
             res.status(500).json({ error: 'Internal server error' });
@@ -699,7 +700,13 @@ class LessonController {
                 live_name = session?.live_name ?? null;
                 live_description = session?.live_description ?? null;
             }
-            res.json({ live_started_at, viewerCount, live_session_id, broadcast_status, live_name, live_description });
+            const payload = { live_started_at, viewerCount, live_session_id, broadcast_status, live_name, live_description };
+            res.json(payload);
+            // Emit to room so all clients (teacher + students) get viewer count via WebSocket (fixes "starting" count showing 0)
+            try {
+                const getIo = require('../socket').getIo;
+                getIo().to(lessonId).emit('liveStatsUpdated', payload);
+            } catch (_) {}
         } catch (error) {
             console.error('Get live stats error:', error);
             res.status(500).json({ error: 'Internal server error' });
@@ -741,20 +748,18 @@ class LessonController {
             if (!['live', 'paused', 'ended'].includes(broadcast_status)) {
                 return res.status(400).json({ error: 'broadcast_status must be live, paused, or ended' });
             }
-            await liveSessionService.setBroadcastStatus(lessonId, broadcast_status);
+            const updated = await liveSessionService.setBroadcastStatus(lessonId, broadcast_status);
+            if (!updated) {
+                return res.status(400).json({ error: 'No active live session for this lesson.' });
+            }
             if (broadcast_status === 'live') {
                 await lessonService.setLiveBroadcastStartedAt(lessonId);
             }
-            const live_session_id = lesson.current_live_session_id || null;
+            const live_session_id = updated.id;
             const live_started_at = await lessonService.getLiveStartedAt(lessonId);
             const viewerCount = await liveWatchService.getViewerCount(lessonId, course.teacher_id, live_session_id);
-            let live_name = null;
-            let live_description = null;
-            if (live_session_id) {
-                const session = await liveSessionService.getById(live_session_id);
-                live_name = session?.live_name ?? null;
-                live_description = session?.live_description ?? null;
-            }
+            const live_name = updated.live_name ?? null;
+            const live_description = updated.live_description ?? null;
             try {
                 const getIo = require('../socket').getIo;
                 getIo().to(lessonId).emit('liveStatsUpdated', {
@@ -769,6 +774,25 @@ class LessonController {
             res.json({ broadcast_status });
         } catch (error) {
             console.error('Set broadcast status error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    /** Teacher reports that the live time limit was reached; backend will force-end after grace period if not stopped. */
+    async reportLimitReached(req, res) {
+        try {
+            if (req.user.role !== 'teacher') return res.status(403).json({ error: 'Teachers only' });
+            const lessonId = req.params.id;
+            const lesson = await lessonService.getLessonById(lessonId);
+            if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
+            const course = await courseService.getCourseById(lesson.course_id);
+            if (!course) return res.status(404).json({ error: 'Course not found' });
+            if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+            const session = await liveSessionService.setLimitReachedAt(lessonId);
+            if (!session) return res.status(400).json({ error: 'No active live session for this lesson.' });
+            res.status(200).json({ ok: true });
+        } catch (error) {
+            console.error('Report limit reached error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     }

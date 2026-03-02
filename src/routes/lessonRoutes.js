@@ -41,6 +41,7 @@ router.get('/:id/live/started-at', authMiddleware, lessonController.getLiveStart
 router.get('/:id/live/viewers', authMiddleware, lessonController.getLiveViewers);
 router.get('/:id/live/stats', authMiddleware, lessonController.getLiveStats);
 router.put('/:id/live/broadcast-status', authMiddleware, lessonController.setBroadcastStatus);
+router.post('/:id/live/limit-reached', authMiddleware, requireRole(['teacher']), lessonController.reportLimitReached);
 router.put('/:id/live/session', authMiddleware, lessonController.updateLiveSession);
 router.put('/:id/live', authMiddleware, lessonController.setLiveAndGetToken);
 router.post('/:id/live/save-recording', authMiddleware, uploadRecording, lessonController.saveLiveRecording);

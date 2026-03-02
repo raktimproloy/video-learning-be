@@ -1124,6 +1124,60 @@ class CourseController {
         }
     }
 
+    /** List student's payment requests (e.g. status=pending for dashboard). Returns { requests: [...] } with thumbnail_url. */
+    async getStudentPaymentRequests(req, res) {
+        try {
+            const status = req.query.status || null;
+            const paymentRequestService = require('../services/paymentRequestService');
+            const rows = await paymentRequestService.getByStudent(req.user.id, { status, limit: 100 });
+            const apiUrl = process.env.BASE_URL || 'http://localhost:5000';
+            const v1Url = `${apiUrl}/v1`;
+            const requests = rows.map((pr) => {
+                let thumbnail_url = null;
+                if (pr.thumbnailPath) {
+                    const publicUrl = r2Storage.getPublicUrl ? r2Storage.getPublicUrl(pr.thumbnailPath) : null;
+                    if (publicUrl) thumbnail_url = publicUrl;
+                    else if (pr.thumbnailPath.startsWith('teachers/')) {
+                        thumbnail_url = `${v1Url}/courses/media/${encodeURIComponent(pr.thumbnailPath)}`;
+                    } else if (pr.thumbnailPath.startsWith('/uploads/')) {
+                        thumbnail_url = `${apiUrl}${pr.thumbnailPath}`;
+                    }
+                }
+                return {
+                    id: pr.id,
+                    courseId: pr.courseId,
+                    courseTitle: pr.courseTitle,
+                    amount: pr.amount,
+                    currency: pr.currency,
+                    status: pr.status,
+                    createdAt: pr.createdAt,
+                    teacherName: pr.teacherName,
+                    thumbnailPath: pr.thumbnailPath,
+                    thumbnail_url,
+                };
+            });
+            res.json({ requests });
+        } catch (error) {
+            console.error('Get student payment requests error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    /** Get a single payment request by id for the current student (for invoice/checkout). */
+    async getStudentPaymentRequestById(req, res) {
+        try {
+            const paymentRequestService = require('../services/paymentRequestService');
+            const request = await paymentRequestService.getByIdForStudent(req.params.id, req.user.id);
+            if (!request) {
+                return res.status(404).json({ error: 'Payment request not found' });
+            }
+            res.json(request);
+        } catch (error) {
+            console.error('Get student payment request by id error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
     async getAvailableCourses(req, res) {
         try {
             const courses = await courseService.getUnpurchasedCourses(req.user.id);
