@@ -121,6 +121,13 @@ class AdminCoursesService {
         const row = result.rows[0];
         if (!row) return null;
 
+        let tags = [];
+        try {
+            tags = row.tags ? (typeof row.tags === 'string' ? JSON.parse(row.tags) : row.tags) : [];
+        } catch {
+            tags = [];
+        }
+
         return {
             id: row.id,
             title: row.title,
@@ -132,6 +139,12 @@ class AdminCoursesService {
             currency: row.currency || 'USD',
             level: row.level,
             status: row.status || 'active',
+            language: row.language || 'English',
+            subtitle: row.subtitle,
+            courseType: row.course_type,
+            hasLiveClass: row.has_live_class,
+            hasAssignments: row.has_assignments,
+            tags,
             teacherId: row.teacher_id,
             teacherName: row.teacher_name || row.teacher_email || 'Unknown',
             teacherEmail: row.teacher_email,
@@ -143,7 +156,6 @@ class AdminCoursesService {
             rating: parseFloat(row.rating) || 0,
             reviewCount: parseInt(row.review_count, 10) || 0,
             thumbnailPath: row.thumbnail_path,
-            language: row.language || 'English',
             createdAt: row.created_at,
             updatedAt: row.updated_at,
         };

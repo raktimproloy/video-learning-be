@@ -290,46 +290,82 @@ class TeacherProfileService {
     }
 
     /**
-     * Get profile completion percentage
+     * Get profile completion percentage.
+     * Personal: count of filled fields matching frontend (14 fields).
+     * Qualification: 4 areas (specialization, education, experience, certifications), 25% each if filled.
+     * Payment: 100% if at least one payment method, else 0%.
+     * Overall: average of personal, qualification, payment.
      */
     async getProfileCompletion(userId) {
         const profile = await this.getProfile(userId);
-        
-        let completedFields = 0;
-        const totalFields = 20;
 
-        // Personal section (7 fields)
-        if (profile.name) completedFields++;
-        if (profile.bio) completedFields++;
-        if (profile.profile_image_path) completedFields++;
-        if (profile.account_email) completedFields++;
-        if (profile.original_phone) completedFields++;
-        if (profile.address) completedFields++;
-        if (profile.location) completedFields++;
+        // Personal section: same fields as frontend PersonalSection form (14 fields)
+        const personalFields = [
+            profile.name,
+            profile.bio,
+            profile.institute_name,
+            profile.account_email,
+            profile.support_email,
+            profile.original_phone,
+            profile.support_phone,
+            profile.address,
+            profile.location,
+            profile.youtube_url,
+            profile.linkedin_url,
+            profile.facebook_url,
+            profile.twitter_url,
+            profile.profile_image_path,
+        ];
+        const filledPersonal = personalFields.filter((v) => v != null && String(v).trim() !== '').length;
+        const personalTotal = personalFields.length;
+        const personal = personalTotal > 0 ? Math.round((filledPersonal / personalTotal) * 100) : 0;
 
-        // Qualification section (8 fields)
-        if (profile.specialization && profile.specialization.length > 0) completedFields++;
-        if (profile.education && profile.education.length > 0) completedFields++;
-        if (profile.experience && profile.experience.length > 0) completedFields++;
-        if (profile.certifications && profile.certifications.length > 0) completedFields++;
-        // Count additional fields
-        if (profile.education && profile.education.length >= 2) completedFields++;
-        if (profile.experience && profile.experience.length >= 2) completedFields++;
-        if (profile.certifications && profile.certifications.length >= 2) completedFields++;
-        if (profile.specialization && profile.specialization.length >= 3) completedFields++;
+        // Qualification section: 4 areas (each 25%) – only count if at least one real entry with content (not empty placeholders)
+        const hasRealSpecialization = Array.isArray(profile.specialization) && profile.specialization.some((s) => {
+            const name = typeof s === 'string' ? s : (s && s.name);
+            return name != null && String(name).trim() !== '';
+        });
+        const hasRealEducation = Array.isArray(profile.education) && profile.education.some((e) => {
+            const inst = e && (e.institution || e.school);
+            const degree = e && e.degree;
+            const field = e && e.field;
+            return (inst != null && String(inst).trim() !== '') || (degree != null && String(degree).trim() !== '') || (field != null && String(field).trim() !== '');
+        });
+        const hasRealExperience = Array.isArray(profile.experience) && profile.experience.some((e) => {
+            const title = e && e.title;
+            const company = e && (e.company || e.organization);
+            return (title != null && String(title).trim() !== '') || (company != null && String(company).trim() !== '');
+        });
+        const hasRealCertifications = Array.isArray(profile.certifications) && profile.certifications.some((c) => {
+            const name = c && c.name;
+            const issuer = c && c.issuer;
+            return (name != null && String(name).trim() !== '') || (issuer != null && String(issuer).trim() !== '');
+        });
+        let qualificationScore = 0;
+        if (hasRealSpecialization) qualificationScore += 25;
+        if (hasRealEducation) qualificationScore += 25;
+        if (hasRealExperience) qualificationScore += 25;
+        if (hasRealCertifications) qualificationScore += 25;
+        const qualification = Math.min(100, qualificationScore);
 
-        // Payment section (5 fields - dummy for now)
-        // completedFields += 5; // Skip payment section
+        // Payment section: 100% only if teacher has at least one payment method (teacher_id = user id of teacher)
+        const paymentCountResult = await db.query(
+            'SELECT COUNT(*) AS cnt FROM teacher_payment_methods WHERE teacher_id = $1',
+            [userId]
+        );
+        const paymentCount = parseInt(paymentCountResult.rows[0]?.cnt || '0', 10);
+        const payment = paymentCount > 0 ? 100 : 0;
 
-        const percentage = Math.round((completedFields / totalFields) * 100);
-        
+        // Overall: average of the three sections
+        const percentage = Math.round((personal + qualification + payment) / 3);
+
         return {
-            percentage,
+            percentage: Math.min(100, Math.max(0, percentage)),
             breakdown: {
-                personal: Math.round((completedFields / 7) * 100),
-                qualification: Math.round((completedFields / 8) * 100),
-                payment: 0
-            }
+                personal: Math.min(100, Math.max(0, personal)),
+                qualification: Math.min(100, Math.max(0, qualification)),
+                payment: Math.min(100, Math.max(0, payment)),
+            },
         };
     }
 }

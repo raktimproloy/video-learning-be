@@ -103,18 +103,15 @@ class AuthController {
             // Update role to teacher
             const updatedUser = await userService.updateRole(userId, 'teacher');
 
-            // Create teacher profile with dummy data
-            const emailName = user.email.split('@')[0];
-            const capitalizedName = emailName.charAt(0).toUpperCase() + emailName.slice(1);
-            
+            // Create an empty teacher profile (no dummy content)
             await userService.createTeacherProfile(userId, {
-                name: capitalizedName,
-                bio: `Experienced educator passionate about sharing knowledge and helping students succeed. Join me on this learning journey!`,
-                location: 'Online',
-                avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(capitalizedName)}&background=random&size=200`,
-                specialization: ['General Education', 'Online Teaching'],
-                experience: '1+ years',
-                certifications: ['Teaching Certificate']
+                name: null,
+                bio: null,
+                location: null,
+                avatar: null,
+                specialization: [],
+                experience: null,
+                certifications: []
             });
 
             // Generate new token with updated role
