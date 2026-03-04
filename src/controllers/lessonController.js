@@ -1206,6 +1206,9 @@ class LessonController {
 
             await liveSessionService.markSaved(liveSession.id);
 
+            // Mark lesson as no longer live and clear current_live_session_id.
+            await lessonService.updateLiveStatus(lessonId, false, {});
+
             res.status(201).json({
                 message: 'Recording saved. It will be encrypted and processed like other lesson videos.',
                 video_id: video.id,
