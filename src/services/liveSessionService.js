@@ -95,6 +95,7 @@ class LiveSessionService {
      * End live session: set broadcast_status to 'ended', then clear lesson link, mark as discarded (no save).
      * Only updates sessions that are still 'active' (saved sessions are left as-is).
      * Records usage (minutes) for this session so free-minute counters stay accurate.
+     * Also sets lesson.is_live = false so student dashboard and course content stop showing "live".
      */
     async endDiscarded(lessonId) {
         const session = await this.getActiveByLesson(lessonId);
@@ -111,7 +112,10 @@ class LiveSessionService {
             }
         }
         await db.query(
-            'UPDATE lessons SET current_live_session_id = NULL WHERE id = $1',
+            `UPDATE lessons SET current_live_session_id = NULL,
+             is_live = false, live_started_at = NULL,
+             live_session_name = NULL, live_session_order = NULL, live_session_description = NULL
+             WHERE id = $1`,
             [lessonId]
         );
     }
@@ -156,6 +160,32 @@ class LiveSessionService {
             [session.id]
         );
         return session;
+    }
+
+    /**
+     * List all active live sessions with course, lesson, and owner info (for admin).
+     */
+    async listActiveForAdmin() {
+        const result = await db.query(
+            `SELECT ls.id, ls.lesson_id, ls.course_id, ls.owner_id, ls.live_name, ls.live_description,
+                    ls.started_at, ls.broadcast_status, ls.provider, ls.status,
+                    c.title AS course_title,
+                    l.title AS lesson_title, l.order AS lesson_order,
+                    u.email AS owner_email,
+                    COALESCE(tp.name, u.email) AS owner_name,
+                    (SELECT COUNT(*)::int FROM live_watch_records lwr WHERE lwr.live_session_id = ls.id AND lwr.left_at IS NULL) AS viewer_count_now,
+                    (SELECT COUNT(DISTINCT lwr.student_id)::int FROM live_watch_records lwr WHERE lwr.live_session_id = ls.id) AS viewer_count_total,
+                    (SELECT COUNT(*)::int FROM live_chat_messages lcm WHERE lcm.live_session_id = ls.id) AS chat_message_count,
+                    (SELECT COALESCE(SUM(lwr.watch_seconds), 0)::bigint FROM live_watch_records lwr WHERE lwr.live_session_id = ls.id) AS total_watch_seconds
+             FROM live_sessions ls
+             JOIN courses c ON c.id = ls.course_id
+             JOIN lessons l ON l.id = ls.lesson_id
+             JOIN users u ON u.id = ls.owner_id
+             LEFT JOIN teacher_profiles tp ON tp.user_id = u.id
+             WHERE ls.status = 'active'
+             ORDER BY ls.started_at DESC`
+        );
+        return result.rows;
     }
 
     /**
