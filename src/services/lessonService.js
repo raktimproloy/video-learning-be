@@ -232,21 +232,22 @@ class LessonService {
         return rows[0];
     }
 
+    /** Only lessons that have an active live session right now (for "live now" list). */
     async getLiveLessons() {
         const result = await db.query(
             `SELECT l.*, c.title as course_title, u.email as teacher_email 
              FROM lessons l
              JOIN courses c ON l.course_id = c.id
              JOIN users u ON c.teacher_id = u.id
-             LEFT JOIN live_sessions ls ON ls.id = l.current_live_session_id AND ls.status = 'active'
+             JOIN live_sessions ls ON ls.id = l.current_live_session_id AND ls.status = 'active'
              WHERE l.is_live = true AND COALESCE(c.has_live_class, false) = true
-             AND (ls.id IS NULL OR (ls.broadcast_status IS NOT NULL AND ls.broadcast_status != 'ended'))
+             AND ls.broadcast_status IS NOT NULL AND ls.broadcast_status != 'ended'
              ORDER BY l.updated_at DESC`
         );
         return result.rows;
     }
 
-    /** Live lessons only for courses the student is enrolled in. Exclude lessons whose current session has broadcast_status = 'ended'. */
+    /** Live lessons only for courses the student is enrolled in. Only lessons with an active, non-ended session. */
     async getLiveLessonsForStudent(studentId) {
         const result = await db.query(
             `SELECT l.*, c.title as course_title, u.email as teacher_email, c.id as course_id
@@ -254,25 +255,25 @@ class LessonService {
              JOIN courses c ON l.course_id = c.id
              JOIN users u ON c.teacher_id = u.id
              JOIN course_enrollments ce ON ce.course_id = c.id AND ce.user_id = $1
-             LEFT JOIN live_sessions ls ON ls.id = l.current_live_session_id AND ls.status = 'active'
+             JOIN live_sessions ls ON ls.id = l.current_live_session_id AND ls.status = 'active'
              WHERE l.is_live = true AND COALESCE(c.has_live_class, false) = true
              AND (COALESCE(c.status, 'active') = 'active')
-             AND (ls.id IS NULL OR (ls.broadcast_status IS NOT NULL AND ls.broadcast_status != 'ended'))
+             AND ls.broadcast_status IS NOT NULL AND ls.broadcast_status != 'ended'
              ORDER BY l.updated_at DESC`,
             [studentId]
         );
         return result.rows;
     }
 
-    /** Only lessons from courses that have live class enabled. Exclude lessons whose current session has broadcast_status = 'ended'. */
+    /** Only lessons that have an active live session (for teacher "live now" list). */
     async getTeacherLiveLessons(teacherId) {
         const result = await db.query(
             `SELECT l.*, c.title as course_title, c.id as course_id
              FROM lessons l
              JOIN courses c ON l.course_id = c.id
-             LEFT JOIN live_sessions ls ON ls.id = l.current_live_session_id AND ls.status = 'active'
+             JOIN live_sessions ls ON ls.id = l.current_live_session_id AND ls.status = 'active'
              WHERE l.is_live = true AND c.teacher_id = $1 AND COALESCE(c.has_live_class, false) = true
-             AND (ls.id IS NULL OR (ls.broadcast_status IS NOT NULL AND ls.broadcast_status != 'ended'))
+             AND ls.broadcast_status IS NOT NULL AND ls.broadcast_status != 'ended'
              ORDER BY l.updated_at DESC`,
             [teacherId]
         );

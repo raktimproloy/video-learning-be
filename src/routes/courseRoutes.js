@@ -57,6 +57,7 @@ router.get('/student/purchased', authMiddleware, requireRole(['student', 'teache
 router.get('/student/purchase-history', authMiddleware, requireRole(['student', 'teacher']), courseController.getStudentPurchaseHistory);
 router.get('/student/payment-requests', authMiddleware, requireRole(['student', 'teacher']), courseController.getStudentPaymentRequests);
 router.get('/student/payment-requests/:id', authMiddleware, requireRole(['student', 'teacher']), courseController.getStudentPaymentRequestById);
+router.post('/student/payment-requests/:id/complete', authMiddleware, requireRole(['student', 'teacher']), courseController.completeStudentPaymentRequest);
 router.get('/student/available', authMiddleware, requireRole(['student', 'teacher']), courseController.getAvailableCourses);
 router.get('/:id/assignments-notes', authMiddleware, requireRole(['student', 'teacher']), courseController.getCourseAssignmentsAndNotes);
 router.post('/:id/purchase', authMiddleware, requireRole(['student', 'teacher']), courseController.purchaseCourse);

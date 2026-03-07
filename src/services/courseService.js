@@ -1088,8 +1088,10 @@ class CourseService {
                     SELECT jsonb_array_elements(v.notes) as note FROM videos v 
                     JOIN lessons l ON v.lesson_id = l.id WHERE l.course_id = c.id
                 ) notes WHERE notes.note IS NOT NULL) as total_notes,
-                -- Live stream status
-                (SELECT COUNT(*) > 0 FROM lessons l WHERE l.course_id = c.id AND l.is_live = true) as has_live_stream,
+                -- Live stream status: only true when course has a lesson with an active, non-ended session right now
+                (SELECT COUNT(*) > 0 FROM lessons l
+                 JOIN live_sessions ls ON ls.id = l.current_live_session_id AND ls.status = 'active'
+                 WHERE l.course_id = c.id AND ls.broadcast_status IS NOT NULL AND ls.broadcast_status != 'ended') as has_live_stream,
                 -- Completed required assignments count
                 (SELECT COUNT(*) FROM (
                     SELECT DISTINCT asub.assignment_id FROM assignment_submissions asub
