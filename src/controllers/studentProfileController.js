@@ -62,6 +62,18 @@ class StudentProfileController {
             const profileData = {
                 name: req.body.name,
                 phone: req.body.phone,
+                location: req.body.location,
+                school_name: req.body.school_name ?? req.body.schoolName,
+                class: req.body.class,
+                section: req.body.section,
+                skills: (() => {
+                    const s = req.body.skills;
+                    if (Array.isArray(s)) return s;
+                    if (typeof s === 'string') {
+                        try { return JSON.parse(s); } catch { return []; }
+                    }
+                    return undefined;
+                })(),
             };
 
             // Handle profile image upload if provided
@@ -148,6 +160,48 @@ class StudentProfileController {
             if (error.message === 'Current password is incorrect') {
                 return res.status(400).json({ error: error.message });
             }
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    /**
+     * Request OTP for phone verification
+     */
+    async requestPhoneOtp(req, res) {
+        try {
+            if (req.user.role !== 'student') {
+                return res.status(403).json({ error: 'Access denied. Students only.' });
+            }
+            await studentProfileService.requestPhoneOtp(req.user.id);
+            res.json({ message: 'OTP sent to your phone' });
+        } catch (error) {
+            if (error.message === 'Phone number is required') {
+                return res.status(400).json({ error: error.message });
+            }
+            console.error('Request phone OTP error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    /**
+     * Verify phone OTP
+     */
+    async verifyPhoneOtp(req, res) {
+        try {
+            if (req.user.role !== 'student') {
+                return res.status(403).json({ error: 'Access denied. Students only.' });
+            }
+            const { otp } = req.body;
+            if (!otp) {
+                return res.status(400).json({ error: 'OTP is required' });
+            }
+            const profile = await studentProfileService.verifyPhoneOtp(req.user.id, otp);
+            res.json(profile);
+        } catch (error) {
+            if (error.message === 'OTP not requested or expired' || error.message === 'OTP expired' || error.message === 'Invalid OTP') {
+                return res.status(400).json({ error: error.message });
+            }
+            console.error('Verify phone OTP error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     }

@@ -191,9 +191,10 @@ async function acceptPaymentRequest(requestId, adminUserId) {
             courseId: row.course_id,
         });
 
-        // Optional: send payment-accepted SMS via BulkSMS BD (same util as pending SMS)
-        if (row.sender_phone) {
-            smsService.sendPaymentAcceptedSms(row.sender_phone, courseTitle).catch((err) => {
+        // Optional: send payment-accepted SMS to the number provided at checkout (fire-and-forget)
+        const senderPhone = row.sender_phone && String(row.sender_phone).trim() ? String(row.sender_phone).trim() : null;
+        if (senderPhone) {
+            smsService.sendPaymentAcceptedSms(senderPhone, courseTitle).catch((err) => {
                 console.error('Payment accepted SMS failed:', err.message);
             });
         }
@@ -302,11 +303,11 @@ async function getByIdForStudent(requestId, userId) {
 }
 
 /**
- * Reject a payment request. Sends decline SMS to sender_phone if present.
+ * Reject a payment request. Sends decline SMS to sender_phone and creates a user notification.
  */
 async function rejectPaymentRequest(requestId, adminUserId) {
     const selectResult = await db.query(
-        `SELECT pr.sender_phone, c.title AS course_title
+        `SELECT pr.user_id, pr.sender_phone, pr.course_id, c.title AS course_title
          FROM course_payment_requests pr
          JOIN courses c ON c.id = pr.course_id
          WHERE pr.id = $1 AND pr.status = 'pending'`,
@@ -324,8 +325,20 @@ async function rejectPaymentRequest(requestId, adminUserId) {
     );
     if (!result.rows[0]) return null;
 
-    if (row.sender_phone) {
-        smsService.sendPaymentDeclinedSms(row.sender_phone, row.course_title).catch((err) => {
+    const courseTitle = row.course_title || 'the course';
+
+    // In-app notification for the student
+    const userNotificationService = require('./userNotificationService');
+    await userNotificationService.create(row.user_id, {
+        type: 'payment_rejected',
+        title: 'Payment request declined',
+        body: `Your payment for "${courseTitle}" was declined. Please contact support if you have questions.`,
+        courseId: row.course_id,
+    });
+
+    // SMS to the number provided at checkout (fire-and-forget)
+    if (row.sender_phone && String(row.sender_phone).trim()) {
+        smsService.sendPaymentDeclinedSms(row.sender_phone, courseTitle).catch((err) => {
             console.error('Payment declined SMS failed:', err.message);
         });
     }

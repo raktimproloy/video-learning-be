@@ -101,6 +101,21 @@ class AnnouncementService {
         );
         return true;
     }
+
+    /**
+     * Mark all announcements as read for a student (all enrolled courses).
+     */
+    async markAllAsRead(userId) {
+        await db.query(
+            `INSERT INTO announcement_reads (user_id, announcement_id)
+             SELECT $1, a.id
+             FROM course_announcements a
+             JOIN course_enrollments ce ON ce.course_id = a.course_id AND ce.user_id = $1
+             LEFT JOIN announcement_reads ar ON ar.announcement_id = a.id AND ar.user_id = $1
+             WHERE ar.read_at IS NULL
+             ON CONFLICT (user_id, announcement_id) DO NOTHING`
+        );
+    }
 }
 
 module.exports = new AnnouncementService();

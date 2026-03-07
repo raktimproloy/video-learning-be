@@ -48,9 +48,17 @@ async function markAsRead(notificationId, userId) {
     return result.rows[0] != null;
 }
 
+async function markAllAsRead(userId) {
+    await db.query(
+        `UPDATE user_notifications SET read_at = NOW() WHERE user_id = $1 AND read_at IS NULL`,
+        [userId]
+    );
+}
+
 module.exports = {
     create,
     listByUser,
     getUnreadCount,
     markAsRead,
+    markAllAsRead,
 };

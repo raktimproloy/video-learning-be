@@ -35,6 +35,12 @@ router.get('/', studentProfileController.getProfile);
 // Update student profile (with optional image upload)
 router.put('/', upload.single('profileImage'), studentProfileController.updateProfile);
 
+// Request OTP for phone verification
+router.post('/request-phone-otp', studentProfileController.requestPhoneOtp);
+
+// Verify phone OTP
+router.post('/verify-phone-otp', studentProfileController.verifyPhoneOtp);
+
 // Change password
 router.post('/change-password', studentProfileController.changePassword);
 

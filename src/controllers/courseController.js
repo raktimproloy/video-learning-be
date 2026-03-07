@@ -554,7 +554,9 @@ class CourseController {
                     institute_name: details.teacher.institute_name,
                     account_email_verified: details.teacher.account_email_verified,
                     address: details.teacher.address,
-                    totalStudents: details.teacher.totalStudents
+                    totalStudents: details.teacher.totalStudents,
+                    total_courses: details.teacher.total_courses ?? 0,
+                    rating: details.teacher.rating != null ? Number(details.teacher.rating) : 0
                 };
             }
 
@@ -1154,6 +1156,9 @@ class CourseController {
                     teacherName: pr.teacherName,
                     thumbnailPath: pr.thumbnailPath,
                     thumbnail_url,
+                    paymentMethod: pr.paymentMethod,
+                    senderPhone: pr.senderPhone,
+                    transactionId: pr.transactionId,
                 };
             });
             res.json({ requests });
