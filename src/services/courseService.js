@@ -570,7 +570,7 @@ class CourseService {
         const course = await this.getCourseById(id, userId);
         if (!course) return null;
 
-        // Get teacher info with full profile (name, image, institute, verified, address)
+        // Get teacher info with full profile (name, image, institute, verified, address, rating from teacher_reviews)
         const teacherResult = await db.query(
             `SELECT u.id, u.email, u.created_at,
                     COALESCE(tp.name, u.email) as name,
@@ -579,7 +579,9 @@ class CourseService {
                     tp.account_email_verified,
                     tp.address,
                     (SELECT COUNT(DISTINCT ce.user_id) FROM course_enrollments ce
-                     JOIN courses c ON ce.course_id = c.id WHERE c.teacher_id = u.id) as total_students
+                     JOIN courses c ON ce.course_id = c.id WHERE c.teacher_id = u.id) as total_students,
+                    (SELECT COUNT(*)::int FROM courses WHERE teacher_id = u.id) as total_courses,
+                    (SELECT COALESCE(AVG(tr.rating), 0)::float FROM teacher_reviews tr WHERE tr.teacher_id = u.id) as teacher_rating
              FROM users u
              LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
              WHERE u.id = $1`,
@@ -723,7 +725,9 @@ class CourseService {
                 institute_name: teacher.institute_name || null,
                 account_email_verified: teacher.account_email_verified || false,
                 address: teacher.address || null,
-                totalStudents: parseInt(teacher.total_students) || course.purchase_count || 0
+                totalStudents: parseInt(teacher.total_students) || course.purchase_count || 0,
+                total_courses: parseInt(teacher.total_courses, 10) || 0,
+                rating: parseFloat(teacher.teacher_rating) || 0
             } : null,
             lessons,
             videos,

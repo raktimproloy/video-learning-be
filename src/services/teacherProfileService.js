@@ -57,27 +57,9 @@ class TeacherProfileService {
      * Get public teacher profile (for public viewing)
      */
     async getPublicProfile(userId) {
-        // Check if reviews table exists
-        const reviewsTableCheck = await db.query(`
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'reviews'
-            )
-        `);
-        const hasReviewsTable = reviewsTableCheck.rows[0]?.exists || false;
-
-        const reviewsRatingQuery = hasReviewsTable
-            ? `(SELECT COALESCE(AVG(r.rating), 0) FROM reviews r 
-               JOIN courses c ON r.course_id = c.id 
-               WHERE c.teacher_id = u.id)`
-            : `0`;
-        
-        const reviewsCountQuery = hasReviewsTable
-            ? `(SELECT COUNT(*) FROM reviews r 
-               JOIN courses c ON r.course_id = c.id 
-               WHERE c.teacher_id = u.id)`
-            : `0`;
+        // Teacher rating/reviews: from teacher_reviews table (students review teacher directly)
+        const teacherReviewsRatingQuery = `(SELECT COALESCE(AVG(tr.rating), 0)::float FROM teacher_reviews tr WHERE tr.teacher_id = u.id)`;
+        const teacherReviewsCountQuery = `(SELECT COUNT(*)::int FROM teacher_reviews tr WHERE tr.teacher_id = u.id)`;
 
         const result = await db.query(
             `SELECT 
@@ -87,8 +69,8 @@ class TeacherProfileService {
                 (SELECT COUNT(*) FROM course_enrollments ce 
                  JOIN courses c ON ce.course_id = c.id 
                  WHERE c.teacher_id = u.id) as total_students,
-                ${reviewsRatingQuery} as rating,
-                ${reviewsCountQuery} as total_reviews
+                ${teacherReviewsRatingQuery} as rating,
+                ${teacherReviewsCountQuery} as total_reviews
              FROM teacher_profiles tp
              JOIN users u ON tp.user_id = u.id
              WHERE tp.user_id = $1`,
@@ -140,7 +122,7 @@ class TeacherProfileService {
             twitter_url: profile.twitter_url,
             total_courses: parseInt(profile.total_courses) || 0,
             total_students: parseInt(profile.total_students) || 0,
-            rating: parseFloat(profile.rating) || 0,
+            rating: Math.round(parseFloat(profile.rating) * 10) / 10 || 0,
             total_reviews: parseInt(profile.total_reviews) || 0
         };
     }

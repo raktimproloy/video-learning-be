@@ -23,9 +23,14 @@ class StudentProfileService {
         
         const profile = result.rows[0];
         
+        const skills = Array.isArray(profile.skills) 
+            ? profile.skills 
+            : (typeof profile.skills === 'string' ? (() => { try { return JSON.parse(profile.skills); } catch { return []; } })() : []);
+        
         return {
             ...profile,
-            email: profile.login_email, // Use login email
+            email: profile.login_email,
+            skills: Array.isArray(skills) ? skills : [],
         };
     }
 
@@ -60,6 +65,11 @@ class StudentProfileService {
             name,
             phone,
             profileImagePath,
+            location,
+            school_name,
+            class: classVal,
+            section,
+            skills,
         } = profileData;
 
         // Build update query dynamically
@@ -78,6 +88,26 @@ class StudentProfileService {
         if (profileImagePath !== undefined) {
             updates.push(`profile_image_path = $${paramIndex++}`);
             values.push(profileImagePath);
+        }
+        if (location !== undefined) {
+            updates.push(`location = $${paramIndex++}`);
+            values.push(location);
+        }
+        if (school_name !== undefined) {
+            updates.push(`school_name = $${paramIndex++}`);
+            values.push(school_name);
+        }
+        if (classVal !== undefined) {
+            updates.push(`class = $${paramIndex++}`);
+            values.push(classVal);
+        }
+        if (section !== undefined) {
+            updates.push(`section = $${paramIndex++}`);
+            values.push(section);
+        }
+        if (skills !== undefined) {
+            updates.push(`skills = $${paramIndex++}`);
+            values.push(Array.isArray(skills) ? JSON.stringify(skills) : '[]');
         }
 
         if (updates.length === 0) {
@@ -100,6 +130,52 @@ class StudentProfileService {
             return await this.createProfile(userId);
         }
 
+        return await this.getProfile(userId);
+    }
+
+    /**
+     * Request OTP for phone verification (stub: stores fixed OTP for dev; integrate SMS later).
+     */
+    async requestPhoneOtp(userId) {
+        const profile = await this.getProfile(userId);
+        if (!profile.phone || !profile.phone.trim()) {
+            throw new Error('Phone number is required');
+        }
+        const otp = '123456';
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+        await db.query(
+            `UPDATE student_profiles SET phone_otp = $1, phone_otp_expires_at = $2 WHERE user_id = $3`,
+            [otp, expiresAt, userId]
+        );
+        return { message: 'OTP sent', expiresIn: 600 };
+    }
+
+    /**
+     * Verify phone OTP and set phone_verified = true.
+     */
+    async verifyPhoneOtp(userId, otp) {
+        const result = await db.query(
+            `SELECT phone_otp, phone_otp_expires_at FROM student_profiles WHERE user_id = $1`,
+            [userId]
+        );
+        const row = result.rows[0];
+        if (!row || !row.phone_otp) {
+            throw new Error('OTP not requested or expired');
+        }
+        if (new Date(row.phone_otp_expires_at) < new Date()) {
+            await db.query(
+                `UPDATE student_profiles SET phone_otp = NULL, phone_otp_expires_at = NULL WHERE user_id = $1`,
+                [userId]
+            );
+            throw new Error('OTP expired');
+        }
+        if (row.phone_otp !== String(otp).trim()) {
+            throw new Error('Invalid OTP');
+        }
+        await db.query(
+            `UPDATE student_profiles SET phone_verified = TRUE, phone_otp = NULL, phone_otp_expires_at = NULL, updated_at = NOW() WHERE user_id = $1`,
+            [userId]
+        );
         return await this.getProfile(userId);
     }
 

@@ -2,17 +2,8 @@ const db = require('../../db');
 
 class AdminTeachersService {
     async list(skip = 0, limit = 10) {
-        const reviewsTableCheck = await db.query(`
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' AND table_name = 'reviews'
-            )
-        `);
-        const hasReviews = reviewsTableCheck.rows[0]?.exists || false;
-        const avgRatingQuery = hasReviews
-            ? `(SELECT COALESCE(AVG(r.rating), 0)::numeric(3,2) FROM reviews r 
-               JOIN courses c ON r.course_id = c.id WHERE c.teacher_id = u.id)`
-            : `0::numeric(3,2)`;
+        // Teacher rating from teacher_reviews (students review teacher directly)
+        const avgRatingQuery = `(SELECT COALESCE(AVG(tr.rating), 0)::numeric(3,2) FROM teacher_reviews tr WHERE tr.teacher_id = u.id)`;
 
         const result = await db.query(
             `SELECT 
@@ -79,20 +70,13 @@ class AdminTeachersService {
         const row = result.rows[0];
         if (!row) return null;
 
-        const reviewsCheck = await db.query(`
-            SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'reviews')
-        `);
-        let avgRating = 0;
-        let reviewCount = 0;
-        if (reviewsCheck.rows[0]?.exists) {
-            const r = await db.query(
-                `SELECT COALESCE(AVG(r.rating), 0)::float as avg, COUNT(*)::int as cnt
-                 FROM reviews r JOIN courses c ON r.course_id = c.id WHERE c.teacher_id = $1`,
-                [id]
-            );
-            avgRating = parseFloat(r.rows[0]?.avg) || 0;
-            reviewCount = parseInt(r.rows[0]?.cnt, 10) || 0;
-        }
+        const trResult = await db.query(
+            `SELECT COALESCE(AVG(rating), 0)::float as avg_rating, COUNT(*)::int as review_count
+             FROM teacher_reviews WHERE teacher_id = $1`,
+            [id]
+        );
+        const avgRating = parseFloat(trResult.rows[0]?.avg_rating) || 0;
+        const reviewCount = parseInt(trResult.rows[0]?.review_count, 10) || 0;
 
         return {
             id: row.id,
