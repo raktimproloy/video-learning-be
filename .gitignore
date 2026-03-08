@@ -3,3 +3,7 @@
 /uploads
 .env
 keys
+
+# Firebase / Google Cloud credentials - never commit
+src/config/*-firebase-adminsdk-*.json
+src/config/*.json
