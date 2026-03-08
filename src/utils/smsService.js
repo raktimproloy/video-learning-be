@@ -11,7 +11,8 @@ const BULKSMS_BASE = 'https://bulksmsbd.net/api/smsapi';
 
 /**
  * Normalize phone for BulkSMS BD (Bangladesh).
- * Expects number like 017..., 01..., 88017...; outputs 880XXXXXXXXXX (11 digits after 880).
+ * Accepts: 01303644935, +8801303644935, 8801303644935, 1303644935.
+ * Output: 880XXXXXXXXXX (13 digits total: 88 + 0 + 10 digits).
  * @param {string} phone - Raw phone input
  * @returns {string|null} - Normalized 880XXXXXXXXXX or null if invalid
  */
@@ -19,17 +20,27 @@ function normalizePhone(phone) {
     if (!phone || typeof phone !== 'string') return null;
     const digits = phone.replace(/\D/g, '');
     if (digits.length < 10) return null;
-    if (digits.length === 10 && digits.startsWith('0')) {
-        return '88' + digits; // 017... -> 88017...
+    // Already with country code: +8801303644935 or 8801303644935 -> 13 digits
+    if (digits.startsWith('88') && digits.length >= 13) {
+        return digits.slice(0, 13);
     }
-    if (digits.length === 11 && digits.startsWith('0')) {
+    if (digits.startsWith('88') && digits.length >= 11) {
+        return digits.length > 13 ? digits.slice(0, 13) : digits;
+    }
+    // Local format with leading 0: 01303644935 (11 digits)
+    if (digits.startsWith('0') && digits.length === 11) {
         return '88' + digits;
     }
-    if (digits.length >= 11 && digits.startsWith('88')) {
-        return digits.slice(0, 13); // 88017xxxxxxxxx
+    // 10 digits without 0: 1303644935 -> assume Bangladesh mobile 01303644935
+    if (digits.length === 10 && digits.startsWith('1')) {
+        return '880' + digits;
     }
+    // 11 digits without leading 0 (e.g. 13036449351) – treat as 0 + 10 digits for BD
     if (digits.length === 11) {
         return '88' + digits;
+    }
+    if (digits.length === 10) {
+        return '880' + digits;
     }
     return null;
 }

@@ -172,7 +172,8 @@ class StudentProfileController {
             if (req.user.role !== 'student') {
                 return res.status(403).json({ error: 'Access denied. Students only.' });
             }
-            await studentProfileService.requestPhoneOtp(req.user.id);
+            const phone = req.body.phone != null ? String(req.body.phone).trim() : undefined;
+            await studentProfileService.requestPhoneOtp(req.user.id, { phone });
             res.json({ message: 'OTP sent to your phone' });
         } catch (error) {
             if (error.message === 'Phone number is required') {

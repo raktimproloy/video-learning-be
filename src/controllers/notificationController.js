@@ -1,10 +1,26 @@
 const announcementService = require('../services/announcementService');
 const userNotificationService = require('../services/userNotificationService');
+const userFcmTokenService = require('../services/userFcmTokenService');
 
 const PREFIX_ANNOUNCEMENT = 'a-';
 const PREFIX_USER_NOTIFICATION = 'n-';
 
 module.exports = {
+    async saveFcmToken(req, res) {
+        try {
+            const userId = req.user.id;
+            const token = req.body.token != null ? String(req.body.token).trim() : '';
+            if (!token) {
+                return res.status(400).json({ error: 'FCM token is required' });
+            }
+            await userFcmTokenService.saveToken(userId, token);
+            res.json({ message: 'FCM token saved' });
+        } catch (error) {
+            console.error('Save FCM token error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    },
+
     async list(req, res) {
         try {
             const userId = req.user.id;

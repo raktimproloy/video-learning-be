@@ -191,6 +191,13 @@ async function acceptPaymentRequest(requestId, adminUserId) {
             courseId: row.course_id,
         });
 
+        const pushNotificationService = require('./pushNotificationService');
+        pushNotificationService.sendToUser(row.user_id, {
+            title: 'Payment accepted',
+            body: `Your payment for "${courseTitle}" has been accepted. You now have access to the course.`,
+            data: { type: 'payment_accepted', courseId: String(row.course_id) },
+        }).catch((err) => console.warn('[Push] Payment accepted failed:', err?.message));
+
         // Optional: send payment-accepted SMS to the number provided at checkout (fire-and-forget)
         const senderPhone = row.sender_phone && String(row.sender_phone).trim() ? String(row.sender_phone).trim() : null;
         if (senderPhone) {
@@ -335,6 +342,13 @@ async function rejectPaymentRequest(requestId, adminUserId) {
         body: `Your payment for "${courseTitle}" was declined. Please contact support if you have questions.`,
         courseId: row.course_id,
     });
+
+    const pushNotificationService = require('./pushNotificationService');
+    pushNotificationService.sendToUser(row.user_id, {
+        title: 'Payment request declined',
+        body: `Your payment for "${courseTitle}" was declined. Please contact support if you have questions.`,
+        data: { type: 'payment_rejected', courseId: String(row.course_id) },
+    }).catch((err) => console.warn('[Push] Payment rejected failed:', err?.message));
 
     // SMS to the number provided at checkout (fire-and-forget)
     if (row.sender_phone && String(row.sender_phone).trim()) {

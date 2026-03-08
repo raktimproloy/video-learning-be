@@ -1,6 +1,8 @@
 const db = require('../../db');
 const r2Storage = require('./r2StorageService');
 const userPasswordService = require('./userPasswordService');
+const emailService = require('./emailService');
+const smsService = require('./smsService');
 
 class StudentProfileService {
     /**
@@ -58,9 +60,10 @@ class StudentProfileService {
     }
 
     /**
-     * Update student profile
+     * Update student profile. Verified phone cannot be changed.
      */
     async updateProfile(userId, profileData) {
+        const profile = await this.getProfile(userId);
         const {
             name,
             phone,
@@ -81,7 +84,7 @@ class StudentProfileService {
             updates.push(`name = $${paramIndex++}`);
             values.push(name);
         }
-        if (phone !== undefined) {
+        if (phone !== undefined && !profile.phone_verified) {
             updates.push(`phone = $${paramIndex++}`);
             values.push(phone);
         }
@@ -134,19 +137,22 @@ class StudentProfileService {
     }
 
     /**
-     * Request OTP for phone verification (stub: stores fixed OTP for dev; integrate SMS later).
+     * Request OTP for phone verification. Generates random 6-digit OTP, stores in DB, sends via SMS.
+     * @param {object} [payload] - Optional { phone } from request body (stored so it shows after verify).
      */
-    async requestPhoneOtp(userId) {
+    async requestPhoneOtp(userId, payload = {}) {
         const profile = await this.getProfile(userId);
-        if (!profile.phone || !profile.phone.trim()) {
+        const phone = (payload.phone && String(payload.phone).trim()) || (profile.phone && profile.phone.trim()) || '';
+        if (!phone) {
             throw new Error('Phone number is required');
         }
-        const otp = '123456';
+        const otp = emailService.generateOtp();
         const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
         await db.query(
-            `UPDATE student_profiles SET phone_otp = $1, phone_otp_expires_at = $2 WHERE user_id = $3`,
-            [otp, expiresAt, userId]
+            `UPDATE student_profiles SET phone_otp = $1, phone_otp_expires_at = $2, phone = $3 WHERE user_id = $4`,
+            [otp, expiresAt, phone, userId]
         );
+        await smsService.sendOtpSms(phone, otp);
         return { message: 'OTP sent', expiresIn: 600 };
     }
 
@@ -169,7 +175,7 @@ class StudentProfileService {
             );
             throw new Error('OTP expired');
         }
-        if (row.phone_otp !== String(otp).trim()) {
+        if (row.phone_otp !== String(otp || '').trim()) {
             throw new Error('Invalid OTP');
         }
         await db.query(

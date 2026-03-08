@@ -47,6 +47,18 @@ class LiveSessionService {
     }
 
     /**
+     * Update provider for an active session (e.g. when chosen provider has no creds and we fall back).
+     */
+    async updateProvider(sessionId, provider) {
+        if (!liveUsageService.PROVIDERS.includes(provider)) return null;
+        await db.query(
+            `UPDATE live_sessions SET provider = $1, updated_at = NOW() WHERE id = $2 AND status = 'active'`,
+            [provider, sessionId]
+        );
+        return this.getById(sessionId);
+    }
+
+    /**
      * Update broadcast status for active session: 'starting' | 'live' | 'paused' | 'ended'
      */
     async setBroadcastStatus(lessonId, broadcastStatus) {
@@ -96,7 +108,7 @@ class LiveSessionService {
      * Only updates sessions that are still 'active' (saved sessions are left as-is).
      * Records usage (minutes) for this session so free-minute counters stay accurate.
      * Also sets lesson.is_live = false so student dashboard and course content stop showing "live".
-     */
+      */
     async endDiscarded(lessonId) {
         const session = await this.getActiveByLesson(lessonId);
         if (session && session.status === 'active') {

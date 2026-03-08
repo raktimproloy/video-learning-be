@@ -176,6 +176,13 @@ async function accept(id, adminUserId, receiptImagePath) {
         [receiptImagePath.trim(), adminUserId, id]
     );
     if (!result.rows[0]) return null;
+    const teacherId = result.rows[0].teacher_id;
+    const pushNotificationService = require('./pushNotificationService');
+    pushNotificationService.sendToUser(teacherId, {
+        title: 'Withdrawal accepted',
+        body: 'Your withdrawal request has been accepted. The amount will be sent to your payment method.',
+        data: { type: 'withdraw_accepted', requestId: id },
+    }).catch((err) => console.warn('[Push] Withdraw accepted failed:', err?.message));
     return mapRow(result.rows[0]);
 }
 
@@ -193,6 +200,13 @@ async function reject(id, adminUserId, rejectionReason) {
         [reason, adminUserId, id]
     );
     if (!result.rows[0]) return null;
+    const teacherId = result.rows[0].teacher_id;
+    const pushNotificationService = require('./pushNotificationService');
+    pushNotificationService.sendToUser(teacherId, {
+        title: 'Withdrawal declined',
+        body: `Your withdrawal request was declined. Reason: ${reason}`,
+        data: { type: 'withdraw_rejected', requestId: id },
+    }).catch((err) => console.warn('[Push] Withdraw rejected failed:', err?.message));
     return mapRow(result.rows[0]);
 }
 

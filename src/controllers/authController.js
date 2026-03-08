@@ -1,4 +1,5 @@
 const userService = require('../services/userService');
+const teacherProfileService = require('../services/teacherProfileService');
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
 const { OAuth2Client } = require('google-auth-library');
@@ -261,6 +262,10 @@ class AuthController {
 
             // 4. Find or create user and issue app JWT
             const user = await userService.findOrCreateByGoogle(googleId, email, name || null);
+
+            // If user signed in with Google, mark teacher account email as verified (same email)
+            await teacherProfileService.markAccountEmailVerifiedIfGoogle(user.id, user.email);
+
             const token = jwt.sign(
                 { id: user.id, email: user.email, role: user.role || 'student' },
                 process.env.JWT_SECRET || 'your_jwt_secret',
@@ -350,6 +355,7 @@ class AuthController {
             }
 
             await userService.linkGoogle(userId, googleId);
+            await teacherProfileService.markAccountEmailVerifiedIfGoogle(userId, currentUser.email);
             return res.json({ success: true, linkedGoogle: true });
         } catch (err) {
             if (err.response?.status === 400) {

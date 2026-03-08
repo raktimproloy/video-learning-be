@@ -1029,6 +1029,18 @@ class CourseService {
         return result.rows[0];
     }
 
+    /**
+     * Get all user IDs enrolled in a course (for push notifications when live starts).
+     */
+    async getEnrolledUserIds(courseId) {
+        if (!courseId) return [];
+        const result = await db.query(
+            'SELECT user_id FROM course_enrollments WHERE course_id = $1',
+            [courseId]
+        );
+        return result.rows.map((r) => r.user_id).filter(Boolean);
+    }
+
     async getPurchasedCourses(userId) {
         // Check if reviews table exists
         const reviewsTableCheck = await db.query(`

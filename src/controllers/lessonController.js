@@ -321,23 +321,30 @@ class LessonController {
                             code: 'LIVE_NOT_ENABLED_FOR_COURSE',
                         });
                     }
-                    const liveSettings = await adminSettingsService.getLiveSettings();
-                    if (!liveSettings?.liveClassEnabled) {
+                    const liveSettings = await adminSettingsService.getLiveSettings() || {
+                        liveClassEnabled: true,
+                        agoraEnabled: true,
+                        hundredMsEnabled: true,
+                        awsIvsEnabled: false,
+                        youtubeEnabled: false,
+                    };
+                    if (!liveSettings.liveClassEnabled) {
                         return res.status(503).json({ error: 'Live classes are currently disabled by the platform.' });
                     }
                     // Auto-select provider: use first enabled service with free minutes; else AWS IVS (fallback).
-                    const { provider } = await liveUsageService.getProviderWithFreeMinutes(liveSettings);
-                    if (provider === 'agora' && !liveSettings.agoraEnabled) {
-                        return res.status(503).json({ error: 'Agora live service is currently disabled.' });
+                    let { provider } = await liveUsageService.getProviderWithFreeMinutes(liveSettings);
+                    if (provider === 'agora' && !liveSettings.agoraEnabled) provider = null;
+                    else if (provider === '100ms' && !liveSettings.hundredMsEnabled) provider = null;
+                    else if (provider === 'aws_ivs' && !liveSettings.awsIvsEnabled) provider = null;
+                    else if (provider === 'youtube' && !liveSettings.youtubeEnabled) provider = null;
+                    if (!provider) {
+                        if (liveSettings.agoraEnabled) provider = 'agora';
+                        else if (liveSettings.hundredMsEnabled) provider = '100ms';
+                        else if (liveSettings.youtubeEnabled) provider = 'youtube';
+                        else if (liveSettings.awsIvsEnabled) provider = 'aws_ivs';
                     }
-                    if (provider === '100ms' && !liveSettings.hundredMsEnabled) {
-                        return res.status(503).json({ error: '100ms live service is currently disabled.' });
-                    }
-                    if (provider === 'aws_ivs' && !liveSettings.awsIvsEnabled) {
-                        return res.status(503).json({ error: 'AWS IVS live service is currently disabled.' });
-                    }
-                    if (provider === 'youtube' && !liveSettings.youtubeEnabled) {
-                        return res.status(503).json({ error: 'YouTube live service is currently disabled.' });
+                    if (!provider) {
+                        return res.status(503).json({ error: 'No live provider is enabled. Enable at least one (Agora, 100ms, etc.) in admin settings.' });
                     }
                     const { live_name, live_order, live_description } = req.body || {};
                     const liveOrder = live_order != null ? parseInt(live_order, 10) : 0;
@@ -358,11 +365,28 @@ class LessonController {
                     };
                     const updatedLesson = await lessonService.updateLiveStatus(id, true, sessionData);
                     const uid = Math.abs(req.user.id.split('').reduce((a, c) => ((a << 5) - a) + c.charCodeAt(0), 0)) % 2147483647;
-                    const creds = await getLiveCredsForProvider(provider, id, uid, req.user.role === 'teacher' ? 'publisher' : 'subscriber');
+                    const role = req.user.role === 'teacher' ? 'publisher' : 'subscriber';
+                    let creds = await getLiveCredsForProvider(provider, id, uid, role);
+                    let effectiveProvider = provider;
                     if (!creds) {
-                        return res.status(503).json({ error: `${provider} is not configured. Configure credentials for this live provider.` });
+                        const tryOrder = ['agora', '100ms', 'youtube', 'aws_ivs'].filter(p =>
+                            (p === 'agora' && liveSettings.agoraEnabled) ||
+                            (p === '100ms' && liveSettings.hundredMsEnabled) ||
+                            (p === 'youtube' && liveSettings.youtubeEnabled) ||
+                            (p === 'aws_ivs' && liveSettings.awsIvsEnabled)
+                        );
+                        for (const p of tryOrder) {
+                            creds = await getLiveCredsForProvider(p, id, uid, role);
+                            if (creds) { effectiveProvider = p; break; }
+                        }
                     }
-                    return res.json({ ...creds, provider, lesson: updatedLesson || lesson, is_live: true, live_session_id: liveSession.id });
+                    if (!creds) {
+                        return res.status(503).json({ error: 'No live provider is configured. Set credentials (e.g. AGORA_APP_ID and AGORA_APP_CERTIFICATE) in backend .env for at least one provider.' });
+                    }
+                    if (effectiveProvider !== provider) {
+                        await liveSessionService.updateProvider(liveSession.id, effectiveProvider);
+                    }
+                    return res.json({ ...creds, provider: effectiveProvider, lesson: updatedLesson || lesson, is_live: true, live_session_id: liveSession.id });
                 }
                 if (is_live === false) {
                     await liveSessionService.endDiscarded(id);
@@ -386,24 +410,26 @@ class LessonController {
             const course = await courseService.getCourseById(lesson.course_id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
 
-            const liveSettings = await adminSettingsService.getLiveSettings();
-            if (!liveSettings?.liveClassEnabled) {
+            const liveSettings = await adminSettingsService.getLiveSettings() || {
+                liveClassEnabled: true,
+                agoraEnabled: true,
+                hundredMsEnabled: true,
+                awsIvsEnabled: false,
+                youtubeEnabled: false,
+            };
+            if (!liveSettings.liveClassEnabled) {
                 return res.status(503).json({ error: 'Live classes are currently disabled by the platform.' });
             }
             const activeSession = await liveSessionService.getActiveByLesson(id);
             const provider = (activeSession?.provider && liveUsageService.PROVIDERS.includes(activeSession.provider))
                 ? activeSession.provider : 'agora';
-            if (provider === 'agora' && !liveSettings.agoraEnabled) {
-                return res.status(503).json({ error: 'Agora live service is currently disabled.' });
-            }
-            if (provider === '100ms' && !liveSettings.hundredMsEnabled) {
-                return res.status(503).json({ error: '100ms live service is currently disabled.' });
-            }
-            if (provider === 'aws_ivs' && !liveSettings.awsIvsEnabled) {
-                return res.status(503).json({ error: 'AWS IVS live service is currently disabled.' });
-            }
-            if (provider === 'youtube' && !liveSettings.youtubeEnabled) {
-                return res.status(503).json({ error: 'YouTube live service is currently disabled.' });
+            const providerEnabled = (p) =>
+                (p === 'agora' && liveSettings.agoraEnabled) ||
+                (p === '100ms' && liveSettings.hundredMsEnabled) ||
+                (p === 'aws_ivs' && liveSettings.awsIvsEnabled) ||
+                (p === 'youtube' && liveSettings.youtubeEnabled);
+            if (!providerEnabled(provider)) {
+                return res.status(503).json({ error: `${provider} live service is currently disabled.` });
             }
 
             const uid = Math.abs(req.user.id.split('').reduce((a, c) => ((a << 5) - a) + c.charCodeAt(0), 0)) % 2147483647;
@@ -754,6 +780,14 @@ class LessonController {
             }
             if (broadcast_status === 'live') {
                 await lessonService.setLiveBroadcastStartedAt(lessonId);
+                const pushNotificationService = require('../services/pushNotificationService');
+                const enrolledUserIds = await courseService.getEnrolledUserIds(course.id).catch(() => []);
+                const liveTitle = updated.live_name || lesson.title || course.title || 'Live class';
+                pushNotificationService.sendToManyUsers(enrolledUserIds, {
+                    title: 'Live started',
+                    body: `${liveTitle} has started. Join now!`,
+                    data: { type: 'live_started', courseId: String(course.id), lessonId: String(lessonId), liveSessionId: String(updated.id) },
+                }).catch((err) => console.warn('[Push] Live started notify failed:', err?.message));
             }
             const live_session_id = updated.id;
             const live_started_at = await lessonService.getLiveStartedAt(lessonId);

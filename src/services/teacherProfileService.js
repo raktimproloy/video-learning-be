@@ -1,4 +1,6 @@
 const db = require('../../db');
+const emailService = require('./emailService');
+const smsService = require('./smsService');
 
 class TeacherProfileService {
     /**
@@ -63,7 +65,23 @@ class TeacherProfileService {
 
         const result = await db.query(
             `SELECT 
-                tp.*,
+                tp.user_id,
+                tp.name,
+                tp.bio,
+                tp.location,
+                tp.profile_image_path,
+                tp.institute_name,
+                tp.specialization,
+                tp.education,
+                tp.experience_new,
+                tp.certifications,
+                tp.account_email,
+                tp.original_phone,
+                tp.support_phone,
+                tp.youtube_url,
+                tp.linkedin_url,
+                tp.facebook_url,
+                tp.twitter_url,
                 u.email as login_email,
                 (SELECT COUNT(*) FROM courses WHERE teacher_id = u.id) as total_courses,
                 (SELECT COUNT(*) FROM course_enrollments ce 
@@ -155,22 +173,28 @@ class TeacherProfileService {
     }
 
     /**
-     * Update teacher profile
+     * Update teacher profile. Verified contact fields (support_email, original_phone, support_phone) cannot be changed.
      */
     async updateProfile(userId, profileData) {
+        const profile = await this.getProfile(userId);
+        const data = { ...profileData };
+        if (profile.support_email_verified && data.support_email !== undefined) delete data.support_email;
+        if (profile.original_phone_verified && data.original_phone !== undefined) delete data.original_phone;
+        if (profile.support_phone_verified && data.support_phone !== undefined) delete data.support_phone;
+
         const updates = [];
         const values = [];
         let paramIndex = 1;
 
         // Build dynamic update query
-        Object.keys(profileData).forEach(key => {
-            if (profileData[key] !== undefined) {
+        Object.keys(data).forEach(key => {
+            if (data[key] !== undefined) {
                 if (['specialization', 'education', 'experience', 'certifications', 'bank_accounts', 'card_accounts'].includes(key)) {
                     updates.push(`${key === 'experience' ? 'experience_new' : key} = $${paramIndex++}`);
-                    values.push(JSON.stringify(profileData[key]));
+                    values.push(JSON.stringify(data[key]));
                 } else if (key !== 'account_email') { // Don't update account_email as it's linked to login email
                     updates.push(`${key} = $${paramIndex++}`);
-                    values.push(profileData[key]);
+                    values.push(data[key]);
                 }
             }
         });
@@ -194,11 +218,36 @@ class TeacherProfileService {
     }
 
     /**
-     * Request OTP for verification
+     * Mark account email as verified when user signed in with Google (email is already verified by Google).
+     * Call after Google OAuth login. If teacher profile exists and account_email matches login email, set verified.
      */
-    async requestOTP(userId, type) {
-        const otp = '123456'; // Fixed OTP for now
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    async markAccountEmailVerifiedIfGoogle(userId, loginEmail) {
+        if (!loginEmail || !userId) return;
+        const normalized = String(loginEmail).trim().toLowerCase();
+        const result = await db.query(
+            `UPDATE teacher_profiles 
+             SET account_email_verified = true, 
+                 account_email = COALESCE(NULLIF(TRIM(account_email), ''), $2),
+                 account_email_otp = NULL,
+                 account_email_otp_expires_at = NULL
+             WHERE user_id = $1 
+               AND (account_email IS NULL OR TRIM(account_email) = '' OR LOWER(TRIM(account_email)) = $3)
+             RETURNING user_id`,
+            [userId, loginEmail, normalized]
+        );
+        if (result.rowCount > 0) {
+            console.log(`[Teacher] Auto-verified account email for user ${userId} (Google login)`);
+        }
+    }
+
+    /**
+     * Request OTP for verification. Generates random 6-digit OTP, stores in DB, sends via email or SMS.
+     * @param {object} [payload] - Optional { original_phone, support_phone } from request body (used when profile not saved yet).
+     */
+    async requestOTP(userId, type, payload = {}) {
+        const OTP_EXPIRY_MINUTES = 10;
+        const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
+        const otp = emailService.generateOtp();
 
         const fieldMap = {
             account_email: 'account_email_otp',
@@ -214,6 +263,18 @@ class TeacherProfileService {
             support_phone: 'support_phone_otp_expires_at'
         };
 
+        const profile = await this.getProfile(userId);
+        const recipientByType = {
+            account_email: profile.account_email || profile.login_email,
+            support_email: payload.support_email || profile.support_email,
+            original_phone: payload.original_phone || profile.original_phone,
+            support_phone: payload.support_phone || profile.support_phone
+        };
+        const recipient = recipientByType[type];
+        if (!recipient || String(recipient).trim() === '') {
+            throw new Error(type.includes('email') ? 'Email address is required' : 'Phone number is required');
+        }
+
         await db.query(
             `UPDATE teacher_profiles 
              SET ${fieldMap[type]} = $1, ${expiryMap[type]} = $2
@@ -221,7 +282,35 @@ class TeacherProfileService {
             [otp, expiresAt, userId]
         );
 
-        return { otp };
+        // Persist email/phone from request so it shows in profile after verify (user has not saved form yet)
+        if (type === 'support_email' && payload.support_email) {
+            await db.query(
+                'UPDATE teacher_profiles SET support_email = $1 WHERE user_id = $2',
+                [String(payload.support_email).trim().toLowerCase(), userId]
+            );
+        } else if (type === 'original_phone' && payload.original_phone) {
+            await db.query(
+                'UPDATE teacher_profiles SET original_phone = $1 WHERE user_id = $2',
+                [String(payload.original_phone).trim(), userId]
+            );
+        } else if (type === 'support_phone' && payload.support_phone) {
+            await db.query(
+                'UPDATE teacher_profiles SET support_phone = $1 WHERE user_id = $2',
+                [String(payload.support_phone).trim(), userId]
+            );
+        }
+
+        if (type === 'account_email' || type === 'support_email') {
+            await emailService.sendOtpEmail(
+                recipient.trim().toLowerCase(),
+                otp,
+                type === 'account_email' ? 'account email' : 'support email'
+            );
+        } else {
+            await smsService.sendOtpSms(String(recipient).trim(), otp);
+        }
+
+        return { message: 'OTP sent', expiresIn: OTP_EXPIRY_MINUTES * 60 };
     }
 
     /**
@@ -250,7 +339,8 @@ class TeacherProfileService {
         const storedOTP = result.rows[0][fields.otp];
         const expiresAt = result.rows[0][fields.expiry];
 
-        if (!storedOTP || storedOTP !== otp) {
+        const submittedOtp = String(otp || '').trim();
+        if (!storedOTP || storedOTP !== submittedOtp) {
             throw new Error('Invalid OTP');
         }
 

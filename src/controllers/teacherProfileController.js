@@ -248,17 +248,26 @@ class TeacherProfileController {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
 
-            const { type } = req.body;
+            const { type, support_email, original_phone, support_phone } = req.body;
             const validTypes = ['account_email', 'support_email', 'original_phone', 'support_phone'];
             
             if (!validTypes.includes(type)) {
                 return res.status(400).json({ error: 'Invalid verification type' });
             }
 
-            const result = await teacherProfileService.requestOTP(req.user.id, type);
+            const payload = {
+                support_email: support_email?.trim?.(),
+                original_phone: original_phone?.trim?.(),
+                support_phone: support_phone?.trim?.(),
+            };
+            const result = await teacherProfileService.requestOTP(req.user.id, type, payload);
             res.json(result);
         } catch (error) {
             console.error('Request OTP error:', error);
+            const msg = error.message || '';
+            if (msg === 'Phone number is required' || msg === 'Email address is required') {
+                return res.status(400).json({ error: msg });
+            }
             res.status(500).json({ error: 'Internal server error' });
         }
     }
@@ -278,6 +287,9 @@ class TeacherProfileController {
             if (!validTypes.includes(type)) {
                 return res.status(400).json({ error: 'Invalid verification type' });
             }
+            if (otp === undefined || otp === null || String(otp).trim() === '') {
+                return res.status(400).json({ error: 'OTP is required' });
+            }
 
             const profile = await teacherProfileService.verifyOTP(req.user.id, type, otp);
             
@@ -288,7 +300,7 @@ class TeacherProfileController {
                 profile.profile_image_url = `${baseUrl}/v1/teacher/profile/image/${encodeURIComponent(profile.profile_image_path)}`;
             }
 
-            res.json(profile);
+            res.json({ message: 'Verified successfully', profile });
         } catch (error) {
             console.error('Verify OTP error:', error);
             if (error.message === 'Invalid OTP' || error.message === 'OTP expired') {

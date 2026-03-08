@@ -5,6 +5,7 @@ const { requireRole } = require('../middleware/roleMiddleware');
 const notificationController = require('../controllers/notificationController');
 
 router.use(authMiddleware);
+router.post('/fcm-token', requireRole(['student', 'teacher']), notificationController.saveFcmToken);
 router.get('/', requireRole(['student', 'teacher']), notificationController.list);
 router.get('/unread-count', requireRole(['student', 'teacher']), notificationController.getUnreadCount);
 router.post('/read-all', requireRole(['student', 'teacher']), notificationController.markAllAsRead);
