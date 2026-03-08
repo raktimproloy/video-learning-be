@@ -6,12 +6,12 @@ module.exports = {
     async validate(req, res) {
         try {
             const studentId = req.user.id;
-            const { couponCode } = req.body || {};
-            const result = await couponApplyService.validateCoupon(couponCode, studentId);
+            const { couponCode, courseId } = req.body || {};
+            const result = await couponApplyService.validateCoupon(couponCode, studentId, courseId || null);
             res.status(200).json(result);
         } catch (error) {
             const msg = error.message;
-            if (msg === 'Coupon code is required' || msg === 'Invalid or inactive coupon' || msg === 'Coupon has expired or is not yet valid' || msg === 'This coupon has already been used with your account') {
+            if (msg === 'Coupon code is required' || msg === 'Invalid or inactive coupon' || msg === 'Coupon has expired or is not yet valid' || msg === 'This coupon has already been used with your account' || msg === 'This coupon has already been used the maximum times with your account' || msg === 'This coupon has reached its maximum number of uses' || msg === 'This coupon is not valid for the selected course' || msg === 'This coupon is valid only for specific courses; add a course to your cart and try again' || msg === 'This coupon is valid only for specific courses; please use it on the course page') {
                 return res.status(400).json({ error: msg });
             }
             console.error('Validate coupon error:', error);
@@ -19,12 +19,12 @@ module.exports = {
         }
     },
 
-    /** POST /v1/coupons/apply - Student applies a coupon (validates and records one-time use) */
+    /** POST /v1/coupons/apply - Student applies a coupon (validates and records use) */
     async apply(req, res) {
         try {
             const studentId = req.user.id;
-            const { couponCode } = req.body || {};
-            const result = await couponApplyService.applyCoupon(couponCode, studentId);
+            const { couponCode, courseId } = req.body || {};
+            const result = await couponApplyService.applyCoupon(couponCode, studentId, courseId || null);
             res.status(200).json(result);
         } catch (error) {
             const msg = error.message;
@@ -32,7 +32,11 @@ module.exports = {
                 msg === 'Coupon code is required' ||
                 msg === 'Invalid or inactive coupon' ||
                 msg === 'Coupon has expired or is not yet valid' ||
-                msg === 'This coupon has already been used with your account'
+                msg === 'This coupon has already been used with your account' ||
+                msg === 'This coupon has already been used the maximum times with your account' ||
+                msg === 'This coupon has reached its maximum number of uses' ||
+                msg === 'This coupon is not valid for the selected course' ||
+                msg === 'This coupon is valid only for specific courses; please use it on the course page'
             ) {
                 return res.status(400).json({ error: msg });
             }
@@ -79,6 +83,8 @@ module.exports = {
                 startAt,
                 expireAt,
                 status,
+                maxUsesPerUser,
+                maxTotalUses,
             } = req.body || {};
 
             const coupon = await couponService.create(teacherId, {
@@ -90,6 +96,8 @@ module.exports = {
                 startAt: startAt || null,
                 expireAt: expireAt || null,
                 status,
+                maxUsesPerUser: maxUsesPerUser != null ? parseInt(maxUsesPerUser, 10) : undefined,
+                maxTotalUses: maxTotalUses != null && maxTotalUses !== '' ? parseInt(maxTotalUses, 10) : undefined,
             });
             res.status(201).json(coupon);
         } catch (error) {
@@ -100,7 +108,8 @@ module.exports = {
                 error.message === 'Type must be original or discount' ||
                 error.message === 'Discount type must be amount or percentage' ||
                 error.message === 'Invalid discount amount' ||
-                error.message === 'Percentage discount cannot exceed 100'
+                error.message === 'Percentage discount cannot exceed 100' ||
+                error.message === 'Max total uses must be at least 1'
             ) {
                 return res.status(400).json({ error: error.message });
             }
@@ -121,6 +130,8 @@ module.exports = {
                 startAt,
                 expireAt,
                 status,
+                maxUsesPerUser,
+                maxTotalUses,
             } = req.body || {};
 
             const coupon = await couponService.update(req.params.id, teacherId, {
@@ -132,6 +143,8 @@ module.exports = {
                 startAt: startAt ?? undefined,
                 expireAt: expireAt ?? undefined,
                 status,
+                maxUsesPerUser: maxUsesPerUser != null && maxUsesPerUser !== '' ? parseInt(maxUsesPerUser, 10) : undefined,
+                maxTotalUses: maxTotalUses != null && maxTotalUses !== '' ? parseInt(maxTotalUses, 10) : undefined,
             });
             if (!coupon) {
                 return res.status(404).json({ error: 'Coupon not found' });

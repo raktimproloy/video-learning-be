@@ -75,6 +75,8 @@ class CouponService {
             startAt,
             expireAt,
             status = 'active',
+            maxUsesPerUser,
+            maxTotalUses,
         } = data;
 
         const code = normalizeCode(couponCode);
@@ -95,6 +97,10 @@ class CouponService {
             }
         }
 
+        const maxPerUser = maxUsesPerUser != null ? Math.max(1, Math.min(100, parseInt(maxUsesPerUser, 10) || 1)) : 1;
+        const maxTotal = maxTotalUses != null && maxTotalUses !== '' ? (parseInt(maxTotalUses, 10) || null) : null;
+        if (maxTotal !== null && maxTotal < 1) throw new Error('Max total uses must be at least 1');
+
         const existing = await db.query(
             `SELECT id FROM teacher_coupons WHERE LOWER(TRIM(coupon_code)) = LOWER($1)`,
             [code]
@@ -106,8 +112,9 @@ class CouponService {
         const result = await db.query(
             `INSERT INTO teacher_coupons (
                 teacher_id, title, coupon_code, type,
-                discount_type, discount_amount, start_at, expire_at, status
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                discount_type, discount_amount, start_at, expire_at, status,
+                max_uses_per_user, max_total_uses
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING *`,
             [
                 teacherId,
@@ -119,6 +126,8 @@ class CouponService {
                 type === 'original' ? null : (startAt || null),
                 type === 'original' ? null : (expireAt || null),
                 ['active', 'inactive'].includes(status) ? status : 'active',
+                maxPerUser,
+                maxTotal,
             ]
         );
         return this.mapRow(result.rows[0]);
@@ -140,6 +149,8 @@ class CouponService {
             startAt,
             expireAt,
             status,
+            maxUsesPerUser,
+            maxTotalUses,
         } = data;
 
         const updates = [];
@@ -193,6 +204,16 @@ class CouponService {
             updates.push(`status = $${idx++}`);
             values.push(status);
         }
+        if (maxUsesPerUser !== undefined && maxUsesPerUser !== '') {
+            const val = Math.max(1, Math.min(100, parseInt(maxUsesPerUser, 10) || 1));
+            updates.push(`max_uses_per_user = $${idx++}`);
+            values.push(val);
+        }
+        if (maxTotalUses !== undefined) {
+            const val = maxTotalUses === '' || maxTotalUses == null ? null : Math.max(1, parseInt(maxTotalUses, 10) || 1);
+            updates.push(`max_total_uses = $${idx++}`);
+            values.push(val);
+        }
 
         if (updates.length === 0) return existing;
 
@@ -245,6 +266,8 @@ class CouponService {
             startAt: row.start_at,
             expireAt: row.expire_at,
             status: row.status,
+            maxUsesPerUser: row.max_uses_per_user != null ? parseInt(row.max_uses_per_user, 10) : 1,
+            maxTotalUses: row.max_total_uses != null ? parseInt(row.max_total_uses, 10) : null,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
         };

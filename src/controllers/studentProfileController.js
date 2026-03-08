@@ -1,5 +1,6 @@
 const studentProfileService = require('../services/studentProfileService');
 const r2Storage = require('../services/r2StorageService');
+const { getAllowedOrigin } = require('../config/cors');
 const multer = require('multer');
 const path = require('path');
 
@@ -237,12 +238,14 @@ class StudentProfileController {
             };
             const contentType = contentTypeMap[ext] || 'image/jpeg';
 
-            res.set({
+            const headers = {
                 'Content-Type': contentType,
                 'Cache-Control': 'public, max-age=31536000',
-                'Access-Control-Allow-Origin': '*',
                 'Cross-Origin-Resource-Policy': 'cross-origin'
-            });
+            };
+            const allowOrigin = getAllowedOrigin(req.get('Origin'));
+            if (allowOrigin) headers['Access-Control-Allow-Origin'] = allowOrigin;
+            res.set(headers);
 
             // Stream the file
             const stream = await r2Storage.getObjectStream(imagePath);

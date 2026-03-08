@@ -90,7 +90,7 @@ class AdminSettingsService {
     }
 
     async createCoupon(adminId, data) {
-        const { title, couponCode, type, discountType, discountAmount, startAt, expireAt, status = 'active' } = data;
+        const { title, couponCode, type, discountType, discountAmount, startAt, expireAt, status = 'active', maxUsesPerUser, maxTotalUses } = data;
         const code = normalizeCode(couponCode);
         if (!code) throw new Error('Coupon code is required');
         if (!title || !title.trim()) throw new Error('Title is required');
@@ -101,12 +101,15 @@ class AdminSettingsService {
             if (isNaN(amt) || amt < 0) throw new Error('Invalid discount amount');
             if (discountType === 'percentage' && amt > 100) throw new Error('Percentage cannot exceed 100');
         }
+        const maxPerUser = maxUsesPerUser != null ? Math.max(1, Math.min(100, parseInt(maxUsesPerUser, 10) || 1)) : 1;
+        const maxTotal = maxTotalUses != null && maxTotalUses !== '' ? (parseInt(maxTotalUses, 10) || null) : null;
+        if (maxTotal !== null && maxTotal < 1) throw new Error('Max total uses must be at least 1');
         const dup = await db.query(`SELECT id FROM admin_coupons WHERE LOWER(TRIM(coupon_code)) = LOWER($1)`, [code]);
         if (dup.rows[0]) throw new Error('Coupon code already exists');
 
         const result = await db.query(
-            `INSERT INTO admin_coupons (title, coupon_code, type, discount_type, discount_amount, start_at, expire_at, status, created_by_admin_id, updated_by_admin_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+            `INSERT INTO admin_coupons (title, coupon_code, type, discount_type, discount_amount, start_at, expire_at, status, max_uses_per_user, max_total_uses, created_by_admin_id, updated_by_admin_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
              RETURNING *`,
             [
                 title.trim(),
@@ -117,6 +120,8 @@ class AdminSettingsService {
                 type === 'original' ? null : (startAt || null),
                 type === 'original' ? null : (expireAt || null),
                 ['active', 'inactive'].includes(status) ? status : 'active',
+                maxPerUser,
+                maxTotal,
                 adminId,
             ]
         );
@@ -127,7 +132,7 @@ class AdminSettingsService {
         const existing = await this.getCouponById(id);
         if (!existing) return null;
 
-        const { title, couponCode, type, discountType, discountAmount, startAt, expireAt, status } = data;
+        const { title, couponCode, type, discountType, discountAmount, startAt, expireAt, status, maxUsesPerUser, maxTotalUses } = data;
         const updates = [];
         const values = [];
         let idx = 1;
@@ -174,6 +179,16 @@ class AdminSettingsService {
             updates.push(`status = $${idx++}`);
             values.push(status);
         }
+        if (maxUsesPerUser !== undefined && maxUsesPerUser !== '') {
+            const val = Math.max(1, Math.min(100, parseInt(maxUsesPerUser, 10) || 1));
+            updates.push(`max_uses_per_user = $${idx++}`);
+            values.push(val);
+        }
+        if (maxTotalUses !== undefined) {
+            const val = maxTotalUses === '' || maxTotalUses == null ? null : Math.max(1, parseInt(maxTotalUses, 10) || 1);
+            updates.push(`max_total_uses = $${idx++}`);
+            values.push(val);
+        }
 
         if (updates.length === 0) return existing;
 
@@ -213,6 +228,8 @@ class AdminSettingsService {
             startAt: row.start_at,
             expireAt: row.expire_at,
             status: row.status,
+            maxUsesPerUser: row.max_uses_per_user != null ? parseInt(row.max_uses_per_user, 10) : 1,
+            maxTotalUses: row.max_total_uses != null ? parseInt(row.max_total_uses, 10) : null,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
         };

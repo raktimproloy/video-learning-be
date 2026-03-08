@@ -1,5 +1,6 @@
 const db = require('../../db');
 const smsService = require('../utils/smsService');
+const pushMessages = require('../config/pushNotificationMessages');
 
 /**
  * Create a payment request (student checkout). Does not enroll; enrollment happens on admin accept.
@@ -164,7 +165,7 @@ async function acceptPaymentRequest(requestId, adminUserId) {
     try {
         if (row.coupon_code) {
             const couponApplyService = require('./couponApplyService');
-            await couponApplyService.applyCoupon(row.coupon_code, row.user_id);
+            await couponApplyService.applyCoupon(row.coupon_code, row.user_id, row.course_id);
         }
         const courseService = require('./courseService');
         const amountPaid = row.amount != null && !Number.isNaN(parseFloat(row.amount)) ? parseFloat(row.amount) : null;
@@ -192,9 +193,10 @@ async function acceptPaymentRequest(requestId, adminUserId) {
         });
 
         const pushNotificationService = require('./pushNotificationService');
+        const payAccepted = pushMessages.paymentAccepted(courseTitle);
         pushNotificationService.sendToUser(row.user_id, {
-            title: 'Payment accepted',
-            body: `Your payment for "${courseTitle}" has been accepted. You now have access to the course.`,
+            title: payAccepted.title,
+            body: payAccepted.body,
             data: { type: 'payment_accepted', courseId: String(row.course_id) },
         }).catch((err) => console.warn('[Push] Payment accepted failed:', err?.message));
 
@@ -344,9 +346,10 @@ async function rejectPaymentRequest(requestId, adminUserId) {
     });
 
     const pushNotificationService = require('./pushNotificationService');
+    const payDeclined = pushMessages.paymentDeclined(courseTitle);
     pushNotificationService.sendToUser(row.user_id, {
-        title: 'Payment request declined',
-        body: `Your payment for "${courseTitle}" was declined. Please contact support if you have questions.`,
+        title: payDeclined.title,
+        body: payDeclined.body,
         data: { type: 'payment_rejected', courseId: String(row.course_id) },
     }).catch((err) => console.warn('[Push] Payment rejected failed:', err?.message));
 

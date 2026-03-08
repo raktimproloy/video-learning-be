@@ -60,7 +60,7 @@ module.exports = {
             const coupon = await adminSettingsService.createCoupon(adminId, req.body || {});
             res.status(201).json(coupon);
         } catch (error) {
-            if (['Coupon code already exists', 'Coupon code is required', 'Title is required', 'Type must be original or discount', 'Discount type required', 'Invalid discount amount', 'Percentage cannot exceed 100'].includes(error.message)) {
+            if (['Coupon code already exists', 'Coupon code is required', 'Title is required', 'Type must be original or discount', 'Discount type required', 'Invalid discount amount', 'Percentage cannot exceed 100', 'Max total uses must be at least 1'].includes(error.message)) {
                 return res.status(400).json({ error: error.message });
             }
             console.error('Create coupon error:', error);

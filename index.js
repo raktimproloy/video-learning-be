@@ -8,8 +8,10 @@ const server = http.createServer(app);
 // Initialize Socket.io
 initSocket(server);
 
-// Start the video processing worker
-require('./src/worker/index');
+// Start the video processing worker (unless RUN_WORKER=0, e.g. when running workers separately)
+if (process.env.RUN_WORKER !== '0') {
+    require('./src/worker/index');
+}
 
 // Force-end live sessions that hit time limit and weren't stopped within grace period (saves usage minutes)
 const liveSessionForceEndJob = require('./src/jobs/liveSessionForceEndJob');

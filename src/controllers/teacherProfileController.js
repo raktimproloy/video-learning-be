@@ -2,6 +2,7 @@ const teacherProfileService = require('../services/teacherProfileService');
 const courseService = require('../services/courseService');
 const r2Storage = require('../services/r2StorageService');
 const userPasswordService = require('../services/userPasswordService');
+const { getAllowedOrigin } = require('../config/cors');
 const multer = require('multer');
 const path = require('path');
 
@@ -383,13 +384,15 @@ class TeacherProfileController {
             };
             const contentType = contentTypeMap[ext] || 'image/jpeg';
 
-            res.set({
+            const headers = {
                 'Content-Type': contentType,
                 'Content-Disposition': 'inline',
                 'Cache-Control': 'public, max-age=31536000',
-                'Access-Control-Allow-Origin': '*',
                 'Cross-Origin-Resource-Policy': 'cross-origin'
-            });
+            };
+            const allowOrigin = getAllowedOrigin(req.get('Origin'));
+            if (allowOrigin) headers['Access-Control-Allow-Origin'] = allowOrigin;
+            res.set(headers);
 
             const stream = await r2Storage.getObjectStream(imagePath);
             stream.pipe(res);

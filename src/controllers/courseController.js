@@ -2,6 +2,7 @@ const courseService = require('../services/courseService');
 const teacherLiveReportService = require('../services/teacherLiveReportService');
 const liveClassRequestService = require('../services/liveClassRequestService');
 const r2Storage = require('../services/r2StorageService');
+const { getAllowedOrigin } = require('../config/cors');
 const path = require('path');
 const fs = require('fs');
 
@@ -1011,12 +1012,12 @@ class CourseController {
             const finalCurrency = course.currency || 'USD';
             if (couponCode) {
                 const couponApplyService = require('../services/couponApplyService');
-                const applied = await couponApplyService.applyCoupon(couponCode, userId);
+                const applied = await couponApplyService.applyCoupon(couponCode, userId, courseId);
                 if (applied.type === 'original') {
                     finalAmount = 0;
                 } else if (applied.discountType === 'percentage' && applied.discountAmount != null) {
                     finalAmount = Math.max(0, finalAmount * (1 - Number(applied.discountAmount) / 100));
-                } else if (applied.discountType === 'fixed' && applied.discountAmount != null) {
+                } else if (applied.discountType === 'amount' && applied.discountAmount != null) {
                     finalAmount = Math.max(0, finalAmount - Number(applied.discountAmount));
                 }
             }
@@ -1242,10 +1243,13 @@ class CourseController {
             else if (ext === 'avi') contentType = 'video/x-msvideo';
             else if (ext === 'webm') contentType = 'video/webm';
 
-            // Set CORS headers for cross-origin image/video requests
-            res.set('Access-Control-Allow-Origin', '*');
-            res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
-            res.set('Access-Control-Allow-Headers', 'Content-Type');
+            // Set CORS headers only for allowed origins (strict allowlist)
+            const allowOrigin = getAllowedOrigin(req.get('Origin'));
+            if (allowOrigin) {
+                res.set('Access-Control-Allow-Origin', allowOrigin);
+                res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+                res.set('Access-Control-Allow-Headers', 'Content-Type');
+            }
             res.set('Content-Type', contentType);
             res.set('Content-Disposition', 'inline'); // Prevent browser from downloading as "image.bin" or similar
             res.set('Cache-Control', 'public, max-age=31536000'); // Cache for 1 year

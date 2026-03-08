@@ -633,10 +633,10 @@ class CourseService {
                 ${reviewsRatingQuery} as rating,
                 ${reviewsCountQuery} as review_count,
                 (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = courses.id) as purchase_count,
-                (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id) as total_lessons,
+                (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id AND (COALESCE(l.status, 'active') = 'active')) as total_lessons,
                 (SELECT COUNT(*)::int FROM videos v 
                  JOIN lessons l ON v.lesson_id = l.id 
-                 WHERE l.course_id = courses.id) as total_videos
+                 WHERE l.course_id = courses.id AND (COALESCE(l.status, 'active') = 'active') AND (v.status IS NULL OR v.status = 'active')) as total_videos
             FROM courses 
             LEFT JOIN users ON courses.teacher_id = users.id 
              WHERE courses.teacher_id = $1 AND courses.id != $2
@@ -787,10 +787,10 @@ class CourseService {
                 ${reviewsRatingQuery} as rating,
                 ${reviewsCountQuery} as review_count,
                 (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = courses.id) as purchase_count,
-                (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id) as total_lessons,
+                (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id AND (COALESCE(l.status, 'active') = 'active')) as total_lessons,
                 (SELECT COUNT(*)::int FROM videos v 
                  JOIN lessons l ON v.lesson_id = l.id 
-                 WHERE l.course_id = courses.id) as total_videos
+                 WHERE l.course_id = courses.id AND (COALESCE(l.status, 'active') = 'active') AND (v.status IS NULL OR v.status = 'active')) as total_videos
             FROM courses 
             LEFT JOIN users ON courses.teacher_id = users.id 
             WHERE courses.id = $1`,
@@ -1072,14 +1072,14 @@ class CourseService {
                 END as tags,
                 ${reviewRatingQuery},
                 ${reviewCommentQuery},
-                -- Course statistics
-                (SELECT COUNT(*) FROM lessons l WHERE l.course_id = c.id) as total_lessons,
+                -- Course statistics (active lessons and active videos only; exclude draft lessons and processing/inactive videos)
+                (SELECT COUNT(*) FROM lessons l WHERE l.course_id = c.id AND (COALESCE(l.status, 'active') = 'active')) as total_lessons,
                 (SELECT COUNT(*) FROM videos v 
                  JOIN lessons l ON v.lesson_id = l.id 
-                 WHERE l.course_id = c.id AND v.status != 'processing') as total_videos,
+                 WHERE l.course_id = c.id AND (COALESCE(l.status, 'active') = 'active') AND (v.status IS NULL OR v.status = 'active')) as total_videos,
                 (SELECT COALESCE(SUM(v.duration_seconds), 0) FROM videos v 
                  JOIN lessons l ON v.lesson_id = l.id 
-                 WHERE l.course_id = c.id AND v.status != 'processing') as total_duration_seconds,
+                 WHERE l.course_id = c.id AND (COALESCE(l.status, 'active') = 'active') AND (v.status IS NULL OR v.status = 'active')) as total_duration_seconds,
                 -- Assignment counts
                 (SELECT COUNT(*) FROM (
                     SELECT jsonb_array_elements(l.assignments) as assignment FROM lessons l WHERE l.course_id = c.id

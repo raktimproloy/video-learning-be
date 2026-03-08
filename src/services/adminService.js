@@ -129,7 +129,7 @@ class AdminService {
         
         // Get latest processing task status
         const taskRes = await db.query(
-            `SELECT status, error_message, created_at, updated_at 
+            `SELECT status, error_message, processing_stage, created_at, updated_at 
              FROM video_processing_tasks 
              WHERE video_id = $1 
              ORDER BY created_at DESC 
@@ -143,6 +143,7 @@ class AdminService {
             videoId: video.id,
             videoStatus: video.status,
             processingStatus: task ? task.status : null,
+            processingStage: task ? task.processing_stage : null,
             errorMessage: task ? task.error_message : null,
             createdAt: task ? task.created_at : null,
             updatedAt: task ? task.updated_at : null,

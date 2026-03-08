@@ -42,21 +42,12 @@ app.use(helmet({
     crossOriginEmbedderPolicy: false,
 }));
 
-// CORS Middleware - Allow whitelisted origins
-const corsOrigins = [
-    'https://video-learning-fe.vercel.app',
-    'https://video-learning-admin.vercel.app',
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'http://127.0.0.1:3000',
-    'http://127.0.0.1:3001',
-    ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',').map(o => o.trim()).filter(Boolean) : []),
-];
+// CORS Middleware - Strict allowlist (see config/cors.js); only these origins for all API methods
+const { CORS_ALLOWED_ORIGINS } = require('./config/cors');
 app.use(cors({
     origin: (origin, cb) => {
-        if (!origin) return cb(null, true);
-        if (corsOrigins.includes(origin)) return cb(null, true);
-        if (process.env.NODE_ENV !== 'production') return cb(null, true);
+        if (!origin) return cb(null, true); // same-origin or server requests
+        if (CORS_ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
         return cb(null, false);
     },
     credentials: false,

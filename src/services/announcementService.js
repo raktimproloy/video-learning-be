@@ -113,7 +113,8 @@ class AnnouncementService {
              JOIN course_enrollments ce ON ce.course_id = a.course_id AND ce.user_id = $1
              LEFT JOIN announcement_reads ar ON ar.announcement_id = a.id AND ar.user_id = $1
              WHERE ar.read_at IS NULL
-             ON CONFLICT (user_id, announcement_id) DO NOTHING`
+             ON CONFLICT (user_id, announcement_id) DO NOTHING`,
+            [userId]
         );
     }
 }
