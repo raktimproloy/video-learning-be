@@ -7,3 +7,6 @@ keys
 # Firebase / Google Cloud credentials - never commit
 src/config/*-firebase-adminsdk-*.json
 src/config/*.json
+src/config/fire.txt
+src/config/fcm.json
+credential.txt
