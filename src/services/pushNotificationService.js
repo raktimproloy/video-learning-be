@@ -8,6 +8,7 @@ const fcmService = require('./fcmService');
 
 /**
  * Send a push to one user (all their devices). Does not throw.
+ * Removes invalid tokens from DB when FCM reports them.
  * @param {string} userId - User UUID
  * @param {object} payload - { title, body, data?: Record<string, string> }
  */
@@ -17,9 +18,14 @@ async function sendToUser(userId, payload) {
     if (tokens.length === 0) return;
     const { title, body, data = {} } = payload;
     for (const token of tokens) {
-        fcmService.sendToToken(token, { title, body, data }).catch((err) => {
+        try {
+            const result = await fcmService.sendToToken(token, { title, body, data });
+            if (result.invalidToken) {
+                await userFcmTokenService.removeToken(userId, token);
+            }
+        } catch (err) {
             console.warn('[Push] sendToUser failed for token:', err?.message || err);
-        });
+        }
     }
 }
 

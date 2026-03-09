@@ -38,8 +38,21 @@ async function getAllTokensByUserId(userId) {
     return result.rows.map((r) => r.token).filter(Boolean);
 }
 
+/**
+ * Remove a single FCM token for a user (e.g. when FCM reports it invalid).
+ */
+async function removeToken(userId, token) {
+    if (!userId || !token || !String(token).trim()) return;
+    const t = String(token).trim();
+    await db.query(
+        `DELETE FROM user_fcm_tokens WHERE user_id = $1 AND token = $2`,
+        [userId, t]
+    );
+}
+
 module.exports = {
     saveToken,
     getTokenByUserId,
     getAllTokensByUserId,
+    removeToken,
 };

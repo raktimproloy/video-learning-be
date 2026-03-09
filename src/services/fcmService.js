@@ -4,7 +4,10 @@
  *
  * Setup (one of):
  * 1. FCM_SERVICE_ACCOUNT_JSON = full JSON string from Firebase Console → Project Settings → Service accounts → Generate new private key.
+ *    (Same Firebase project as frontend. For Docker: pass as single line or use GOOGLE_APPLICATION_CREDENTIALS with a mounted file.)
  * 2. GOOGLE_APPLICATION_CREDENTIALS = path to that JSON file.
+ *
+ * Optional: FRONTEND_URL = https://your-app.vercel.app — so push notification click opens the correct origin (e.g. live class URL).
  */
 
 let messaging = null;
@@ -89,9 +92,18 @@ async function sendToToken(token, { title, body, data = {} }) {
         await m.send(message);
         return { sent: true };
     } catch (err) {
-        const message = err.code || err.message || 'Request failed';
-        console.error('[FCM] Send failed:', message);
-        return { sent: false, error: String(message) };
+        const code = err.code || err.message || '';
+        const message = String(code || 'Request failed');
+        const invalidToken =
+            message.includes('registration-token-not-registered') ||
+            message.includes('invalid-registration-token') ||
+            message.includes('invalid-argument');
+        if (invalidToken) {
+            console.warn('[FCM] Invalid or unregistered token (will be removed):', message);
+        } else {
+            console.error('[FCM] Send failed:', message);
+        }
+        return { sent: false, error: message, invalidToken: !!invalidToken };
     }
 }
 
