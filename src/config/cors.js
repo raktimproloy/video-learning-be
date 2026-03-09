@@ -1,9 +1,16 @@
 /**
  * Strict CORS allowlist. Only these origins are allowed for API and media.
+ * Include both with and without trailing slash; browser Origin is usually without slash.
  */
 const CORS_ALLOWED_ORIGINS = [
     'https://shikkhabhumi.com',
+    'https://shikkhabhumi.com/',
     'http://shikkhabhumi.com',
+    'http://shikkhabhumi.com/',
+    'https://www.shikkhabhumi.com',
+    'https://www.shikkhabhumi.com/',
+    'http://www.shikkhabhumi.com',
+    'http://www.shikkhabhumi.com/',
     'https://principal.shikkhabhumi.com',
     'http://principal.shikkhabhumi.com',
     'http://localhost:3000',

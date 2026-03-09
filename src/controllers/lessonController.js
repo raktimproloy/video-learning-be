@@ -13,6 +13,7 @@ const agoraService = require('../services/agoraService');
 const adminService = require('../services/adminService');
 const adminSettingsService = require('../services/adminSettingsService');
 const liveUsageService = require('../services/liveUsageService');
+const userService = require('../services/userService');
 const awsIvsService = require('../services/awsIvsService');
 const hundredMsService = require('../services/hundredMsService');
 const r2Storage = require('../services/r2StorageService');
@@ -305,7 +306,11 @@ class LessonController {
     async setLiveAndGetToken(req, res) {
         try {
             const { id } = req.params;
-            const { is_live } = req.body;
+            const rawLive = req.body.is_live;
+            const is_live = rawLive === true || rawLive === 'true' ? true : rawLive === false || rawLive === 'false' ? false : undefined;
+            if (is_live === undefined) {
+                return res.status(400).json({ error: 'is_live (boolean) is required' });
+            }
             const lesson = await lessonService.getLessonById(id);
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
 
@@ -416,7 +421,7 @@ class LessonController {
                     return res.json({ is_live: false, lesson });
                 }
             }
-            return res.status(400).json({ error: 'Invalid request' });
+            return res.status(403).json({ error: 'Only teachers can start or stop live sessions' });
         } catch (error) {
             console.error('Set live error:', error);
             res.status(500).json({ error: 'Internal server error' });
@@ -426,6 +431,10 @@ class LessonController {
     async getLiveToken(req, res) {
         try {
             const { id } = req.params;
+            const currentUser = await userService.findById(req.user.id);
+            if (!currentUser) return res.status(404).json({ error: 'User not found' });
+            const userRole = currentUser.role || req.user.role;
+
             const lesson = await lessonService.getLessonById(id);
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
 
@@ -455,11 +464,11 @@ class LessonController {
             }
 
             const uid = Math.abs(req.user.id.split('').reduce((a, c) => ((a << 5) - a) + c.charCodeAt(0), 0)) % 2147483647;
-            const role = req.user.role === 'teacher' ? 'publisher' : 'subscriber';
-            if (req.user.role === 'teacher' && course.teacher_id !== req.user.id) {
+            const role = userRole === 'teacher' ? 'publisher' : 'subscriber';
+            if (userRole === 'teacher' && course.teacher_id !== req.user.id) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
-            if (req.user.role === 'student') {
+            if (userRole === 'student') {
                 const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
                 if (!enrolled) return res.status(403).json({ error: 'Purchase this course to watch the live stream.' });
                 if (!lesson.is_live) return res.status(404).json({ error: 'This lesson is not live.' });
