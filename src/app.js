@@ -33,6 +33,7 @@ const bundleRoutes = require('./routes/bundleRoutes');
 const progressRoutes = require('./routes/progressRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
 const couponRoutes = require('./routes/couponRoutes');
+const meRoutes = require('./routes/meRoutes');
 
 const app = express();
 
@@ -96,6 +97,7 @@ app.use('/v1/notifications', notificationRoutes);
 app.use('/v1/bundles', bundleRoutes);
 app.use('/v1/progress', progressRoutes);
 app.use('/v1/coupons', couponRoutes);
+app.use('/v1/me', meRoutes);
 
 // Health Check
 app.get('/health', (req, res) => {
@@ -106,7 +108,7 @@ app.get('/health', (req, res) => {
 app.use((err, req, res, next) => {
     console.error(err.stack || err);
     if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(413).json({ error: 'File too large. Maximum size is 550 MB per upload.' });
+        return res.status(413).json({ error: 'File too large. Maximum size is 500 MB per upload.' });
     }
     if (err.code === 'LIMIT_UNEXPECTED_FILE') {
         return res.status(400).json({ error: 'Unexpected file field. Use "video" for the video file.' });

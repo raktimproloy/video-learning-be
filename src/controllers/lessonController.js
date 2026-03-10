@@ -1192,10 +1192,11 @@ class LessonController {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
             const lessonId = req.params.id;
-            if (!req.file || !req.file.buffer) {
+            if (!req.file || (!req.file.buffer && !req.file.path)) {
                 return res.status(400).json({ error: 'No recording file uploaded.' });
             }
-            if (req.file.buffer.length < 1000) {
+            const sizeBytes = req.file.buffer ? req.file.buffer.length : (req.file.size || 0);
+            if (sizeBytes < 1000) {
                 return res.status(400).json({ error: 'Recording is too short or invalid. Record for at least a few seconds before saving.' });
             }
 
@@ -1246,12 +1247,26 @@ class LessonController {
             if (useR2) {
                 const r2Prefix = r2Storage.getVideoKeyPrefix(ownerId, course.id, lessonId, video.id);
                 const r2StagingKey = `${r2Prefix}/staging/input.webm`;
-                await r2Storage.uploadFile(r2StagingKey, req.file.buffer, 'video/webm');
+                if (req.file.buffer) {
+                    await r2Storage.uploadFile(r2StagingKey, req.file.buffer, 'video/webm');
+                } else {
+                    await r2Storage.uploadFromPath(req.file.path, r2StagingKey, 'video/webm');
+                }
                 await adminService.updateVideoR2(video.id, r2Prefix);
             } else {
                 if (!fs.existsSync(STAGING_DIR)) fs.mkdirSync(STAGING_DIR, { recursive: true });
                 if (!fs.existsSync(stagingVideoDir)) fs.mkdirSync(stagingVideoDir, { recursive: true });
-                fs.writeFileSync(path.join(stagingVideoDir, 'input.webm'), req.file.buffer);
+                const dest = path.join(stagingVideoDir, 'input.webm');
+                if (req.file.buffer) {
+                    fs.writeFileSync(dest, req.file.buffer);
+                } else {
+                    fs.copyFileSync(req.file.path, dest);
+                }
+            }
+
+            // Clean up temp uploaded file if using diskStorage
+            if (req.file.path) {
+                try { fs.unlinkSync(req.file.path); } catch { /* ignore */ }
             }
 
             await adminService.createProcessingTask(ownerId, video.id, 'h264', ['360p', '720p', '1080p'], 28, false);

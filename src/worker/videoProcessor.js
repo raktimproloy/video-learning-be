@@ -224,15 +224,40 @@ class VideoProcessor {
             logStep('Encode', 'Codec=%s, CRF=%s, Preset=%s, Threads=%s (cpus=%s)', codec, crf, preset, ffmpegThreads, numCpus);
 
             // 6. Use original resolution only
-            const safeW = origWidth % 2 === 0 ? origWidth : origWidth - 1;
-            const safeH = origHeight % 2 === 0 ? origHeight : origHeight - 1;
-            const targetResolutions = [{
-                w: safeW,
-                h: safeH,
-                name: 'original',
-                bandwidth: 2500000
-            }];
-            logStep('Encode', 'Target resolution: %sx%s (single variant, encrypted)', safeW, safeH);
+            const makeEven = (n) => {
+                const x = Math.max(2, Math.floor(Number(n) || 0));
+                return x % 2 === 0 ? x : x - 1;
+            };
+
+            const safeW = makeEven(origWidth);
+            const safeH = makeEven(origHeight);
+
+            // Rule:
+            // - If input <= 720p: keep original (no downscale)
+            // - If input > 720p: generate optimized 720p variant for faster playback
+            const shouldDownscaleTo720 = safeH > 720;
+            let targetResolutions;
+            if (!shouldDownscaleTo720) {
+                targetResolutions = [{
+                    w: safeW,
+                    h: safeH,
+                    name: 'original',
+                    bandwidth: 2000000
+                }];
+                logStep('Encode', 'Target resolution: %sx%s (kept original; <=720p)', safeW, safeH);
+            } else {
+                // Keep aspect ratio; cap to 720p height and ~1280 width.
+                const scale = Math.min(1, 720 / safeH, 1280 / safeW);
+                const w720 = makeEven(safeW * scale);
+                const h720 = makeEven(safeH * scale);
+                targetResolutions = [{
+                    w: w720,
+                    h: h720,
+                    name: '720p',
+                    bandwidth: 1600000
+                }];
+                logStep('Encode', 'Target resolution: %sx%s (downscaled from %sx%s)', w720, h720, safeW, safeH);
+            }
 
             // 7. Process each resolution (encrypting stage for UI)
             await db.query(
@@ -255,16 +280,20 @@ class VideoProcessor {
                 const playlistPath = path.join(resDir, playlistName);
 
                 await new Promise((resolve, reject) => {
+                    const segmentSeconds = 4;
                     const outputOpts = [
                         '-threads', String(ffmpegThreads),
                         '-map', '0:v:0',
                         '-map', '0:a:0?',
                         `-crf ${crf}`,
                         `-preset ${preset}`,
-                        '-hls_time 6',
+                        `-hls_time ${segmentSeconds}`,
                         '-hls_playlist_type vod',
                         `-hls_key_info_file ${keyInfoPath}`,
-                        '-hls_segment_filename', path.join(resDir, 'segment_%03d.ts')
+                        '-hls_segment_filename', path.join(resDir, 'segment_%03d.ts'),
+                        // Keyframe alignment improves startup/seek behavior with short HLS segments.
+                        '-sc_threshold 0',
+                        '-force_key_frames', `expr:gte(t,n_forced*${segmentSeconds})`,
                     ];
                     let command = ffmpeg(sourcePath)
                         .videoCodec(codec)

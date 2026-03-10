@@ -3,6 +3,8 @@ const teacherLiveReportService = require('../services/teacherLiveReportService')
 const liveClassRequestService = require('../services/liveClassRequestService');
 const r2Storage = require('../services/r2StorageService');
 const { getAllowedOrigin } = require('../config/cors');
+const crypto = require('crypto');
+const cache = require('../utils/ttlCache');
 const path = require('path');
 const fs = require('fs');
 
@@ -482,13 +484,44 @@ class CourseController {
         try {
             const userId = req.user?.id || null;
             const limitPerSection = Math.min(Math.max(parseInt(req.query.limit, 10) || 8, 1), 20);
-            const { live, academic, skill } = await courseService.getHomeSections(userId, limitPerSection);
-            const enriched = {
-                live: enrichCourseMediaUrls(live, req),
-                academic: enrichCourseMediaUrls(academic, req),
-                skill: enrichCourseMediaUrls(skill, req),
-            };
-            res.json(enriched);
+            const isAnonymous = !req.user;
+
+            let responseBody;
+            if (isAnonymous) {
+                responseBody = await cache.getOrSet(`public:homeSections:limit=${limitPerSection}`, 60 * 1000, async () => {
+                    const { live, academic, skill } = await courseService.getHomeSections(null, limitPerSection);
+                    return {
+                        live: enrichCourseMediaUrls(live, req),
+                        academic: enrichCourseMediaUrls(academic, req),
+                        skill: enrichCourseMediaUrls(skill, req),
+                    };
+                });
+            } else {
+                const { live, academic, skill } = await courseService.getHomeSections(userId, limitPerSection);
+                responseBody = {
+                    live: enrichCourseMediaUrls(live, req),
+                    academic: enrichCourseMediaUrls(academic, req),
+                    skill: enrichCourseMediaUrls(skill, req),
+                };
+            }
+
+            // Cache anonymous home sections briefly. For authenticated users, the payload can differ
+            // (e.g., purchased/ownership flags), so we avoid shared caching.
+            res.set('Vary', 'Authorization');
+            if (isAnonymous) {
+                const json = JSON.stringify(responseBody);
+                const etag = `W/"${crypto.createHash('sha1').update(json).digest('hex')}"`;
+                res.set('ETag', etag);
+                res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
+                const inm = req.headers['if-none-match'];
+                if (inm && String(inm) === etag) {
+                    return res.status(304).end();
+                }
+            } else {
+                res.set('Cache-Control', 'private, max-age=0, no-store');
+            }
+
+            res.json(responseBody);
         } catch (error) {
             console.error('Get home sections error:', error);
             res.status(500).json({ error: 'Internal server error' });

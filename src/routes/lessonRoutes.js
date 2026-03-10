@@ -1,13 +1,29 @@
 const express = require('express');
 const multer = require('multer');
 const router = express.Router();
+const fs = require('fs');
+const path = require('path');
 const lessonController = require('../controllers/lessonController');
 const authMiddleware = require('../middleware/authMiddleware');
 const { requireRole } = require('../middleware/roleMiddleware');
 
+// Live recordings can be large; store on disk to avoid buffering in memory.
+// No explicit fileSize limit here (live recordings must not be blocked by the 500MB cap).
+const LIVE_RECORDINGS_TMP_DIR = path.resolve(__dirname, '../../uploads/live-recordings-tmp');
+if (!fs.existsSync(LIVE_RECORDINGS_TMP_DIR)) {
+    fs.mkdirSync(LIVE_RECORDINGS_TMP_DIR, { recursive: true });
+}
 const uploadRecording = multer({
-    storage: multer.memoryStorage(),
-    limits: { fileSize: 1024 * 1024 * 1024 },
+    storage: multer.diskStorage({
+        destination: function (req, file, cb) {
+            cb(null, LIVE_RECORDINGS_TMP_DIR);
+        },
+        filename: function (req, file, cb) {
+            const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+            const ext = path.extname(file.originalname) || '.webm';
+            cb(null, `recording-${uniqueSuffix}${ext}`);
+        }
+    }),
 }).single('recording');
 
 const uploadLesson = multer({
