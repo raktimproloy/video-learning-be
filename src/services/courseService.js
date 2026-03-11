@@ -510,6 +510,19 @@ class CourseService {
         const dataWhereShifted = !dataWhereClause
             ? ''
             : dataWhereClause.replace(/\$(\d+)/g, (_, n) => `$${parseInt(n, 10) + shift}`);
+        // Relevance: title match = 4, tags = 2, short_description = 1, full_description = 1 (title first, then tags, then descriptions).
+        const searchPatternParam = searchTerm ? (1 + shift) : null;
+        const relevanceSelect = searchPatternParam
+            ? `, (
+                (CASE WHEN courses.title ILIKE $${searchPatternParam} THEN 4 ELSE 0 END) +
+                (CASE WHEN (courses.tags::text ILIKE $${searchPatternParam}) THEN 2 ELSE 0 END) +
+                (CASE WHEN courses.short_description ILIKE $${searchPatternParam} THEN 1 ELSE 0 END) +
+                (CASE WHEN courses.full_description ILIKE $${searchPatternParam} THEN 1 ELSE 0 END)
+            ) as search_relevance`
+            : '';
+        const orderByClause = searchPatternParam
+            ? `ORDER BY search_relevance DESC NULLS LAST, courses.created_at DESC`
+            : `ORDER BY courses.created_at DESC`;
         const dataQuery = `
             SELECT 
                 courses.*,
@@ -521,6 +534,7 @@ class CourseService {
                     WHEN jsonb_typeof(courses.tags) = 'string' THEN courses.tags::jsonb
                     ELSE courses.tags
                 END as tags
+                ${relevanceSelect}
                 ${purchaseCheck}
                 ${ownershipCheck},
                 ${reviewsRatingQuery} as rating,
@@ -534,7 +548,7 @@ class CourseService {
             LEFT JOIN users ON courses.teacher_id = users.id 
             LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
             ${dataWhereShifted}
-            ORDER BY courses.created_at DESC
+            ${orderByClause}
             LIMIT $${limitParamIndex}::integer OFFSET $${offsetParamIndex}::integer
         `;
 

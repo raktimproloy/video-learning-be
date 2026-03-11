@@ -112,6 +112,12 @@ router.put('/:id',
     ]),
     courseController.updateCourse
 );
+router.post('/:id/intro-video',
+    authMiddleware,
+    requireRole(['teacher']),
+    upload.single('introVideo'),
+    courseController.uploadIntroVideo
+);
 router.post('/:id/request-live', authMiddleware, requireRole(['teacher']), courseController.requestLive);
 router.delete('/:id', authMiddleware, requireRole(['teacher']), courseController.deleteCourse);
 

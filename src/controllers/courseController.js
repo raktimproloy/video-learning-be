@@ -2,6 +2,7 @@ const courseService = require('../services/courseService');
 const teacherLiveReportService = require('../services/teacherLiveReportService');
 const liveClassRequestService = require('../services/liveClassRequestService');
 const r2Storage = require('../services/r2StorageService');
+const adminService = require('../services/adminService');
 const { getAllowedOrigin } = require('../config/cors');
 const crypto = require('crypto');
 const cache = require('../utils/ttlCache');
@@ -301,6 +302,77 @@ class CourseController {
         }
     }
 
+    /** Upload or replace intro video for a course (teacher-owned). */
+    async uploadIntroVideo(req, res) {
+        try {
+            if (!req.user || req.user.role !== 'teacher') {
+                return res.status(403).json({ error: 'Access denied. Teachers only.' });
+            }
+            const courseId = req.params.id;
+            if (!courseId) {
+                return res.status(400).json({ error: 'Course ID is required' });
+            }
+            const existingCourse = await courseService.getCourseById(courseId, req.user.id);
+            if (!existingCourse) {
+                return res.status(404).json({ error: 'Course not found' });
+            }
+            if (String(existingCourse.teacher_id) !== String(req.user.id)) {
+                return res.status(403).json({ error: 'Not authorized' });
+            }
+            const file = req.file;
+            if (!file || file.fieldname !== 'introVideo') {
+                return res.status(400).json({ error: 'Intro video file is required' });
+            }
+
+            // Delete old intro video if exists
+            if (existingCourse.intro_video_path) {
+                if (r2Storage.isConfigured && existingCourse.intro_video_path.startsWith('teachers/')) {
+                    try {
+                        await r2Storage.deleteObject(existingCourse.intro_video_path);
+                    } catch (err) {
+                        console.error('Error deleting old intro video from R2:', err);
+                    }
+                } else {
+                    const oldPath = path.join(__dirname, '../../uploads', existingCourse.intro_video_path.replace('/uploads/', ''));
+                    if (fs.existsSync(oldPath)) {
+                        try {
+                            fs.unlinkSync(oldPath);
+                        } catch (err) {
+                            console.error('Error deleting old intro video:', err);
+                        }
+                    }
+                }
+            }
+
+            let introVideoPath = null;
+            if (r2Storage.isConfigured) {
+                const fileBuffer = fs.readFileSync(file.path);
+                const r2Key = await r2Storage.uploadCourseMedia(
+                    req.user.id,
+                    courseId,
+                    fileBuffer,
+                    file.originalname,
+                    'introVideo'
+                );
+                introVideoPath = r2Key;
+                fs.unlinkSync(file.path);
+            } else {
+                introVideoPath = `/uploads/courses/${file.filename}`;
+            }
+
+            const updated = await courseService.updateCourse(courseId, { introVideoPath });
+            const enriched = enrichCourseMediaUrls([updated], req)[0];
+            return res.status(200).json({
+                courseId: enriched.id,
+                intro_video_path: enriched.intro_video_path,
+                intro_video_url: enriched.intro_video_url || null,
+            });
+        } catch (error) {
+            console.error('Upload intro video error:', error);
+            return res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
     async getMyCourses(req, res) {
         try {
             if (req.user.role !== 'teacher') {
@@ -425,11 +497,9 @@ class CourseController {
     async requestWithdraw(req, res) {
         try {
             const teacherId = req.user.id;
-            const { amount, currency, payment_method_id: paymentMethodId } = req.body || {};
+            const { payment_method_id: paymentMethodId } = req.body || {};
             const teacherWithdrawRequestService = require('../services/teacherWithdrawRequestService');
             const request = await teacherWithdrawRequestService.create(teacherId, {
-                amount,
-                currency,
                 paymentMethodId,
             });
             res.status(201).json({
@@ -437,7 +507,8 @@ class CourseController {
                 request,
             });
         } catch (error) {
-            if (error.message === 'Invalid amount' || error.message === 'Amount exceeds withdrawable balance' ||
+            if (error.message === 'No balance to withdraw' || error.message === 'Invalid amount' ||
+                error.message === 'Amount exceeds withdrawable balance' ||
                 error.message === 'Payment method is required' || error.message === 'Payment method not found') {
                 return res.status(400).json({ error: error.message });
             }
@@ -977,6 +1048,28 @@ class CourseController {
             }
             if (String(existingCourse.teacher_id) !== String(req.user.id)) {
                 return res.status(403).json({ error: 'Not authorized' });
+            }
+
+            // Delete all lesson videos for this course from storage (R2/local) before removing course.
+            try {
+                const db = require('../../db');
+                const videosRes = await db.query(
+                    `SELECT v.id 
+                     FROM videos v
+                     JOIN lessons l ON v.lesson_id = l.id
+                     WHERE l.course_id = $1`,
+                    [req.params.id]
+                );
+                const videoRows = videosRes.rows || [];
+                for (const row of videoRows) {
+                    try {
+                        await adminService.deleteVideo(row.id, existingCourse.teacher_id);
+                    } catch (err) {
+                        console.error(`Failed to delete video ${row.id} for course ${req.params.id}:`, err.message || err);
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to delete course videos from storage:', err);
             }
 
             // Delete associated files

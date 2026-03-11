@@ -66,13 +66,25 @@ async function deletePaymentMethod(req, res) {
  */
 async function listWithdrawRequests(req, res) {
     try {
-        const { status, limit, offset } = req.query || {};
-        const list = await teacherWithdrawRequestService.listByTeacher(req.user.id, {
+        const { status, limit, offset, page } = req.query || {};
+        const limitNum = limit ? parseInt(limit, 10) : 10;
+        const pageNum = Math.max(1, page ? parseInt(page, 10) : 1);
+        const offsetNum = offset !== undefined ? parseInt(offset, 10) : (pageNum - 1) * limitNum;
+        const effectiveLimit = Math.min(50, Math.max(1, limitNum));
+        const effectiveOffset = Math.max(0, offsetNum);
+        const { requests, total } = await teacherWithdrawRequestService.listByTeacher(req.user.id, {
             status: status || undefined,
-            limit: limit ? parseInt(limit, 10) : 50,
-            offset: offset ? parseInt(offset, 10) : 0,
+            limit: effectiveLimit,
+            offset: effectiveOffset,
         });
-        res.json(list);
+        const totalPages = Math.ceil(total / effectiveLimit) || 1;
+        res.json({
+            requests,
+            total,
+            page: pageNum,
+            limit: effectiveLimit,
+            totalPages,
+        });
     } catch (error) {
         console.error('List withdraw requests error:', error);
         res.status(500).json({ error: 'Internal server error' });

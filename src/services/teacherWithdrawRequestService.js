@@ -18,16 +18,15 @@ async function getAcceptedWithdrawTotal(teacherId) {
 }
 
 /**
- * Create a withdrawal request. Validates amount <= withdrawable and payment method belongs to teacher.
+ * Create a withdrawal request. Amount is set by backend from current withdrawable (same calculation as frontend).
+ * Only paymentMethodId is required from client.
  */
-async function create(teacherId, { amount, currency, paymentMethodId }) {
+async function create(teacherId, { paymentMethodId }) {
     const data = await courseService.getTeacherRevenueDetailed(teacherId);
-    const acceptedTotal = await getAcceptedWithdrawTotal(teacherId);
-    const withdrawable = Math.max(0, data.withdrawable - acceptedTotal);
-    const amt = parseFloat(amount);
-    if (!amt || amt <= 0) throw new Error('Invalid amount');
-    if (amt > withdrawable) throw new Error('Amount exceeds withdrawable balance');
-    const curr = (currency && String(currency).trim()) || data.currency || 'USD';
+    const withdrawable = Math.max(0, data.withdrawable ?? 0);
+
+    if (!withdrawable || withdrawable <= 0) throw new Error('No balance to withdraw');
+    const curr = data.currency || 'USD';
 
     let paymentMethodSnapshot = null;
     if (paymentMethodId) {
@@ -42,13 +41,14 @@ async function create(teacherId, { amount, currency, paymentMethodId }) {
     await db.query(
         `INSERT INTO teacher_withdraw_requests (id, teacher_id, amount, currency, payment_method_id, payment_method_snapshot, status)
          VALUES ($1, $2, $3, $4, $5, $6::jsonb, 'pending')`,
-        [id, teacherId, amt, curr, paymentMethodId, JSON.stringify(paymentMethodSnapshot)]
+        [id, teacherId, withdrawable, curr, paymentMethodId, JSON.stringify(paymentMethodSnapshot)]
     );
     return getById(id, teacherId);
 }
 
 /**
  * List requests for a teacher (own).
+ * Returns { requests, total } for pagination.
  */
 async function listByTeacher(teacherId, options = {}) {
     const { limit = 50, offset = 0, status = null } = options;
@@ -59,6 +59,12 @@ async function listByTeacher(teacherId, options = {}) {
         where += ` AND status = $${idx++}`;
         params.push(status);
     }
+    const countResult = await db.query(
+        `SELECT COUNT(*)::int as total FROM teacher_withdraw_requests ${where}`,
+        params.slice(0, idx - 1)
+    );
+    const total = countResult.rows[0]?.total || 0;
+
     params.push(limit, offset);
     const result = await db.query(
         `SELECT id, teacher_id, amount, currency, payment_method_id, payment_method_snapshot,
@@ -69,7 +75,7 @@ async function listByTeacher(teacherId, options = {}) {
          LIMIT $${idx} OFFSET $${idx + 1}`,
         params
     );
-    return result.rows.map(row => mapRow(row));
+    return { requests: result.rows.map(row => mapRow(row)), total };
 }
 
 /**
