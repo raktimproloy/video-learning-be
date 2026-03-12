@@ -47,9 +47,12 @@ class StudentProfileService {
         );
         const loginEmail = userResult.rows[0]?.email || null;
 
+        const defaultImage =
+            process.env.DEFAULT_STUDENT_AVATAR_PATH || '/images/default-student.png';
+
         const result = await db.query(
-            `INSERT INTO student_profiles (user_id) VALUES ($1) RETURNING *`,
-            [userId]
+            `INSERT INTO student_profiles (user_id, profile_image_path) VALUES ($1, $2) RETURNING *`,
+            [userId, defaultImage]
         );
         
         const profile = result.rows[0];

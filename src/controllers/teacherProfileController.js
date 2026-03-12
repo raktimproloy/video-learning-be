@@ -116,6 +116,17 @@ class TeacherProfileController {
                     const apiUrl = process.env.BASE_URL || process.env.API_URL || 'http://localhost:5000';
                     const baseUrl = apiUrl.replace(/\/v1\/?$/, '');
                     profile.profile_image_url = `${baseUrl}/v1/teacher/profile/image/${encodeURIComponent(profile.profile_image_path)}`;
+                } else if (
+                    profile.profile_image_path.startsWith('/images/') ||
+                    profile.profile_image_path.startsWith('images/')
+                ) {
+                    const apiUrl = process.env.BASE_URL || process.env.API_URL || 'http://localhost:5000';
+                    const baseUrl = apiUrl.replace(/\/v1\/?$/, '');
+                    const path =
+                        profile.profile_image_path.startsWith('/')
+                            ? profile.profile_image_path
+                            : `/${profile.profile_image_path}`;
+                    profile.profile_image_url = `${baseUrl}${path}`;
                 }
             }
 
@@ -218,6 +229,17 @@ class TeacherProfileController {
                     const apiUrl = process.env.BASE_URL || process.env.API_URL || 'http://localhost:5000';
                     const baseUrl = apiUrl.replace(/\/v1\/?$/, '');
                     updatedProfile.profile_image_url = `${baseUrl}/v1/teacher/profile/image/${encodeURIComponent(updatedProfile.profile_image_path)}`;
+                } else if (
+                    updatedProfile.profile_image_path.startsWith('/images/') ||
+                    updatedProfile.profile_image_path.startsWith('images/')
+                ) {
+                    const apiUrl = process.env.BASE_URL || process.env.API_URL || 'http://localhost:5000';
+                    const baseUrl = apiUrl.replace(/\/v1\/?$/, '');
+                    const path =
+                        updatedProfile.profile_image_path.startsWith('/')
+                            ? updatedProfile.profile_image_path
+                            : `/${updatedProfile.profile_image_path}`;
+                    updatedProfile.profile_image_url = `${baseUrl}${path}`;
                 }
             }
 

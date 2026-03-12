@@ -415,6 +415,15 @@ class CourseController {
                     }
                     if (!profile_image_url && s.profile_image_path.startsWith('students/')) {
                         profile_image_url = `${v1Url}/student/profile/image/${encodeURIComponent(s.profile_image_path)}`;
+                    } else if (
+                        !profile_image_url &&
+                        (s.profile_image_path.startsWith('/images/') || s.profile_image_path.startsWith('images/'))
+                    ) {
+                        const path =
+                            s.profile_image_path.startsWith('/')
+                                ? s.profile_image_path
+                                : `/${s.profile_image_path}`;
+                        profile_image_url = `${baseUrl}${path}`;
                     }
                 }
                 return {
@@ -675,6 +684,12 @@ class CourseController {
                     }
                     if (!userAvatar && path.startsWith('students/')) {
                         userAvatar = `${v1Url}/student/profile/image/${encodeURIComponent(path)}`;
+                    } else if (
+                        !userAvatar &&
+                        (path.startsWith('/images/') || path.startsWith('images/'))
+                    ) {
+                        const p = path.startsWith('/') ? path : `/${path}`;
+                        userAvatar = `${baseUrl}${p}`;
                     }
                 }
                 const { user_profile_image_path, ...rest } = r;

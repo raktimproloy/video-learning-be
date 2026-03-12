@@ -63,6 +63,13 @@ class CourseService {
         if (admin_category_id) {
             await adminCategoryService.incrementCourseCountForPath(admin_category_id);
         }
+        // Teacher badge is derived from profile completion; sync here too (join-as-teacher users may first create a course).
+        try {
+            const teacherProfileService = require('./teacherProfileService');
+            await teacherProfileService.syncVerifiedBadge(teacherId);
+        } catch {
+            // ignore
+        }
         return course;
     }
 
@@ -585,12 +592,20 @@ class CourseService {
         if (!course) return null;
 
         // Get teacher info with full profile (name, image, institute, verified, address, rating from teacher_reviews)
+        // is_verified column may not exist if migration hasn't been applied yet
+        let verifiedSelect = 'false as is_verified';
+        try {
+            const { hasColumn } = require('../utils/dbSchemaCache');
+            const hasIsVerified = await hasColumn('teacher_profiles', 'is_verified');
+            if (hasIsVerified) verifiedSelect = `COALESCE(tp.is_verified, false) as is_verified`;
+        } catch {}
+
         const teacherResult = await db.query(
             `SELECT u.id, u.email, u.created_at,
                     COALESCE(tp.name, u.email) as name,
                     tp.profile_image_path,
                     tp.institute_name,
-                    tp.account_email_verified,
+                    ${verifiedSelect},
                     tp.address,
                     (SELECT COUNT(DISTINCT ce.user_id) FROM course_enrollments ce
                      JOIN courses c ON ce.course_id = c.id WHERE c.teacher_id = u.id) as total_students,
@@ -737,7 +752,7 @@ class CourseService {
                 name: teacher.name || teacher.email,
                 profile_image_path: teacher.profile_image_path || null,
                 institute_name: teacher.institute_name || null,
-                account_email_verified: teacher.account_email_verified || false,
+                is_verified: !!teacher.is_verified,
                 address: teacher.address || null,
                 totalStudents: parseInt(teacher.total_students) || course.purchase_count || 0,
                 total_courses: parseInt(teacher.total_courses, 10) || 0,

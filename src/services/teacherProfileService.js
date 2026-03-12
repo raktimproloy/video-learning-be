@@ -1,15 +1,43 @@
 const db = require('../../db');
 const emailService = require('./emailService');
 const smsService = require('./smsService');
+const { hasColumn } = require('../utils/dbSchemaCache');
 
 class TeacherProfileService {
+    /**
+     * Sync teacher verified badge (is_verified) based on profile completion percentage.
+     * Rule: verified if completion >= 60%, otherwise not verified.
+     */
+    async syncVerifiedBadge(userId) {
+        if (!userId) return { is_verified: false, percentage: 0 };
+        const completion = await this.getProfileCompletion(userId);
+        const percentage = completion?.percentage ?? 0;
+        const hasIsVerified = await hasColumn('teacher_profiles', 'is_verified');
+        if (!hasIsVerified) {
+            // Migration not applied yet; don't fail requests.
+            return { is_verified: false, percentage };
+        }
+        const shouldBeVerified = Number(percentage) >= 60;
+        const result = await db.query(
+            `UPDATE teacher_profiles
+             SET is_verified = $2, updated_at = NOW()
+             WHERE user_id = $1
+             RETURNING is_verified`,
+            [userId, shouldBeVerified]
+        );
+        return { is_verified: !!result.rows[0]?.is_verified, percentage };
+    }
     /**
      * Get teacher profile by user ID
      */
     async getProfile(userId) {
         // Join with users table to get login email
+        const hasIsVerified = await hasColumn('teacher_profiles', 'is_verified');
+        const isVerifiedSelect = hasIsVerified
+            ? `COALESCE(tp.is_verified, false) as is_verified`
+            : `false as is_verified`;
         const result = await db.query(
-            `SELECT tp.*, u.email as login_email 
+            `SELECT tp.*, ${isVerifiedSelect}, u.email as login_email 
              FROM teacher_profiles tp
              JOIN users u ON tp.user_id = u.id
              WHERE tp.user_id = $1`,
@@ -63,6 +91,11 @@ class TeacherProfileService {
         const teacherReviewsRatingQuery = `(SELECT COALESCE(AVG(tr.rating), 0)::float FROM teacher_reviews tr WHERE tr.teacher_id = u.id)`;
         const teacherReviewsCountQuery = `(SELECT COUNT(*)::int FROM teacher_reviews tr WHERE tr.teacher_id = u.id)`;
 
+        const hasIsVerified = await hasColumn('teacher_profiles', 'is_verified');
+        const isVerifiedSelect = hasIsVerified
+            ? `COALESCE(tp.is_verified, false) as is_verified`
+            : `false as is_verified`;
+
         const result = await db.query(
             `SELECT 
                 tp.user_id,
@@ -71,6 +104,7 @@ class TeacherProfileService {
                 tp.location,
                 tp.profile_image_path,
                 tp.institute_name,
+                ${isVerifiedSelect},
                 tp.specialization,
                 tp.education,
                 tp.experience_new,
@@ -127,6 +161,7 @@ class TeacherProfileService {
             location: profile.location,
             profile_image_path: profile.profile_image_path,
             institute_name: profile.institute_name || null,
+            is_verified: !!profile.is_verified,
             specialization,
             education,
             experience,
@@ -156,12 +191,17 @@ class TeacherProfileService {
         );
         const loginEmail = userResult.rows[0]?.email || null;
 
+        const defaultImage =
+            process.env.DEFAULT_TEACHER_AVATAR_PATH || '/images/default-teacher.png';
+
         const result = await db.query(
-            `INSERT INTO teacher_profiles (user_id, account_email) VALUES ($1, $2) RETURNING *`,
-            [userId, loginEmail]
+            `INSERT INTO teacher_profiles (user_id, account_email, profile_image_path) VALUES ($1, $2, $3) RETURNING *`,
+            [userId, loginEmail, defaultImage]
         );
         
         const profile = result.rows[0];
+        // Ensure badge starts correct (will be false for new profiles)
+        await this.syncVerifiedBadge(userId);
         return {
             ...profile,
             account_email: profile.account_email || loginEmail,
@@ -214,6 +254,8 @@ class TeacherProfileService {
         `;
 
         await db.query(query, values);
+        // Recompute verified badge after any update (can flip on/off)
+        await this.syncVerifiedBadge(userId);
         return await this.getProfile(userId);
     }
 
@@ -358,6 +400,8 @@ class TeacherProfileService {
             [userId]
         );
 
+        // OTP verification changes profile fields; sync verified badge too.
+        await this.syncVerifiedBadge(userId);
         return await this.getProfile(userId);
     }
 

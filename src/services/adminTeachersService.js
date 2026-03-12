@@ -19,14 +19,17 @@ class AdminTeachersService {
                 ${avgRatingQuery} as avg_rating
              FROM users u
              LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
-             WHERE u.role = 'teacher'
+             WHERE (u.role = 'teacher' OR tp.user_id IS NOT NULL)
              ORDER BY u.created_at DESC
              LIMIT $1 OFFSET $2`,
             [limit, skip]
         );
 
         const countResult = await db.query(
-            `SELECT COUNT(*)::int as total FROM users WHERE role = 'teacher'`
+            `SELECT COUNT(*)::int as total
+             FROM users u
+             LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
+             WHERE (u.role = 'teacher' OR tp.user_id IS NOT NULL)`
         );
         const total = countResult.rows[0]?.total || 0;
 

@@ -34,6 +34,7 @@ const progressRoutes = require('./routes/progressRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
 const couponRoutes = require('./routes/couponRoutes');
 const meRoutes = require('./routes/meRoutes');
+const teacherDiscoveryRoutes = require('./routes/teacherDiscoveryRoutes');
 
 const app = express();
 
@@ -68,6 +69,9 @@ app.use('/videos', express.static(path.join(__dirname, '../public/videos')));
 // Static file serving for uploads (course thumbnails, intro videos, etc.)
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
+// Static profile images (default avatars for students/teachers)
+app.use('/images', express.static(path.join(__dirname, '../public/images')));
+
 // Routes
 app.use('/v1/settings', settingsRoutes);
 app.use('/v1/auth', authRoutes);
@@ -98,6 +102,7 @@ app.use('/v1/bundles', bundleRoutes);
 app.use('/v1/progress', progressRoutes);
 app.use('/v1/coupons', couponRoutes);
 app.use('/v1/me', meRoutes);
+app.use('/v1/teachers', teacherDiscoveryRoutes);
 
 // Health Check
 app.get('/health', (req, res) => {

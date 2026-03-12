@@ -98,6 +98,12 @@ class ReviewController {
                     }
                     if (!user_avatar && path.startsWith('students/')) {
                         user_avatar = `${v1Url}/student/profile/image/${encodeURIComponent(path)}`;
+                    } else if (
+                        !user_avatar &&
+                        (path.startsWith('/images/') || path.startsWith('images/'))
+                    ) {
+                        const p = path.startsWith('/') ? path : `/${path}`;
+                        user_avatar = `${baseUrl}${p}`;
                     }
                 }
                 const { user_profile_image_path, ...rest } = r;
