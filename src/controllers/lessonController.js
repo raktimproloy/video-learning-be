@@ -369,28 +369,6 @@ class LessonController {
                         current_live_session_id: liveSession.id
                     };
                     const updatedLesson = await lessonService.updateLiveStatus(id, true, sessionData);
-                    // Notify all enrolled students (e.g. from quick-action "Start Live Stream" or course page "Go Live")
-                    const pushNotificationService = require('../services/pushNotificationService');
-                    const pushMessages = require('../config/pushNotificationMessages');
-                    const enrolledUserIds = await courseService.getEnrolledUserIds(course.id).catch(() => []);
-                    const courseName = course.title || 'কোর্স';
-                    const livePayload = pushMessages.liveStarted(courseName);
-                    const frontendBase = (process.env.FRONTEND_URL || '').replace(/\/+$/, '');
-                    const liveUrl = frontendBase
-                        ? `${frontendBase}/student/courses/${course.id}/lessons/${id}/live/${liveSession.id}`
-                        : null;
-                    const liveData = {
-                        type: 'live_started',
-                        courseId: String(course.id),
-                        lessonId: String(id),
-                        liveSessionId: String(liveSession.id),
-                    };
-                    if (liveUrl) liveData.url = liveUrl;
-                    pushNotificationService.sendToManyUsers(enrolledUserIds, {
-                        title: livePayload.title,
-                        body: livePayload.body,
-                        data: liveData,
-                    }).catch((err) => console.warn('[Push] Live started notify failed:', err?.message));
                     const uid = Math.abs(req.user.id.split('').reduce((a, c) => ((a << 5) - a) + c.charCodeAt(0), 0)) % 2147483647;
                     const role = req.user.role === 'teacher' ? 'publisher' : 'subscriber';
                     let creds = await getLiveCredsForProvider(provider, id, uid, role);

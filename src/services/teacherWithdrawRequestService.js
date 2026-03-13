@@ -2,7 +2,6 @@ const db = require('../../db');
 const { randomUUID } = require('crypto');
 const courseService = require('./courseService');
 const teacherPaymentMethodService = require('./teacherPaymentMethodService');
-const pushMessages = require('../config/pushNotificationMessages');
 
 /**
  * Sum of accepted withdraw amounts for a teacher (so we can subtract from withdrawable).
@@ -183,12 +182,6 @@ async function accept(id, adminUserId, receiptImagePath) {
         [receiptImagePath.trim(), adminUserId, id]
     );
     if (!result.rows[0]) return null;
-    const teacherId = result.rows[0].teacher_id;
-    const pushNotificationService = require('./pushNotificationService');
-    pushNotificationService.sendToUser(teacherId, {
-        ...pushMessages.withdrawAccepted,
-        data: { type: 'withdraw_accepted', requestId: id },
-    }).catch((err) => console.warn('[Push] Withdraw accepted failed:', err?.message));
     return mapRow(result.rows[0]);
 }
 
@@ -206,12 +199,6 @@ async function reject(id, adminUserId, rejectionReason) {
         [reason, adminUserId, id]
     );
     if (!result.rows[0]) return null;
-    const teacherId = result.rows[0].teacher_id;
-    const pushNotificationService = require('./pushNotificationService');
-    pushNotificationService.sendToUser(teacherId, {
-        ...pushMessages.withdrawDeclined(reason),
-        data: { type: 'withdraw_rejected', requestId: id },
-    }).catch((err) => console.warn('[Push] Withdraw rejected failed:', err?.message));
     return mapRow(result.rows[0]);
 }
 

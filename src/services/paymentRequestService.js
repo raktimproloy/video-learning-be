@@ -1,6 +1,5 @@
 const db = require('../../db');
 const smsService = require('../utils/smsService');
-const pushMessages = require('../config/pushNotificationMessages');
 
 /**
  * Create a payment request (student checkout). Does not enroll; enrollment happens on admin accept.
@@ -192,14 +191,6 @@ async function acceptPaymentRequest(requestId, adminUserId) {
             courseId: row.course_id,
         });
 
-        const pushNotificationService = require('./pushNotificationService');
-        const payAccepted = pushMessages.paymentAccepted(courseTitle);
-        pushNotificationService.sendToUser(row.user_id, {
-            title: payAccepted.title,
-            body: payAccepted.body,
-            data: { type: 'payment_accepted', courseId: String(row.course_id) },
-        }).catch((err) => console.warn('[Push] Payment accepted failed:', err?.message));
-
         // Optional: send payment-accepted SMS to the number provided at checkout (fire-and-forget)
         const senderPhone = row.sender_phone && String(row.sender_phone).trim() ? String(row.sender_phone).trim() : null;
         if (senderPhone) {
@@ -344,14 +335,6 @@ async function rejectPaymentRequest(requestId, adminUserId) {
         body: `Your payment for "${courseTitle}" was declined. Please contact support if you have questions.`,
         courseId: row.course_id,
     });
-
-    const pushNotificationService = require('./pushNotificationService');
-    const payDeclined = pushMessages.paymentDeclined(courseTitle);
-    pushNotificationService.sendToUser(row.user_id, {
-        title: payDeclined.title,
-        body: payDeclined.body,
-        data: { type: 'payment_rejected', courseId: String(row.course_id) },
-    }).catch((err) => console.warn('[Push] Payment rejected failed:', err?.message));
 
     // SMS to the number provided at checkout (fire-and-forget)
     if (row.sender_phone && String(row.sender_phone).trim()) {

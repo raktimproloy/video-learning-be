@@ -1,113 +1,167 @@
-/**
- * Send push notifications via Firebase Cloud Messaging (HTTP v1 API).
- * Uses Firebase Admin SDK with a service account (no legacy server key).
- *
- * Setup (one of):
- * 1. FCM_SERVICE_ACCOUNT_JSON = full JSON string from Firebase Console → Project Settings → Service accounts → Generate new private key.
- *    (Same Firebase project as frontend. For Docker: pass as single line or use GOOGLE_APPLICATION_CREDENTIALS with a mounted file.)
- * 2. GOOGLE_APPLICATION_CREDENTIALS = path to that JSON file.
- *
- * Optional: FRONTEND_URL = https://your-app.vercel.app — so push notification click opens the correct origin (e.g. live class URL).
- */
+const admin = require('firebase-admin');
+const db = require('../../db');
 
-let messaging = null;
-let initError = null;
+let appInitialized = false;
 
-function initFcm() {
-    if (messaging !== null) return messaging;
-    if (initError !== null) return null;
-
-    const json = process.env.FCM_SERVICE_ACCOUNT_JSON;
-    const credPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+function initFirebaseAdmin() {
+    if (appInitialized) return;
 
     try {
-        const admin = require('firebase-admin');
-
-        if (admin.apps.length > 0) {
-            messaging = admin.messaging();
-            return messaging;
-        }
-
-        if (json && json.trim()) {
-            const serviceAccount = JSON.parse(json.trim());
-            admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-        } else if (credPath && credPath.trim()) {
-            admin.initializeApp({ credential: admin.credential.applicationDefault() });
+        // Prefer full service account JSON in env
+        const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+        if (serviceAccountJson) {
+            const credentials = JSON.parse(serviceAccountJson);
+            admin.initializeApp({
+                credential: admin.credential.cert(credentials),
+            });
+        } else if (process.env.FIREBASE_SERVICE_ACCOUNT_PATH) {
+            // Or a path to the JSON file
+            const serviceAccount = require(process.env.FIREBASE_SERVICE_ACCOUNT_PATH);
+            admin.initializeApp({
+                credential: admin.credential.cert(serviceAccount),
+            });
+        } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+            // Or ADC-style JSON path
+            admin.initializeApp({
+                credential: admin.credential.applicationDefault(),
+            });
         } else {
-            initError = new Error('FCM not configured');
-            return null;
+            console.warn('[FCM] No Firebase credentials configured. Push notifications will be disabled.');
+            return;
         }
 
-        messaging = admin.messaging();
-        return messaging;
-    } catch (e) {
-        initError = e;
-        console.warn('[FCM] Init failed:', e?.message || e);
-        return null;
+        appInitialized = true;
+        console.log('[FCM] Firebase Admin initialized');
+    } catch (err) {
+        console.error('[FCM] Failed to initialize Firebase Admin:', err);
     }
 }
 
-const isConfigured = () => {
-    const m = initFcm();
-    return m !== null;
-};
+function isEnabled() {
+    return appInitialized;
+}
 
-/**
- * Send a notification + data message to a single FCM token (HTTP v1).
- * @param {string} token - FCM device token
- * @param {object} options - { title, body, data?: Record<string, string> }
- * @returns {Promise<{ sent: boolean, error?: string }>}
- */
-async function sendToToken(token, { title, body, data = {} }) {
-    if (!token || typeof token !== 'string' || !token.trim()) {
-        return { sent: false, error: 'FCM token is required' };
-    }
-
-    const m = initFcm();
-    if (!m) {
-        console.log('[FCM] Skipped (no service account):', title);
-        return { sent: false, error: 'FCM not configured' };
-    }
-
-    const dataPayload = { ...data, title: title || '', body: body || '' };
-    for (const k of Object.keys(dataPayload)) {
-        if (typeof dataPayload[k] !== 'string') dataPayload[k] = String(dataPayload[k]);
-    }
-
-    const message = {
-        token: token.trim(),
-        notification: { title: title || 'Notification', body: body || '' },
-        data: dataPayload,
-        webpush: {
-            headers: { Urgency: 'high' },
-            notification: {
-                title: title || 'Notification',
-                body: body || '',
-                requireInteraction: true,
-            },
-        },
-    };
+async function registerToken(userId, token) {
+    initFirebaseAdmin();
+    if (!token || !userId) return;
 
     try {
-        await m.send(message);
-        return { sent: true };
+        await db.query(
+            `INSERT INTO user_fcm_tokens (user_id, token)
+             VALUES ($1, $2)
+             ON CONFLICT (user_id, token) DO NOTHING`,
+            [userId, token]
+        );
     } catch (err) {
-        const code = err.code || err.message || '';
-        const message = String(code || 'Request failed');
-        const invalidToken =
-            message.includes('registration-token-not-registered') ||
-            message.includes('invalid-registration-token') ||
-            message.includes('invalid-argument');
-        if (invalidToken) {
-            console.warn('[FCM] Invalid or unregistered token (will be removed):', message);
-        } else {
-            console.error('[FCM] Send failed:', message);
+        console.error('[FCM] Failed to store user token:', err);
+    }
+}
+
+async function getTokensForUsers(userIds) {
+    if (!userIds || userIds.length === 0) return [];
+    const result = await db.query(
+        `SELECT token
+         FROM user_fcm_tokens
+         WHERE user_id = ANY($1::uuid[])`,
+        [userIds]
+    );
+    return result.rows.map((r) => r.token);
+}
+
+async function sendMulticast(tokens, payload) {
+    initFirebaseAdmin();
+    if (!isEnabled()) return;
+    if (!tokens || tokens.length === 0) return;
+
+    try {
+        const messaging = admin.messaging();
+        const response = await messaging.sendEachForMulticast({
+            tokens,
+            notification: payload.notification,
+            data: payload.data,
+        });
+
+        // Optionally clean up invalid tokens
+        const invalidTokens = [];
+        response.responses.forEach((res, idx) => {
+            if (!res.success && res.error && tokens[idx]) {
+                const code = res.error.code;
+                if (
+                    code === 'messaging/registration-token-not-registered' ||
+                    code === 'messaging/invalid-registration-token'
+                ) {
+                    invalidTokens.push(tokens[idx]);
+                } else {
+                    console.warn('[FCM] Error sending to token:', code, res.error.message);
+                }
+            }
+        });
+
+        if (invalidTokens.length > 0) {
+            await db.query(
+                `DELETE FROM user_fcm_tokens
+                 WHERE token = ANY($1::text[])`,
+                [invalidTokens]
+            );
         }
-        return { sent: false, error: message, invalidToken: !!invalidToken };
+    } catch (err) {
+        console.error('[FCM] Failed to send multicast notification:', err);
+    }
+}
+
+/**
+ * Send a course announcement push notification to all enrolled students.
+ * Does not throw – errors are logged only.
+ */
+async function sendCourseAnnouncementPush(announcement) {
+    try {
+        if (!announcement || !announcement.course_id) return;
+
+        // Find all enrolled students for the course
+        const enrolled = await db.query(
+            `SELECT DISTINCT user_id
+             FROM course_enrollments
+             WHERE course_id = $1`,
+            [announcement.course_id]
+        );
+        const userIds = enrolled.rows.map((r) => r.user_id);
+        if (userIds.length === 0) return;
+
+        const tokens = await getTokensForUsers(userIds);
+        if (tokens.length === 0) return;
+
+        // Get course title for nicer notification
+        const courseResult = await db.query(
+            `SELECT title
+             FROM courses
+             WHERE id = $1`,
+            [announcement.course_id]
+        );
+        const courseTitle = courseResult.rows[0]?.title || 'New course announcement';
+
+        const notificationTitle = courseTitle;
+        const notificationBody = announcement.title || 'New announcement from your teacher';
+
+        await sendMulticast(tokens, {
+            notification: {
+                title: notificationTitle,
+                body: notificationBody,
+            },
+            data: {
+                type: 'course_announcement',
+                courseId: String(announcement.course_id),
+                announcementId: String(announcement.id),
+            },
+        });
+    } catch (err) {
+        console.error('[FCM] Failed to send course announcement push:', err);
     }
 }
 
 module.exports = {
-    sendToToken,
-    isConfigured,
+    initFirebaseAdmin,
+    isEnabled,
+    registerToken,
+    sendCourseAnnouncementPush,
 };
+

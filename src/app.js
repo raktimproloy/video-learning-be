@@ -35,6 +35,7 @@ const settingsRoutes = require('./routes/settingsRoutes');
 const couponRoutes = require('./routes/couponRoutes');
 const meRoutes = require('./routes/meRoutes');
 const teacherDiscoveryRoutes = require('./routes/teacherDiscoveryRoutes');
+const fcmRoutes = require('./routes/fcmRoutes');
 
 const app = express();
 
@@ -103,6 +104,7 @@ app.use('/v1/progress', progressRoutes);
 app.use('/v1/coupons', couponRoutes);
 app.use('/v1/me', meRoutes);
 app.use('/v1/teachers', teacherDiscoveryRoutes);
+app.use('/v1/fcm', fcmRoutes);
 
 // Health Check
 app.get('/health', (req, res) => {

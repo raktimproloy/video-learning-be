@@ -1,4 +1,5 @@
 const announcementService = require('../services/announcementService');
+const fcmService = require('../services/fcmService');
 
 module.exports = {
     async create(req, res) {
@@ -14,6 +15,12 @@ module.exports = {
                 title: title.trim(),
                 body: body.trim(),
             });
+
+            // Fire-and-forget push notification to enrolled students
+            fcmService
+                .sendCourseAnnouncementPush(announcement)
+                .catch((err) => console.error('FCM push failed:', err));
+
             res.status(201).json({
                 id: announcement.id,
                 course_id: announcement.course_id,
