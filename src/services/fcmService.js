@@ -79,6 +79,19 @@ async function sendMulticast(tokens, payload) {
             tokens,
             notification: payload.notification,
             data: payload.data,
+            android: {
+                priority: 'high',
+            },
+            apns: {
+                headers: {
+                    'apns-priority': '10',
+                },
+            },
+            webpush: {
+                headers: {
+                    Urgency: 'high',
+                },
+            },
         });
 
         // Optionally clean up invalid tokens
@@ -139,18 +152,32 @@ async function sendCourseAnnouncementPush(announcement) {
         );
         const courseTitle = courseResult.rows[0]?.title || 'New course announcement';
 
+        // Push format:
+        // Title: course title
+        // Body: "<announcement title> - <announcement description>"
         const notificationTitle = courseTitle;
-        const notificationBody = announcement.title || 'New announcement from your teacher';
+        const notificationBody = [
+            announcement.title || 'New announcement',
+            announcement.body || '',
+        ]
+            .filter(Boolean)
+            .join(' - ');
 
         await sendMulticast(tokens, {
+            // FCM Admin Notification only supports title/body/image
             notification: {
                 title: notificationTitle,
                 body: notificationBody,
             },
+            // Pass icon and extra fields via data; service worker uses these
             data: {
                 type: 'course_announcement',
                 courseId: String(announcement.course_id),
                 announcementId: String(announcement.id),
+                courseTitle: String(courseTitle),
+                announcementTitle: String(announcement.title || ''),
+                announcementBody: String(announcement.body || ''),
+                icon: '/favicon.svg',
             },
         });
     } catch (err) {
