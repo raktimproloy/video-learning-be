@@ -15,6 +15,7 @@ router.post(
     '/',
     [
         check('name', 'Name is required').trim().notEmpty(),
+        check('nameBn', 'Name (Bangla) must be a string').optional().isString(),
         check('description', 'Description must be a string').optional().isString(),
         check('parentId', 'Parent ID must be a valid UUID').optional().isUUID(),
         check('status', 'Status must be active or inactive').optional().isIn(['active', 'inactive']),
@@ -27,6 +28,7 @@ router.put(
     [
         check('id', 'Invalid category ID').isUUID(),
         check('name', 'Name must be a non-empty string').optional().trim().notEmpty(),
+        check('nameBn', 'Name (Bangla) must be a string').optional().isString(),
         check('description', 'Description must be a string').optional().isString(),
         check('parentId', 'Parent ID must be a valid UUID').optional().isUUID(),
         check('status', 'Status must be active or inactive').optional().isIn(['active', 'inactive']),

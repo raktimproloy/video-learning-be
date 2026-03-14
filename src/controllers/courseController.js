@@ -644,8 +644,11 @@ class CourseController {
             const baseUrl = apiUrl.replace(/\/v1\/?$/, '');
             const v1Url = baseUrl + (baseUrl.endsWith('/') ? 'v1' : '/v1');
 
-            // Enrich course with media URLs
+            // Enrich course with media URLs (thumbnail_url, intro_video_url)
             const enrichedCourse = enrichCourseMediaUrls([details.course], req)[0];
+            // Ensure thumbnail is always passed: explicit thumbnail_url and thumbnail_path for frontend
+            enrichedCourse.thumbnail_url = enrichedCourse.thumbnail_url ?? null;
+            enrichedCourse.thumbnail_path = enrichedCourse.thumbnail_path ?? null;
 
             // Enrich teacher with avatar URL and camelCase fields for frontend
             let enrichedTeacher = details.teacher;

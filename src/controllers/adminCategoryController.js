@@ -59,9 +59,10 @@ class AdminCategoryController {
             return res.status(400).json({ errors: errors.array() });
         }
         try {
-            const { name, description, parentId, status, displayOrder } = req.body;
+            const { name, nameBn, description, parentId, status, displayOrder } = req.body;
             const category = await adminCategoryService.create({
                 name,
+                nameBn: nameBn != null ? nameBn : undefined,
                 description,
                 parentId: parentId || null,
                 status,
@@ -89,9 +90,10 @@ class AdminCategoryController {
             return res.status(400).json({ errors: errors.array() });
         }
         try {
-            const { name, description, parentId, status, displayOrder } = req.body;
+            const { name, nameBn, description, parentId, status, displayOrder } = req.body;
             const category = await adminCategoryService.update(req.params.id, {
                 name,
+                nameBn,
                 description,
                 parentId,
                 status,

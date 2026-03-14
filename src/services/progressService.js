@@ -52,6 +52,18 @@ async function upsertVideoProgress(userId, payload) {
 
   const row = result.rows[0];
   const lastPos = row.last_position_seconds != null ? parseFloat(row.last_position_seconds) : currentTime;
+
+  // Accumulate watch time per day for dashboard activity chart
+  if (delta > 0) {
+    await db.query(
+      `INSERT INTO user_daily_watch_seconds (user_id, date, total_seconds)
+       VALUES ($1, CURRENT_DATE, $2)
+       ON CONFLICT (user_id, date) DO UPDATE SET
+         total_seconds = user_daily_watch_seconds.total_seconds + EXCLUDED.total_seconds`,
+      [userId, delta]
+    );
+  }
+
   return {
     lastPositionSeconds: lastPos,
     completedAt: row.completed_at ? row.completed_at.toISOString() : null,
@@ -274,6 +286,69 @@ async function getRecentActivity(userId, limit = 20) {
 }
 
 /**
+ * Get activity by day for the last N days (for dashboard line chart).
+ * Returns array of { date, count, watchSeconds } for every day in range (missing days have 0).
+ */
+async function getActivityByDay(userId, days = 7) {
+  const numDays = Math.min(31, Math.max(1, parseInt(String(days), 10) || 7));
+  try {
+    const result = await db.query(
+      `WITH days AS (
+         SELECT (CURRENT_DATE - (n || ' days')::interval)::date AS day
+         FROM generate_series(0, $2::int - 1) AS n
+       ),
+       counts AS (
+         SELECT DATE(last_position_updated_at) AS day, COUNT(*)::int AS count
+         FROM video_watch_progress
+         WHERE user_id = $1 AND last_position_updated_at >= (CURRENT_DATE - ($2::text || ' days')::interval)
+         GROUP BY DATE(last_position_updated_at)
+       ),
+       watch AS (
+         SELECT date, total_seconds FROM user_daily_watch_seconds
+         WHERE user_id = $1 AND date >= (CURRENT_DATE - ($2::text || ' days')::interval)
+       )
+       SELECT d.day::text AS date,
+              COALESCE(c.count, 0)::int AS count,
+              COALESCE(ROUND(w.total_seconds)::int, 0) AS "watchSeconds"
+       FROM days d
+       LEFT JOIN counts c ON c.day = d.day
+       LEFT JOIN watch w ON w.date = d.day
+       ORDER BY d.day ASC`,
+      [userId, numDays]
+    );
+    return result.rows.map((r) => ({
+      date: r.date ? (r.date.slice(0, 10)) : null,
+      count: r.count ?? 0,
+      watchSeconds: r.watchSeconds ?? 0,
+    }));
+  } catch (err) {
+    // Fallback if user_daily_watch_seconds table not yet migrated
+    const result = await db.query(
+      `WITH days AS (
+         SELECT (CURRENT_DATE - (n || ' days')::interval)::date AS day
+         FROM generate_series(0, $2::int - 1) AS n
+       ),
+       counts AS (
+         SELECT DATE(last_position_updated_at) AS day, COUNT(*)::int AS count
+         FROM video_watch_progress
+         WHERE user_id = $1 AND last_position_updated_at >= (CURRENT_DATE - ($2::text || ' days')::interval)
+         GROUP BY DATE(last_position_updated_at)
+       )
+       SELECT d.day::text AS date, COALESCE(c.count, 0)::int AS count
+       FROM days d
+       LEFT JOIN counts c ON c.day = d.day
+       ORDER BY d.day ASC`,
+      [userId, numDays]
+    );
+    return result.rows.map((r) => ({
+      date: r.date ? (r.date.slice(0, 10)) : null,
+      count: r.count ?? 0,
+      watchSeconds: 0,
+    }));
+  }
+}
+
+/**
  * Get resume position for a video (last position in seconds). Used on watch page load.
  */
 async function getResumePosition(userId, videoId) {
@@ -431,6 +506,7 @@ module.exports = {
   getVideoProgress,
   getCourseProgress,
   getRecentActivity,
+  getActivityByDay,
   getResumePosition,
   getDashboardStats,
 };

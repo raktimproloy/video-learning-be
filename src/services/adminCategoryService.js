@@ -44,9 +44,9 @@ class AdminCategoryService {
 
         if (q && String(q).trim()) {
             const searchPattern = `%${String(q).trim().replace(/%/g, '\\%')}%`;
-            conditions.push(`(c.name ILIKE $${paramIdx} OR c.description ILIKE $${paramIdx})`);
-            params.push(searchPattern, searchPattern);
-            paramIdx += 2;
+            conditions.push(`(c.name ILIKE $${paramIdx} OR c.name_bn ILIKE $${paramIdx + 1} OR c.description ILIKE $${paramIdx + 2})`);
+            params.push(searchPattern, searchPattern, searchPattern);
+            paramIdx += 3;
         }
 
         const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -63,6 +63,7 @@ class AdminCategoryService {
         const listResult = await db.query(
             `SELECT c.*, 
                     p.name as parent_name,
+                    p.name_bn as parent_name_bn,
                     COALESCE(c.level, 0) as level,
                     COALESCE(c.course_count, 0) as course_count,
                     COALESCE(c.display_order, 0) as display_order,
@@ -79,7 +80,9 @@ class AdminCategoryService {
             id: row.id,
             parentId: row.parent_id,
             parentName: row.parent_name,
+            parentNameBn: row.parent_name_bn || null,
             name: row.name,
+            nameBn: row.name_bn || null,
             slug: row.slug,
             description: row.description,
             status: row.status,
@@ -134,7 +137,7 @@ class AdminCategoryService {
     async getFullTree(statusFilter = null) {
         const statusClause = statusFilter === 'active' ? "AND status = 'active'" : '';
         const rootsRes = await db.query(
-            `SELECT id, name, slug, parent_id, COALESCE(level, 0) as level, 
+            `SELECT id, name, name_bn, slug, parent_id, COALESCE(level, 0) as level, 
                     COALESCE(course_count, 0) as course_count, COALESCE(display_order, 0) as display_order,
                     status,
                     (SELECT COUNT(*)::int FROM admin_categories ch WHERE ch.parent_id = admin_categories.id) as children_count
@@ -145,7 +148,7 @@ class AdminCategoryService {
 
         const buildChildren = async (parentId) => {
             const res = await db.query(
-                `SELECT id, name, slug, parent_id, COALESCE(level, 0) as level,
+                `SELECT id, name, name_bn, slug, parent_id, COALESCE(level, 0) as level,
                         COALESCE(course_count, 0) as course_count, COALESCE(display_order, 0) as display_order,
                         status,
                         (SELECT COUNT(*)::int FROM admin_categories ch WHERE ch.parent_id = admin_categories.id) as children_count
@@ -162,6 +165,7 @@ class AdminCategoryService {
                 nodes.push({
                     id: row.id,
                     name: row.name,
+                    nameBn: row.name_bn || null,
                     slug: row.slug,
                     level: parseInt(row.level, 10) || 0,
                     courseCount: parseInt(row.course_count, 10) || 0,
@@ -182,6 +186,7 @@ class AdminCategoryService {
             result.push({
                 id: row.id,
                 name: row.name,
+                nameBn: row.name_bn || null,
                 slug: row.slug,
                 level: 0,
                 courseCount: parseInt(row.course_count, 10) || 0,
@@ -201,21 +206,41 @@ class AdminCategoryService {
      */
     async getTreeForSelect() {
         const rootsRes = await db.query(
-            `SELECT id, name, slug, parent_id, COALESCE(level, 0) as level, COALESCE(course_count, 0) as course_count, COALESCE(display_order, 0) as display_order
+            `SELECT id, name, name_bn, slug, parent_id, COALESCE(level, 0) as level, COALESCE(course_count, 0) as course_count, COALESCE(display_order, 0) as display_order
              FROM admin_categories WHERE parent_id IS NULL AND status = 'active' ORDER BY COALESCE(display_order, 0), name ASC`
         );
         const result = [];
         for (const r of rootsRes.rows) {
-            result.push({ id: r.id, name: r.name, slug: r.slug, path: r.name, level: 0, parentId: null, courseCount: parseInt(r.course_count, 10) || 0, displayOrder: parseInt(r.display_order, 10) || 0 });
+            result.push({
+                id: r.id,
+                name: r.name,
+                nameBn: r.name_bn || null,
+                slug: r.slug,
+                path: r.name,
+                level: 0,
+                parentId: null,
+                courseCount: parseInt(r.course_count, 10) || 0,
+                displayOrder: parseInt(r.display_order, 10) || 0,
+            });
             const childrenRes = await db.query(
-                `SELECT id, name, slug, parent_id, COALESCE(level, 1) as level, COALESCE(course_count, 0) as course_count, COALESCE(display_order, 0) as display_order
+                `SELECT id, name, name_bn, slug, parent_id, COALESCE(level, 1) as level, COALESCE(course_count, 0) as course_count, COALESCE(display_order, 0) as display_order
                  FROM admin_categories WHERE parent_id = $1 AND status = 'active' ORDER BY COALESCE(display_order, 0), name ASC`,
                 [r.id]
             );
             for (const c of childrenRes.rows) {
-                result.push({ id: c.id, name: c.name, slug: c.slug, path: `${r.name} > ${c.name}`, level: 1, parentId: c.parent_id, courseCount: parseInt(c.course_count, 10) || 0, displayOrder: parseInt(c.display_order, 10) || 0 });
+                result.push({
+                    id: c.id,
+                    name: c.name,
+                    nameBn: c.name_bn || null,
+                    slug: c.slug,
+                    path: `${r.name} > ${c.name}`,
+                    level: 1,
+                    parentId: c.parent_id,
+                    courseCount: parseInt(c.course_count, 10) || 0,
+                    displayOrder: parseInt(c.display_order, 10) || 0,
+                });
                 const grandRes = await db.query(
-                    `SELECT id, name, slug, parent_id, COALESCE(level, 2) as level, COALESCE(course_count, 0) as course_count, COALESCE(display_order, 0) as display_order
+                    `SELECT id, name, name_bn, slug, parent_id, COALESCE(level, 2) as level, COALESCE(course_count, 0) as course_count, COALESCE(display_order, 0) as display_order
                      FROM admin_categories WHERE parent_id = $1 AND status = 'active' ORDER BY COALESCE(display_order, 0), name ASC`,
                     [c.id]
                 );
@@ -223,6 +248,7 @@ class AdminCategoryService {
                     result.push({
                         id: g.id,
                         name: g.name,
+                        nameBn: g.name_bn || null,
                         slug: g.slug,
                         path: `${r.name} > ${c.name} > ${g.name}`,
                         level: 2,
@@ -238,7 +264,7 @@ class AdminCategoryService {
 
     async findById(id) {
         const result = await db.query(
-            `SELECT c.*, p.name as parent_name, p.slug as parent_slug
+            `SELECT c.*, p.name as parent_name, p.name_bn as parent_name_bn, p.slug as parent_slug
              FROM admin_categories c
              LEFT JOIN admin_categories p ON c.parent_id = p.id
              WHERE c.id = $1`,
@@ -250,8 +276,10 @@ class AdminCategoryService {
             id: row.id,
             parentId: row.parent_id,
             parentName: row.parent_name,
+            parentNameBn: row.parent_name_bn || null,
             parentSlug: row.parent_slug,
             name: row.name,
+            nameBn: row.name_bn || null,
             slug: row.slug,
             description: row.description,
             status: row.status,
@@ -343,7 +371,7 @@ class AdminCategoryService {
     }
 
     async create(data) {
-        const { name, description, parentId, status = 'active', displayOrder } = data;
+        const { name, nameBn, description, parentId, status = 'active', displayOrder } = data;
         const slug = slugify(name);
         if (!slug) {
             throw new Error('Invalid name: could not generate slug');
@@ -375,16 +403,17 @@ class AdminCategoryService {
         }
 
         const result = await db.query(
-            `INSERT INTO admin_categories (parent_id, name, slug, description, status, level, display_order)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
+            `INSERT INTO admin_categories (parent_id, name, name_bn, slug, description, status, level, display_order)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              RETURNING *`,
-            [parentId || null, name.trim(), slug, description?.trim() || null, status, level, display_order]
+            [parentId || null, name.trim(), nameBn ? nameBn.trim() : null, slug, description?.trim() || null, status, level, display_order]
         );
         const row = result.rows[0];
         return {
             id: row.id,
             parentId: row.parent_id,
             name: row.name,
+            nameBn: row.name_bn || null,
             slug: row.slug,
             description: row.description,
             status: row.status,
@@ -400,7 +429,7 @@ class AdminCategoryService {
             throw new Error('Category not found');
         }
 
-        const { name, description, parentId, status, displayOrder } = data;
+        const { name, nameBn, description, parentId, status, displayOrder } = data;
         const updates = [];
         const values = [];
         let idx = 1;
@@ -411,6 +440,11 @@ class AdminCategoryService {
             updates.push(`name = $${idx}`, `slug = $${idx + 1}`);
             values.push(name.trim(), slug);
             idx += 2;
+        }
+        if (nameBn !== undefined) {
+            updates.push(`name_bn = $${idx}`);
+            values.push(nameBn ? String(nameBn).trim() || null : null);
+            idx++;
         }
         if (description !== undefined) {
             updates.push(`description = $${idx}`);
@@ -460,6 +494,7 @@ class AdminCategoryService {
             id: row.id,
             parentId: row.parent_id,
             name: row.name,
+            nameBn: row.name_bn || null,
             slug: row.slug,
             description: row.description,
             status: row.status,

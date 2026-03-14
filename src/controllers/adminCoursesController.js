@@ -2,6 +2,7 @@ const adminCoursesService = require('../services/adminCoursesService');
 const courseService = require('../services/courseService');
 const lessonService = require('../services/lessonService');
 const videoService = require('../services/videoService');
+const reviewService = require('../services/reviewService');
 const r2Storage = require('../services/r2StorageService');
 const path = require('path');
 const fs = require('fs');
@@ -165,6 +166,152 @@ class AdminCoursesController {
             res.json(updated);
         } catch (error) {
             console.error('Admin update course error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async getStats(req, res) {
+        try {
+            const stats = await adminCoursesService.getCourseStats(req.params.id);
+            if (!stats) {
+                return res.status(404).json({ error: 'Course not found' });
+            }
+            res.json(stats);
+        } catch (error) {
+            console.error('Admin course stats error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async getReviews(req, res) {
+        try {
+            const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
+            const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+            const result = await adminCoursesService.getCourseReviews(req.params.id, limit, offset);
+            if (!result) {
+                return res.status(404).json({ error: 'Course not found' });
+            }
+            res.json(result);
+        } catch (error) {
+            console.error('Admin course reviews error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async updateReview(req, res) {
+        try {
+            const { id: courseId, reviewId } = req.params;
+            const { rating, comment } = req.body;
+            const review = await reviewService.getReviewById(reviewId);
+            if (!review) {
+                return res.status(404).json({ error: 'Review not found' });
+            }
+            if (review.course_id !== courseId) {
+                return res.status(400).json({ error: 'Review does not belong to this course' });
+            }
+            const updated = await reviewService.updateReviewById(reviewId, { rating, comment });
+            res.json(updated);
+        } catch (error) {
+            if (error.message === 'Rating must be between 1 and 5') {
+                return res.status(400).json({ error: error.message });
+            }
+            console.error('Admin update review error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async deleteReview(req, res) {
+        try {
+            const { id: courseId, reviewId } = req.params;
+            const review = await reviewService.getReviewById(reviewId);
+            if (!review) {
+                return res.status(404).json({ error: 'Review not found' });
+            }
+            if (review.course_id !== courseId) {
+                return res.status(400).json({ error: 'Review does not belong to this course' });
+            }
+            await reviewService.deleteReviewById(reviewId);
+            res.json({ message: 'Review deleted' });
+        } catch (error) {
+            console.error('Admin delete review error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async setVideoViewCount(req, res) {
+        try {
+            const { id: courseId, videoId } = req.params;
+            const viewCount = req.body.viewCount != null ? req.body.viewCount : req.body.view_count;
+            const num = parseInt(viewCount, 10);
+            if (Number.isNaN(num) || num < 0) {
+                return res.status(400).json({ error: 'viewCount must be a non-negative number' });
+            }
+            const result = await adminCoursesService.setVideoViewCount(courseId, videoId, num);
+            if (!result) {
+                return res.status(404).json({ error: 'Video not found or does not belong to this course' });
+            }
+            res.json(result);
+        } catch (error) {
+            console.error('Admin set video view count error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async getEnrollments(req, res) {
+        try {
+            const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+            const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+            const result = await adminCoursesService.getCourseEnrollments(req.params.id, limit, offset);
+            if (!result) {
+                return res.status(404).json({ error: 'Course not found' });
+            }
+            res.json(result);
+        } catch (error) {
+            console.error('Admin course enrollments error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async addDummyEnrollments(req, res) {
+        try {
+            const courseId = req.params.id;
+            const count = parseInt(req.body.count ?? req.body.number ?? 0, 10);
+            if (Number.isNaN(count) || count < 1 || count > 100) {
+                return res.status(400).json({ error: 'count must be a number between 1 and 100' });
+            }
+            const result = await adminCoursesService.addDummyEnrollments(courseId, count);
+            if (!result) {
+                return res.status(404).json({ error: 'Course not found' });
+            }
+            res.status(201).json(result);
+        } catch (error) {
+            console.error('Admin add dummy enrollments error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async addReview(req, res) {
+        try {
+            const courseId = req.params.id;
+            const { studentName, review: comment, rating } = req.body;
+            if (rating == null || rating === '') {
+                return res.status(400).json({ error: 'rating is required (1–5)' });
+            }
+            const r = parseInt(rating, 10);
+            if (Number.isNaN(r) || r < 1 || r > 5) {
+                return res.status(400).json({ error: 'rating must be between 1 and 5' });
+            }
+            const result = await adminCoursesService.addSingleReview(courseId, {
+                studentName: studentName != null ? String(studentName).trim() : 'Student',
+                review: comment,
+                rating: r,
+            });
+            if (result === null) {
+                return res.status(404).json({ error: 'Course not found or reviews table missing' });
+            }
+            res.status(201).json(result);
+        } catch (error) {
+            console.error('Admin add review error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     }

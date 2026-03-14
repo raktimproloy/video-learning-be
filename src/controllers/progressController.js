@@ -106,6 +106,23 @@ async function getRecentActivity(req, res) {
 }
 
 /**
+ * GET /progress/activity-by-day
+ * Query: days (optional, default 7)
+ * Returns { activityByDay: [ { date, count, watchSeconds } ] } for dashboard line chart (watch time per day).
+ */
+async function getActivityByDay(req, res) {
+  try {
+    const userId = req.user.id;
+    const days = Math.min(31, Math.max(1, parseInt(req.query.days, 10) || 7));
+    const activityByDay = await progressService.getActivityByDay(userId, days);
+    return res.json({ activityByDay });
+  } catch (error) {
+    console.error('Get activity by day error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
  * GET /progress/dashboard
  * Returns dashboard stats: total courses, finished courses, total watch hours, overall %, progress rating.
  */
@@ -125,5 +142,6 @@ module.exports = {
   getVideoProgress,
   getCourseProgress,
   getRecentActivity,
+  getActivityByDay,
   getDashboardStats,
 };

@@ -18,6 +18,7 @@ async function getSettings(req, res) {
                 categories: tree.map(c => ({
                     id: c.id,
                     name: c.name,
+                    nameBn: c.nameBn ?? null,
                     slug: c.slug || c.name.toLowerCase().replace(/\s+/g, '-'),
                     path: c.path,
                     level: c.level ?? 0,

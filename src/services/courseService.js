@@ -178,7 +178,9 @@ class CourseService {
                     WHEN jsonb_typeof(courses.tags) = 'string' THEN courses.tags::jsonb
                     ELSE courses.tags
                 END as tags,
-                COALESCE(ac.slug, LOWER(REPLACE(TRIM(COALESCE(courses.category, '')), ' ', '-'))) as category_slug
+                COALESCE(ac.slug, LOWER(REPLACE(TRIM(COALESCE(courses.category, '')), ' ', '-'))) as category_slug,
+                ac.name as category_name,
+                ac.name_bn as category_name_bn
                 ${purchaseCheck}
                 ${ownershipCheck},
                 ${reviewsRatingQuery} as rating,
@@ -209,7 +211,9 @@ class CourseService {
             purchase_count: row.purchase_count || 0,
             total_lessons: row.total_lessons || 0,
             total_videos: row.total_videos || 0,
-            category_slug: row.category_slug || null
+            category_slug: row.category_slug || null,
+            category_name: row.category_name || null,
+            category_name_bn: row.category_name_bn || null
         }));
     }
 
@@ -266,7 +270,9 @@ class CourseService {
                     WHEN jsonb_typeof(courses.tags) = 'string' THEN courses.tags::jsonb
                     ELSE courses.tags
                 END as tags,
-                COALESCE(ac.slug, LOWER(REPLACE(TRIM(COALESCE(courses.category, '')), ' ', '-'))) as category_slug
+                COALESCE(ac.slug, LOWER(REPLACE(TRIM(COALESCE(courses.category, '')), ' ', '-'))) as category_slug,
+                ac.name as category_name,
+                ac.name_bn as category_name_bn
                 ${purchaseCheck}
                 ${ownershipCheck},
                 ${reviewsRatingQuery} as rating,
@@ -303,7 +309,9 @@ class CourseService {
             purchase_count: row.purchase_count || 0,
             total_lessons: row.total_lessons || 0,
             total_videos: row.total_videos || 0,
-            category_slug: row.category_slug || null
+            category_slug: row.category_slug || null,
+            category_name: row.category_name || null,
+            category_name_bn: row.category_name_bn || null
         }));
 
         return {
@@ -346,7 +354,9 @@ class CourseService {
             COALESCE(tp.name, users.email) as teacher_name,
             users.id as teacher_id,
             CASE WHEN courses.tags IS NULL THEN '[]'::jsonb WHEN jsonb_typeof(courses.tags) = 'string' THEN courses.tags::jsonb ELSE courses.tags END as tags,
-            COALESCE(ac.slug, LOWER(REPLACE(TRIM(COALESCE(courses.category, '')), ' ', '-'))) as category_slug
+            COALESCE(ac.slug, LOWER(REPLACE(TRIM(COALESCE(courses.category, '')), ' ', '-'))) as category_slug,
+            ac.name as category_name,
+            ac.name_bn as category_name_bn
             ${purchaseCheck} ${ownershipCheck},
             ${reviewsRatingQuery} as rating,
             ${reviewsCountQuery} as review_count,
@@ -375,6 +385,8 @@ class CourseService {
             total_lessons: row.total_lessons || 0,
             total_videos: row.total_videos || 0,
             category_slug: row.category_slug || null,
+            category_name: row.category_name || null,
+            category_name_bn: row.category_name_bn || null,
         });
 
         const limitVal = Math.min(Math.max(parseInt(limitPerSection, 10) || 8, 1), 20);
@@ -550,10 +562,14 @@ class CourseService {
                 (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id) as total_lessons,
                 (SELECT COUNT(*)::int FROM videos v 
                  JOIN lessons l ON v.lesson_id = l.id 
-                 WHERE l.course_id = courses.id) as total_videos
+                 WHERE l.course_id = courses.id) as total_videos,
+                COALESCE(ac.slug, LOWER(REPLACE(TRIM(COALESCE(courses.category, '')), ' ', '-'))) as category_slug,
+                ac.name as category_name,
+                ac.name_bn as category_name_bn
             FROM courses 
             LEFT JOIN users ON courses.teacher_id = users.id 
             LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
+            LEFT JOIN admin_categories ac ON courses.admin_category_id = ac.id
             ${dataWhereShifted}
             ${orderByClause}
             LIMIT $${limitParamIndex}::integer OFFSET $${offsetParamIndex}::integer
@@ -571,7 +587,10 @@ class CourseService {
             review_count: row.review_count || 0,
             purchase_count: row.purchase_count || 0,
             total_lessons: row.total_lessons || 0,
-            total_videos: row.total_videos || 0
+            total_videos: row.total_videos || 0,
+            category_slug: row.category_slug || null,
+            category_name: row.category_name || null,
+            category_name_bn: row.category_name_bn || null
         }));
 
         const currentPage = Math.max(1, parseInt(page, 10) || 1);

@@ -105,6 +105,62 @@ class ReviewService {
         );
         return result.rows[0] || null;
     }
+
+    /**
+     * Get a single review by ID (for admin).
+     */
+    async getReviewById(reviewId) {
+        const result = await db.query(
+            `SELECT r.*, u.email as user_email,
+                    COALESCE(sp.name, u.email) as user_name
+             FROM reviews r
+             JOIN users u ON r.user_id = u.id
+             LEFT JOIN student_profiles sp ON u.id = sp.user_id
+             WHERE r.id = $1`,
+            [reviewId]
+        );
+        return result.rows[0] || null;
+    }
+
+    /**
+     * Update a review by ID (admin only). Rating 1-5, comment optional.
+     */
+    async updateReviewById(reviewId, { rating, comment }) {
+        const updates = [];
+        const values = [];
+        let idx = 1;
+        if (rating !== undefined) {
+            const r = parseInt(rating, 10);
+            if (r < 1 || r > 5) throw new Error('Rating must be between 1 and 5');
+            updates.push(`rating = $${idx}`);
+            values.push(r);
+            idx++;
+        }
+        if (comment !== undefined) {
+            updates.push(`comment = $${idx}`);
+            values.push(comment === '' || comment == null ? null : String(comment));
+            idx++;
+        }
+        if (updates.length === 0) return this.getReviewById(reviewId);
+        updates.push(`updated_at = NOW()`);
+        values.push(reviewId);
+        const result = await db.query(
+            `UPDATE reviews SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`,
+            values
+        );
+        return result.rows[0] ? this.getReviewById(reviewId) : null;
+    }
+
+    /**
+     * Delete a review by ID (admin only).
+     */
+    async deleteReviewById(reviewId) {
+        const result = await db.query(
+            'DELETE FROM reviews WHERE id = $1 RETURNING id, course_id',
+            [reviewId]
+        );
+        return result.rows[0] || null;
+    }
 }
 
 module.exports = new ReviewService();

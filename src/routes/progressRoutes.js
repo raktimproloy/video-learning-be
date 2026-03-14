@@ -7,6 +7,7 @@ router.post('/video', verifyToken, progressController.saveVideoProgress);
 router.get('/video/:videoId', verifyToken, progressController.getVideoProgress);
 router.get('/course/:courseId', verifyToken, progressController.getCourseProgress);
 router.get('/recent', verifyToken, progressController.getRecentActivity);
+router.get('/activity-by-day', verifyToken, progressController.getActivityByDay);
 router.get('/dashboard', verifyToken, progressController.getDashboardStats);
 
 module.exports = router;
