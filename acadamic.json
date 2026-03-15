@@ -1,0 +1,239 @@
+{
+    "country": "Bangladesh",
+    "curriculum": "NCTB (National Curriculum and Textbook Board)",
+    "academic_levels": [
+      {
+        "level": "Class 5",
+        "books": [
+          {"bangla_name": "আমার বাংলা বই", "english_name": "My Bangla Book"},
+          {"bangla_name": "English for Today", "english_name": "English for Today"},
+          {"bangla_name": "প্রাথমিক গণিত", "english_name": "Elementary Mathematics"},
+          {"bangla_name": "প্রাথমিক বিজ্ঞান", "english_name": "Elementary Science"},
+          {"bangla_name": "বাংলাদেশ ও বিশ্বপরিচয়", "english_name": "Bangladesh and Global Studies"},
+          {"bangla_name": "ধর্ম ও নৈতিক শিক্ষা", "english_name": "Religion and Moral Education"}
+        ]
+      },
+      {
+        "level": "Class 6",
+        "books": [
+          {"bangla_name": "বাংলা", "english_name": "Bangla"},
+          {"bangla_name": "English", "english_name": "English"},
+          {"bangla_name": "গণিত", "english_name": "Mathematics"},
+          {"bangla_name": "বিজ্ঞান", "english_name": "Science"},
+          {"bangla_name": "ইতিহাস ও সামাজিক বিজ্ঞান", "english_name": "History and Social Science"},
+          {"bangla_name": "ডিজিটাল প্রযুক্তি", "english_name": "Digital Technology"},
+          {"bangla_name": "জীবন ও জীবিকা", "english_name": "Life and Livelihood"},
+          {"bangla_name": "স্বাস্থ্য সুরক্ষা", "english_name": "Wellbeing"},
+          {"bangla_name": "ধর্ম শিক্ষা", "english_name": "Religion Education"},
+          {"bangla_name": "শিল্প ও সংস্কৃতি", "english_name": "Arts and Culture"}
+        ]
+      },
+      {
+        "level": "Class 7",
+        "books": [
+          {"bangla_name": "বাংলা", "english_name": "Bangla"},
+          {"bangla_name": "English", "english_name": "English"},
+          {"bangla_name": "গণিত", "english_name": "Mathematics"},
+          {"bangla_name": "বিজ্ঞান", "english_name": "Science"},
+          {"bangla_name": "ইতিহাস ও সামাজিক বিজ্ঞান", "english_name": "History and Social Science"},
+          {"bangla_name": "ডিজিটাল প্রযুক্তি", "english_name": "Digital Technology"},
+          {"bangla_name": "জীবন ও জীবিকা", "english_name": "Life and Livelihood"},
+          {"bangla_name": "স্বাস্থ্য সুরক্ষা", "english_name": "Wellbeing"},
+          {"bangla_name": "ধর্ম শিক্ষা", "english_name": "Religion Education"},
+          {"bangla_name": "শিল্প ও সংস্কৃতি", "english_name": "Arts and Culture"}
+        ]
+      },
+      {
+        "level": "Class 8",
+        "books": [
+          {"bangla_name": "বাংলা", "english_name": "Bangla"},
+          {"bangla_name": "English", "english_name": "English"},
+          {"bangla_name": "গণিত", "english_name": "Mathematics"},
+          {"bangla_name": "বিজ্ঞান", "english_name": "Science"},
+          {"bangla_name": "ইতিহাস ও সামাজিক বিজ্ঞান", "english_name": "History and Social Science"},
+          {"bangla_name": "ডিজিটাল প্রযুক্তি", "english_name": "Digital Technology"},
+          {"bangla_name": "জীবন ও জীবিকা", "english_name": "Life and Livelihood"},
+          {"bangla_name": "স্বাস্থ্য সুরক্ষা", "english_name": "Wellbeing"},
+          {"bangla_name": "ধর্ম শিক্ষা", "english_name": "Religion Education"},
+          {"bangla_name": "শিল্প ও সংস্কৃতি", "english_name": "Arts and Culture"}
+        ]
+      },
+      {
+        "level": "Class 9",
+        "books": [
+          {"bangla_name": "বাংলা", "english_name": "Bangla"},
+          {"bangla_name": "English", "english_name": "English"},
+          {"bangla_name": "গণিত", "english_name": "Mathematics"},
+          {"bangla_name": "বিজ্ঞান", "english_name": "Science"},
+          {"bangla_name": "ইতিহাস ও সামাজিক বিজ্ঞান", "english_name": "History and Social Science"},
+          {"bangla_name": "ডিজিটাল প্রযুক্তি", "english_name": "Digital Technology"},
+          {"bangla_name": "জীবন ও জীবিকা", "english_name": "Life and Livelihood"},
+          {"bangla_name": "স্বাস্থ্য সুরক্ষা", "english_name": "Wellbeing"},
+          {"bangla_name": "ধর্ম শিক্ষা", "english_name": "Religion Education"},
+          {"bangla_name": "শিল্প ও সংস্কৃতি", "english_name": "Arts and Culture"}
+        ]
+      },
+      {
+        "level": "Class 10",
+        "books": [
+          {"bangla_name": "বাংলা", "english_name": "Bangla"},
+          {"bangla_name": "English", "english_name": "English"},
+          {"bangla_name": "গণিত", "english_name": "Mathematics"},
+          {"bangla_name": "বিজ্ঞান", "english_name": "Science"},
+          {"bangla_name": "ইতিহাস ও সামাজিক বিজ্ঞান", "english_name": "History and Social Science"},
+          {"bangla_name": "ডিজিটাল প্রযুক্তি", "english_name": "Digital Technology"},
+          {"bangla_name": "জীবন ও জীবিকা", "english_name": "Life and Livelihood"},
+          {"bangla_name": "স্বাস্থ্য সুরক্ষা", "english_name": "Wellbeing"},
+          {"bangla_name": "ধর্ম শিক্ষা", "english_name": "Religion Education"},
+          {"bangla_name": "শিল্প ও সংস্কৃতি", "english_name": "Arts and Culture"}
+        ]
+      },
+      {
+        "level": "Class 11 & 12 (HSC)",
+        "books": [
+            {"bangla_name": "বাংলা", "english_name": "Bangla"},
+            {"bangla_name": "ইংরেজি", "english_name": "English"},
+            {"bangla_name": "তথ্য ও যোগাযোগ প্রযুক্তি", "english_name": "Information and Communication Technology"},
+            {"bangla_name": "পদার্থবিজ্ঞান", "english_name": "Physics"},
+            {"bangla_name": "রসায়ন", "english_name": "Chemistry"},
+            {"bangla_name": "উচ্চতর গণিত", "english_name": "Higher Mathematics"},
+            {"bangla_name": "জীববিজ্ঞান", "english_name": "Biology"},
+            {"bangla_name": "হিসাববিজ্ঞান", "english_name": "Accounting"},
+            {"bangla_name": "ব্যবসায় সংগঠন ও ব্যবস্থাপনা", "english_name": "Business Organization and Management"},
+            {"bangla_name": "ফিন্যান্স, ব্যাংকিং ও বিমা", "english_name": "Finance, Banking and Insurance"},
+            {"bangla_name": "উৎপাদন ব্যবস্থাপনা ও বিপণন", "english_name": "Production Management and Marketing"},
+            {"bangla_name": "পৌরনীতি ও সুশাসন", "english_name": "Civics and Good Governance"},
+            {"bangla_name": "অর্থনীতি", "english_name": "Economics"},
+            {"bangla_name": "যুক্তিবিদ্যা", "english_name": "Logic"},
+            {"bangla_name": "সমাজবিজ্ঞান", "english_name": "Sociology"},
+            {"bangla_name": "ইতিহাস", "english_name": "History"},
+            {"bangla_name": "ভূগোল", "english_name": "Geography"}
+        ]
+      },
+      {
+        "level": "Admission",
+        "books": [
+            {"bangla_name": "পদার্থবিজ্ঞান", "english_name": "Physics"},
+            {"bangla_name": "রসায়ন", "english_name": "Chemistry"},
+            {"bangla_name": "গণিত", "english_name": "Mathematics"},
+            {"bangla_name": "জীববিজ্ঞান", "english_name": "Biology"},
+            {"bangla_name": "বাংলা", "english_name": "Bangla"},
+            {"bangla_name": "ইংরেজি", "english_name": "English"},
+            {"bangla_name": "সাধারণ জ্ঞান", "english_name": "General Knowledge (GK)"},
+            {"bangla_name": "হিসাববিজ্ঞান", "english_name": "Accounting"},
+            {"bangla_name": "ব্যবসায় সংগঠন ও ব্যবস্থাপনা", "english_name": "Business Organization and Management"},
+            {"bangla_name": "ফিন্যান্স ও ব্যাংকিং", "english_name": "Finance and Banking"},
+            {"bangla_name": "ইংরেজি", "english_name": "English"},
+            {"bangla_name": "বাংলা", "english_name": "Bangla"},
+            {"bangla_name": "ইংরেজি", "english_name": "English"},
+            {"bangla_name": "সাধারণ জ্ঞান", "english_name": "General Knowledge"},
+            {"bangla_name": "এমবিবিএস অ্যাডমিশন কোর্স", "english_name": "MBBS Admission Course"},
+            {"bangla_name": "বিডিএস (ডেন্টাল) অ্যাডমিশন", "english_name": "BDS (Dental) Admission"},
+            {"bangla_name": "নার্সিং অ্যাডমিশন", "english_name": "Nursing Admission"},
+            {"bangla_name": "বুয়েট/ইঞ্জিনিয়ারিং প্রিপারেশন", "english_name": "BUET/Engineering Preparation"},
+            {"bangla_name": "গুচ্ছ ইঞ্জিনিয়ারিং (CKRUET)", "english_name": "Engineering Cluster Admission"},
+            {"bangla_name": "আর্কিটেকচার ড্রয়িং", "english_name": "Architecture Drawing"}
+        ]
+      },
+      {
+        "level": "Jobs & Others",
+        "books": [
+            {"bangla_name": "বিসিএস প্রিলিমিনারি", "english_name": "BCS Preliminary"},
+            {"bangla_name": "বিসিএস লিখিত", "english_name": "BCS Written"},
+            {"bangla_name": "প্রাথমিক শিক্ষক নিয়োগ প্রস্তুতি", "english_name": "Primary Teacher Recruitment Preparation"},
+            {"bangla_name": "ব্যাংক জব প্রিপারেশন", "english_name": "Bank Job Preparation"},
+            {"bangla_name": "এনটিআরসিএ (শিক্ষক নিবন্ধন)", "english_name": "NTRCA (Teacher Registration)"},
+            {"bangla_name": "গণিত অলিম্পিয়াড প্রস্তুতি", "english_name": "Math Olympiad Preparation"},
+            {"bangla_name": "ফিজিক্স অলিম্পিয়াড", "english_name": "Physics Olympiad Prep"},
+            {"bangla_name": "প্রোগ্রামিং ফর কিডস", "english_name": "Programming for Kids (Scratch/Python)"},
+            {"bangla_name": "আইবিএ অ্যাডমিশন (DU/JU)", "english_name": "IBA Admission (DU/JU)"},
+            {"bangla_name": "বিইউপি অ্যাডমিশন", "english_name": "BUP Admission Preparation"},
+            {"bangla_name": "ক্যাডেট কলেজ অ্যাডমিশন", "english_name": "Cadet College Admission"}
+        ]
+      }
+    ],
+    "honours": {
+      "country": "Bangladesh",
+      "education_level": "Honours / Undergraduate",
+      "faculties": [
+        {
+          "faculty_name": "Faculty of Arts (কলা অনুষদ)",
+          "subjects": [
+            {"bangla_name": "বাংলা", "english_name": "Bangla"},
+            {"bangla_name": "ইংরেজি", "english_name": "English"},
+            {"bangla_name": "আরবি", "english_name": "Arabic"},
+            {"bangla_name": "ফারসি ভাষা ও সাহিত্য", "english_name": "Persian Language and Literature"},
+            {"bangla_name": "উর্দু", "english_name": "Urdu"},
+            {"bangla_name": "সংস্কৃত", "english_name": "Sanskrit"},
+            {"bangla_name": "পালি", "english_name": "Pali"},
+            {"bangla_name": "ইতিহাস", "english_name": "History"},
+            {"bangla_name": "ইসলামের ইতিহাস ও সংস্কৃতি", "english_name": "Islamic History and Culture"},
+            {"bangla_name": "দর্শন", "english_name": "Philosophy"},
+            {"bangla_name": "ইসলামিক স্টাডিজ", "english_name": "Islamic Studies"}
+          ]
+        },
+        {
+          "faculty_name": "Faculty of Social Science (সামাজিক বিজ্ঞান অনুষদ)",
+          "subjects": [
+            {"bangla_name": "অর্থনীতি", "english_name": "Economics"},
+            {"bangla_name": "রাষ্ট্রবিজ্ঞান", "english_name": "Political Science"},
+            {"bangla_name": "সমাজবিজ্ঞান", "english_name": "Sociology"},
+            {"bangla_name": "সমাজকর্ম", "english_name": "Social Work"},
+            {"bangla_name": "নৃবিজ্ঞান", "english_name": "Anthropology"},
+            {"bangla_name": "লোক প্রশাসন", "english_name": "Public Administration"},
+            {"bangla_name": "গণযোগাযোগ ও সাংবাদিকতা", "english_name": "Mass Communication and Journalism"},
+            {"bangla_name": "আন্তর্জাতিক সম্পর্ক", "english_name": "International Relations"},
+            {"bangla_name": "গ্রন্থাগার ও তথ্য বিজ্ঞান", "english_name": "Library and Information Science"}
+          ]
+        },
+        {
+          "faculty_name": "Faculty of Business Studies (ব্যবসায় শিক্ষা অনুষদ)",
+          "subjects": [
+            {"bangla_name": "হিসাববিজ্ঞান", "english_name": "Accounting"},
+            {"bangla_name": "ব্যবস্থাপনা", "english_name": "Management"},
+            {"bangla_name": "ফিন্যান্স ও ব্যাংকিং", "english_name": "Finance and Banking"},
+            {"bangla_name": "মার্কেটিং", "english_name": "Marketing"},
+            {"bangla_name": "পর্যটন ও আতিথেয়তা ব্যবস্থাপনা", "english_name": "Tourism and Hospitality Management"},
+            {"bangla_name": "মানব সম্পদ ব্যবস্থাপনা", "english_name": "Human Resource Management"}
+          ]
+        },
+        {
+          "faculty_name": "Faculty of Science (বিজ্ঞান অনুষদ)",
+          "subjects": [
+            {"bangla_name": "পদার্থবিজ্ঞান", "english_name": "Physics"},
+            {"bangla_name": "রসায়ন", "english_name": "Chemistry"},
+            {"bangla_name": "গণিত", "english_name": "Mathematics"},
+            {"bangla_name": "পরিসংখ্যান", "english_name": "Statistics"},
+            {"bangla_name": "ভূগোল ও পরিবেশ", "english_name": "Geography and Environment"},
+            {"bangla_name": "ভূতত্ত্ব", "english_name": "Geology"},
+            {"bangla_name": "কম্পিউটার সায়েন্স", "english_name": "Computer Science"}
+          ]
+        },
+        {
+          "faculty_name": "Faculty of Biological Science (জীববিজ্ঞান অনুষদ)",
+          "subjects": [
+            {"bangla_name": "উদ্ভিদবিজ্ঞান", "english_name": "Botany"},
+            {"bangla_name": "প্রাণিবিজ্ঞান", "english_name": "Zoology"},
+            {"bangla_name": "মৃত্তিকা বিজ্ঞান", "english_name": "Soil Science"},
+            {"bangla_name": "প্রাণরসায়ন ও অনুপ্রাণ বিজ্ঞান", "english_name": "Biochemistry and Molecular Biology"},
+            {"bangla_name": "মনোবিজ্ঞান", "english_name": "Psychology"},
+            {"bangla_name": "অণুজীব বিজ্ঞান", "english_name": "Microbiology"},
+            {"bangla_name": "ফার্মাসি", "english_name": "Pharmacy"},
+            {"bangla_name": "মৎস্য বিজ্ঞান", "english_name": "Fisheries"}
+          ]
+        },
+        {
+          "faculty_name": "Professional & Others (প্রফেশনাল ও অন্যান্য)",
+          "subjects": [
+            {"bangla_name": "আইন (এলএলবি)", "english_name": "Law (LLB)"},
+            {"bangla_name": "চারুকলা", "english_name": "Fine Arts"},
+            {"bangla_name": "সঙ্গীত", "english_name": "Music"},
+            {"bangla_name": "থিয়েটার ও পারফরম্যান্স স্টাডিজ", "english_name": "Theatre and Performance Studies"},
+            {"bangla_name": "গার্হস্থ্য অর্থনীতি", "english_name": "Home Economics"},
+            {"bangla_name": "শারীরিক শিক্ষা ও ক্রীড়া বিজ্ঞান", "english_name": "Physical Education and Sports Science"},
+            {"bangla_name": "শিক্ষা (বিএড অনার্স)", "english_name": "Education (B.Ed Honours)"}
+          ]
+        }
+      ]
+    }
+  }

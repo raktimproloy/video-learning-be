@@ -1,4 +1,7 @@
 const db = require('../../db');
+const cache = require('../utils/ttlCache');
+
+const PUBLIC_SETTINGS_CACHE_KEY = 'public:settings:v1';
 
 /**
  * Generate URL-friendly slug from name
@@ -318,6 +321,7 @@ class AdminCategoryService {
         for (const id of ids) {
             await this.incrementCourseCount(id);
         }
+        cache.delete(PUBLIC_SETTINGS_CACHE_KEY);
     }
 
     /**
@@ -329,6 +333,7 @@ class AdminCategoryService {
         for (const id of ids) {
             await this.decrementCourseCount(id);
         }
+        cache.delete(PUBLIC_SETTINGS_CACHE_KEY);
     }
 
     /**

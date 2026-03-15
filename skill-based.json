@@ -1,0 +1,74 @@
+{
+    "skill_categories": [
+      {
+        "category": "Information Technology & Software",
+        "courses": [
+          {"bangla_name": "ফুল স্ট্যাক ওয়েব ডেভেলপমেন্ট", "english_name": "Full Stack Web Development"},
+          {"bangla_name": "পাইথন প্রোগ্রামিং", "english_name": "Python Programming"},
+          {"bangla_name": "অ্যান্ড্রয়েড অ্যাপ ডেভেলপমেন্ট", "english_name": "Android App Development"},
+          {"bangla_name": "আইওএস অ্যাপ ডেভেলপমেন্ট", "english_name": "iOS App Development"},
+          {"bangla_name": "সফটওয়্যার টেস্টিং ও কোয়ালিটি অ্যাসুরেন্স", "english_name": "Software Testing and QA"},
+          {"bangla_name": "সাইবার সিকিউরিটি ও ইথিক্যাল হ্যাকিং", "english_name": "Cyber Security and Ethical Hacking"},
+          {"bangla_name": "ডেটা সায়েন্স ও মেশিন লার্নিং", "english_name": "Data Science and Machine Learning"},
+          {"bangla_name": "ক্লাউড কম্পিউটিং (AWS/Azure)", "english_name": "Cloud Computing (AWS/Azure)"},
+          {"bangla_name": "ডাটাবেস ম্যানেজমেন্ট সিস্টেম", "english_name": "Database Management System (DBMS)"},
+          {"bangla_name": "এমএস অফিস (Word, Excel, PowerPoint)", "english_name": "MS Office (Word, Excel, PowerPoint)"}
+        ]
+      },
+      {
+        "category": "Creative Arts & Design",
+        "courses": [
+          {"bangla_name": "গ্রাফিক ডিজাইন", "english_name": "Graphic Design"},
+          {"bangla_name": "ইউআই/ইউএক্স ডিজাইন", "english_name": "UI/UX Design"},
+          {"bangla_name": "মোশন গ্রাফিক্স ও অ্যানিমেশন", "english_name": "Motion Graphics and Animation"},
+          {"bangla_name": "ভিডিও এডিটিং", "english_name": "Video Editing"},
+          {"bangla_name": "থ্রিডি মডেলিং ও রেন্ডারিং", "english_name": "3D Modeling and Rendering"},
+          {"bangla_name": "প্রফেশনাল ফটোগ্রাফি", "english_name": "Professional Photography"},
+          {"bangla_name": "অটোক্যাড ও আর্কিটেকচারাল ডিজাইন", "english_name": "AutoCAD and Architectural Design"}
+        ]
+      },
+      {
+        "category": "Digital Marketing & Business",
+        "courses": [
+          {"bangla_name": "ডিজিটাল মার্কেটিং মাস্টারক্লাস", "english_name": "Digital Marketing Masterclass"},
+          {"bangla_name": "সার্চ ইঞ্জিন অপটিমাইজেশন (SEO)", "english_name": "Search Engine Optimization (SEO)"},
+          {"bangla_name": "সোশ্যাল মিডিয়া মার্কেটিং", "english_name": "Social Media Marketing"},
+          {"bangla_name": "কন্টেন্ট রাইটিং ও কপিরাইটিং", "english_name": "Content Writing and Copywriting"},
+          {"bangla_name": "অ্যাফিলিয়েট মার্কেটিং", "english_name": "Affiliate Marketing"},
+          {"bangla_name": "অ্যাডভান্সড এক্সেল ও ডেটা অ্যানালাইসিস", "english_name": "Advanced Excel and Data Analysis"},
+          {"bangla_name": "প্রজেক্ট ম্যানেজমেন্ট", "english_name": "Project Management"},
+          {"bangla_name": "হিউম্যান রিসোর্স ম্যানেজমেন্ট", "english_name": "Human Resource Management (HRM)"}
+        ]
+      },
+      {
+        "category": "Language & Communication",
+        "courses": [
+          {"bangla_name": "স্পোকেন ইংলিশ", "english_name": "Spoken English"},
+          {"bangla_name": "আইইএলটিএস প্রিপারেশন", "english_name": "IELTS Preparation"},
+          {"bangla_name": "কর্পোরেট কমিউনিকেশন ও প্রেজেন্টেশন", "english_name": "Corporate Communication and Presentation"},
+          {"bangla_name": "জাপানিজ ভাষা শিক্ষা", "english_name": "Japanese Language Learning"},
+          {"bangla_name": "আরবি ভাষা শিক্ষা", "english_name": "Arabic Language Learning"}
+        ]
+      },
+      {
+        "category": "Freelancing & Outsourcing",
+        "courses": [
+          {"bangla_name": "ফাইভার ও আপওয়ার্ক মাস্টারক্লাস", "english_name": "Fiverr and Upwork Masterclass"},
+          {"bangla_name": "লিড জেনারেশন", "english_name": "Lead Generation"},
+          {"bangla_name": "ভার্চুয়াল অ্যাসিস্ট্যান্ট ট্রেনিং", "english_name": "Virtual Assistant Training"},
+          {"bangla_name": "ডাটা এন্ট্রি অপারেশন", "english_name": "Data Entry Operation"}
+        ]
+      },
+      {
+        "category": "Professional & Vocational Skills",
+        "courses": [
+          {"bangla_name": "ইলেকট্রিক্যাল হাউজ ওয়্যারিং", "english_name": "Electrical House Wiring"},
+          {"bangla_name": "রেফ্রিজারেশন ও এয়ার কন্ডিশনিং (AC) রিপেয়ার", "english_name": "Refrigeration and AC Repair"},
+          {"bangla_name": "মোবাইল সার্ভিসিং", "english_name": "Mobile Servicing"},
+          {"bangla_name": "ফ্যাশন ডিজাইনিং ও টেইলরিং", "english_name": "Fashion Designing and Tailoring"},
+          {"bangla_name": "বিউটিশিয়ান ও মেকআপ আর্টিস্ট কোর্স", "english_name": "Beautician and Makeup Artist Course"},
+          {"bangla_name": "রান্না ও বেকিং", "english_name": "Cooking and Baking"}
+        ]
+      }
+    ]
+  }

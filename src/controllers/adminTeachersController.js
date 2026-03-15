@@ -27,6 +27,36 @@ class AdminTeachersController {
             res.status(500).json({ error: 'Internal server error' });
         }
     }
+
+    async update(req, res) {
+        try {
+            const teacher = await adminTeachersService.updateTeacher(req.params.id, req.body);
+            if (!teacher) {
+                return res.status(404).json({ error: 'Teacher not found' });
+            }
+            res.json(teacher);
+        } catch (error) {
+            console.error('Admin update teacher error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async delete(req, res) {
+        try {
+            const id = req.params.id;
+            const result = await adminTeachersService.deleteTeacher(id);
+            res.json(result);
+        } catch (error) {
+            if (error.message === 'Teacher not found' || error.message === 'User is not a teacher and cannot be deleted via this action') {
+                return res.status(404).json({ error: error.message });
+            }
+            if (error.message && error.message.includes('storage')) {
+                return res.status(502).json({ error: error.message });
+            }
+            console.error('Admin delete teacher error:', error);
+            res.status(500).json({ error: error.message || 'Internal server error' });
+        }
+    }
 }
 
 module.exports = new AdminTeachersController();
