@@ -177,7 +177,7 @@ async function sendCourseAnnouncementPush(announcement) {
                 courseTitle: String(courseTitle),
                 announcementTitle: String(announcement.title || ''),
                 announcementBody: String(announcement.body || ''),
-                icon: '/favicon.svg',
+                icon: '/images/logo/favIcon.png',
             },
         });
     } catch (err) {

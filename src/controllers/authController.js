@@ -104,16 +104,8 @@ class AuthController {
             // Update role to teacher
             const updatedUser = await userService.updateRole(userId, 'teacher');
 
-            // Create an empty teacher profile (no dummy content)
-            await userService.createTeacherProfile(userId, {
-                name: null,
-                bio: null,
-                location: null,
-                avatar: null,
-                specialization: [],
-                experience: null,
-                certifications: []
-            });
+            // Create teacher profile with default avatar (profile_image_path = /images/default-teacher.png)
+            await teacherProfileService.createProfile(userId);
 
             // Generate new token with updated role
             const token = jwt.sign(
