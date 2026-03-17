@@ -25,7 +25,7 @@ class AdminAuthController {
             const token = jwt.sign(
                 { id: admin.id, email: admin.email, role: 'admin' },
                 process.env.JWT_SECRET || 'your_jwt_secret',
-                { expiresIn: '24h' }
+                { expiresIn: '7d' }
             );
 
             res.json({

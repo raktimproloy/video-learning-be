@@ -75,7 +75,7 @@ class AuthController {
             const token = jwt.sign(
                 { id: user.id, email: user.email, role: user.role || 'student' },
                 process.env.JWT_SECRET || 'your_jwt_secret',
-                { expiresIn: '24h' }
+                { expiresIn: '7d' }
             );
 
             const needsProfileCompletion = user.onboarding_completed === false;
@@ -125,7 +125,7 @@ class AuthController {
             const token = jwt.sign(
                 { id: updatedUser.id, email: updatedUser.email, role: updatedUser.role },
                 process.env.JWT_SECRET || 'your_jwt_secret',
-                { expiresIn: '24h' }
+                { expiresIn: '7d' }
             );
 
             res.json({ 
@@ -171,7 +171,7 @@ class AuthController {
                 const token = jwt.sign(
                     { id: updatedUser.id, email: updatedUser.email, role: 'teacher' },
                     process.env.JWT_SECRET || 'your_jwt_secret',
-                    { expiresIn: '24h' }
+                    { expiresIn: '7d' }
                 );
 
                 return res.json({ 
@@ -187,7 +187,7 @@ class AuthController {
                 const token = jwt.sign(
                     { id: updatedUser.id, email: updatedUser.email, role: 'student' },
                     process.env.JWT_SECRET || 'your_jwt_secret',
-                    { expiresIn: '24h' }
+                    { expiresIn: '7d' }
                 );
 
                 return res.json({ 
@@ -275,7 +275,7 @@ class AuthController {
             const token = jwt.sign(
                 { id: user.id, email: user.email, role: user.role || 'student' },
                 process.env.JWT_SECRET || 'your_jwt_secret',
-                { expiresIn: '24h' }
+                { expiresIn: '7d' }
             );
 
             const needsProfileCompletion = user.onboarding_completed === false;
