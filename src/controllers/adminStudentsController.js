@@ -27,6 +27,38 @@ class AdminStudentsController {
             res.status(500).json({ error: 'Internal server error' });
         }
     }
+
+    async update(req, res) {
+        try {
+            const id = req.params.id;
+            const payload = {
+                name: req.body.name,
+                email: req.body.email,
+            };
+            const updated = await adminStudentsService.updateStudent(id, payload);
+            if (!updated) {
+                return res.status(404).json({ error: 'Student not found' });
+            }
+            res.json(updated);
+        } catch (error) {
+            console.error('Admin update student error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async delete(req, res) {
+        try {
+            const id = req.params.id;
+            const result = await adminStudentsService.deleteStudent(id);
+            res.json(result);
+        } catch (error) {
+            console.error('Admin delete student error:', error);
+            if (error && error.message === 'Student not found') {
+                return res.status(404).json({ error: 'Student not found' });
+            }
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
 }
 
 module.exports = new AdminStudentsController();

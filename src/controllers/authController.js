@@ -78,7 +78,21 @@ class AuthController {
                 { expiresIn: '24h' }
             );
 
-            res.json({ token, user: { id: user.id, email: user.email, role: user.role || 'student' } });
+            const needsProfileCompletion = user.onboarding_completed === false;
+
+            res.json({
+                token,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    role: user.role || 'student',
+                    name: user.name || null,
+                    onboardingCompleted: !!user.onboarding_completed,
+                    onboardingRole: user.onboarding_role || null,
+                    onboardingCategory: user.onboarding_category || null,
+                },
+                needsProfileCompletion,
+            });
         } catch (error) {
             console.error('Login error:', error);
             res.status(500).json({ error: 'Internal server error' });
@@ -263,7 +277,22 @@ class AuthController {
                 process.env.JWT_SECRET || 'your_jwt_secret',
                 { expiresIn: '24h' }
             );
-            res.json({ token, user: { id: user.id, email: user.email, role: user.role || 'student' } });
+
+            const needsProfileCompletion = user.onboarding_completed === false;
+
+            res.json({
+                token,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    role: user.role || 'student',
+                    name: user.name || null,
+                    onboardingCompleted: !!user.onboarding_completed,
+                    onboardingRole: user.onboarding_role || null,
+                    onboardingCategory: user.onboarding_category || null,
+                },
+                needsProfileCompletion,
+            });
         } catch (err) {
             const status = err.response?.status;
             const data = err.response?.data;
@@ -371,7 +400,11 @@ class AuthController {
                 id: user.id, 
                 email: user.email, 
                 role: user.role || 'student',
-                linkedGoogle: !!user.google_id
+                name: user.name || null,
+                linkedGoogle: !!user.google_id,
+                onboardingCompleted: !!user.onboarding_completed,
+                onboardingRole: user.onboarding_role || null,
+                onboardingCategory: user.onboarding_category || null,
             };
 
             // Always check if teacher profile exists, regardless of current role

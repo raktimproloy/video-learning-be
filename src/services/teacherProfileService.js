@@ -2,6 +2,7 @@ const db = require('../../db');
 const emailService = require('./emailService');
 const smsService = require('./smsService');
 const { hasColumn } = require('../utils/dbSchemaCache');
+const userService = require('./userService');
 
 class TeacherProfileService {
     /**
@@ -257,6 +258,15 @@ class TeacherProfileService {
         // Recompute verified badge after any update (can flip on/off)
         await this.syncVerifiedBadge(userId);
         return await this.getProfile(userId);
+    }
+
+    /**
+     * Mark onboarding as completed in users table (idempotent).
+     */
+    async markOnboardingIfNeeded(userId, { role, category } = {}) {
+        const user = await userService.findById(userId);
+        if (!user || user.onboarding_completed) return user;
+        return await userService.markOnboardingCompleted(userId, role || 'teacher', category || null);
     }
 
     /**

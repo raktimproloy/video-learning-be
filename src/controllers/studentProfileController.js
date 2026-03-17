@@ -122,6 +122,17 @@ class StudentProfileController {
 
             const updatedProfile = await studentProfileService.updateProfile(req.user.id, profileData);
 
+            // Mark onboarding completed for student, storing chosen category if provided
+            const interestCategory = typeof req.body.interest_category === 'string' ? req.body.interest_category : undefined;
+            try {
+                await studentProfileService.markOnboardingIfNeeded(req.user.id, {
+                    role: 'student',
+                    category: interestCategory,
+                });
+            } catch (onboardErr) {
+                console.warn('Failed to mark student onboarding completed:', onboardErr.message || onboardErr);
+            }
+
             // Enrich profile image URL
             if (updatedProfile.profile_image_path) {
                 const publicUrl = r2Storage.getPublicUrl ? r2Storage.getPublicUrl(updatedProfile.profile_image_path) : null;

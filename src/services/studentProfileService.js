@@ -3,6 +3,7 @@ const r2Storage = require('./r2StorageService');
 const userPasswordService = require('./userPasswordService');
 const emailService = require('./emailService');
 const smsService = require('./smsService');
+const userService = require('./userService');
 
 class StudentProfileService {
     /**
@@ -194,6 +195,15 @@ class StudentProfileService {
      */
     async changePassword(userId, currentPassword, newPassword) {
         return await userPasswordService.changePassword(userId, currentPassword, newPassword);
+    }
+
+    /**
+     * Mark onboarding as completed in users table (idempotent).
+     */
+    async markOnboardingIfNeeded(userId, { role, category } = {}) {
+        const user = await userService.findById(userId);
+        if (!user || user.onboarding_completed) return user;
+        return await userService.markOnboardingCompleted(userId, role || 'student', category || null);
     }
 }
 

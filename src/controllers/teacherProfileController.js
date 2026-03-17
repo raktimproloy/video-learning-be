@@ -255,6 +255,24 @@ class TeacherProfileController {
                 });
             }
 
+            // Mark onboarding completed for teacher, storing chosen category from specialization if any
+            let onboardingCategory = null;
+            if (Array.isArray(profileData.specialization) && profileData.specialization.length > 0) {
+                const hasAcademic = profileData.specialization.includes('academic');
+                const hasSkill = profileData.specialization.includes('skill') || profileData.specialization.includes('skill-based');
+                if (hasAcademic && hasSkill) onboardingCategory = 'both';
+                else if (hasAcademic) onboardingCategory = 'academic';
+                else if (hasSkill) onboardingCategory = 'skill-based';
+            }
+            try {
+                await teacherProfileService.markOnboardingIfNeeded(req.user.id, {
+                    role: 'teacher',
+                    category: onboardingCategory,
+                });
+            } catch (onboardErr) {
+                console.warn('Failed to mark teacher onboarding completed:', onboardErr.message || onboardErr);
+            }
+
             res.json(updatedProfile);
         } catch (error) {
             console.error('Update profile error:', error);

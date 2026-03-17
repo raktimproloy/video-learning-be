@@ -10,7 +10,7 @@ class UserService {
         // All users start as 'student' by default
         // They can join as teacher later via join-teacher endpoint
         const result = await db.query(
-            'INSERT INTO users (email, password_hash, role) VALUES ($1, $2, $3) RETURNING id, email, role, created_at',
+            'INSERT INTO users (email, password_hash, role, onboarding_completed) VALUES ($1, $2, $3, FALSE) RETURNING id, email, role, name, onboarding_completed, onboarding_role, onboarding_category, created_at, google_id',
             [email, passwordHash, 'student']
         );
         return result.rows[0];
@@ -27,23 +27,23 @@ class UserService {
         if (user) return user;
         user = await this.findByEmail(email);
         if (user) {
-            await db.query('UPDATE users SET google_id = $1 WHERE id = $2', [googleId, user.id]);
+            await db.query('UPDATE users SET google_id = $1, name = COALESCE(name, $2) WHERE id = $3', [googleId, name || null, user.id]);
             return (await this.findById(user.id)) || user;
         }
         const result = await db.query(
-            'INSERT INTO users (email, password_hash, role, google_id) VALUES ($1, NULL, $2, $3) RETURNING id, email, role, created_at',
-            [email, 'student', googleId]
+            'INSERT INTO users (email, password_hash, role, google_id, name, onboarding_completed) VALUES ($1, NULL, $2, $3, $4, FALSE) RETURNING id, email, role, name, onboarding_completed, onboarding_role, onboarding_category, created_at, google_id',
+            [email, 'student', googleId, name || null]
         );
         return result.rows[0];
     }
 
     async findByEmail(email) {
-        const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+        const result = await db.query('SELECT id, email, role, name, onboarding_completed, onboarding_role, onboarding_category, created_at, google_id, password_hash FROM users WHERE email = $1', [email]);
         return result.rows[0];
     }
 
     async findById(id) {
-        const result = await db.query('SELECT id, email, role, created_at, google_id FROM users WHERE id = $1', [id]);
+        const result = await db.query('SELECT id, email, role, name, onboarding_completed, onboarding_role, onboarding_category, created_at, google_id FROM users WHERE id = $1', [id]);
         return result.rows[0];
     }
 
@@ -60,8 +60,16 @@ class UserService {
 
     async updateRole(userId, newRole) {
         const result = await db.query(
-            'UPDATE users SET role = $1 WHERE id = $2 RETURNING id, email, role, created_at',
+            'UPDATE users SET role = $1 WHERE id = $2 RETURNING id, email, role, name, onboarding_completed, onboarding_role, onboarding_category, created_at, google_id',
             [newRole, userId]
+        );
+        return result.rows[0];
+    }
+
+    async markOnboardingCompleted(userId, role, category) {
+        const result = await db.query(
+            'UPDATE users SET onboarding_completed = TRUE, onboarding_role = COALESCE(onboarding_role, $2), onboarding_category = COALESCE(onboarding_category, $3) WHERE id = $1 RETURNING id, email, role, name, onboarding_completed, onboarding_role, onboarding_category, created_at, google_id',
+            [userId, role || null, category || null]
         );
         return result.rows[0];
     }

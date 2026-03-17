@@ -1,4 +1,5 @@
 const db = require('../../db');
+const adminTeachersService = require('./adminTeachersService');
 
 class AdminStudentsService {
     async list(skip = 0, limit = 10, q = null) {
@@ -66,12 +67,16 @@ class AdminStudentsService {
             `SELECT 
                 u.id,
                 u.email,
+                u.role,
                 u.created_at,
                 sp.name,
-                sp.bio
+                sp.bio,
+                sp.phone,
+                sp.profile_image_path,
+                EXISTS (SELECT 1 FROM teacher_profiles tp WHERE tp.user_id = u.id) AS has_teacher_profile
              FROM users u
              LEFT JOIN student_profiles sp ON u.id = sp.user_id
-             WHERE u.id = $1 AND u.role = 'student'`,
+             WHERE u.id = $1`,
             [id]
         );
         const row = result.rows[0];
@@ -97,16 +102,114 @@ class AdminStudentsService {
             completedCourses = parseInt(compResult.rows[0]?.c, 10) || 0;
         }
 
+        const isAlsoTeacher = row.role === 'teacher' || row.has_teacher_profile === true;
+
         return {
             id: row.id,
             email: row.email,
             name: row.name || row.email,
             bio: row.bio || null,
+            phone: row.phone || null,
+            profileImagePath: row.profile_image_path || null,
             enrolledCourses,
             completedCourses,
             completionRate: enrolledCourses > 0 ? Math.round((completedCourses / enrolledCourses) * 100) : 0,
             joinedAt: row.created_at,
+            isAlsoTeacher,
         };
+    }
+
+    /**
+     * Update basic student fields (email and profile name).
+     * Returns the updated student detail or null if not found.
+     */
+    async updateStudent(id, payload) {
+        const client = await db.pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            if (payload.email !== undefined) {
+                await client.query(
+                    'UPDATE users SET email = $1 WHERE id = $2',
+                    [payload.email, id]
+                );
+            }
+
+            if (payload.name !== undefined) {
+                const existing = await client.query(
+                    'SELECT user_id FROM student_profiles WHERE user_id = $1',
+                    [id]
+                );
+                if (existing.rows.length > 0) {
+                    await client.query(
+                        'UPDATE student_profiles SET name = $1, updated_at = NOW() WHERE user_id = $2',
+                        [payload.name, id]
+                    );
+                } else {
+                    await client.query(
+                        'INSERT INTO student_profiles (user_id, name) VALUES ($1, $2)',
+                        [id, payload.name]
+                    );
+                }
+            }
+
+            await client.query('COMMIT');
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw error;
+        } finally {
+            client.release();
+        }
+
+        return this.getById(id);
+    }
+
+    /**
+     * Permanently delete a student and all associated data.
+     * If the user is also a teacher, delegate to AdminTeachersService.deleteTeacher
+     * so that teacher-owned courses, videos, and storage objects are cleaned up too.
+     */
+    async deleteStudent(id) {
+        const userRes = await db.query(
+            `SELECT 
+                u.id,
+                u.role,
+                EXISTS (SELECT 1 FROM teacher_profiles tp WHERE tp.user_id = u.id) AS has_teacher_profile
+             FROM users u
+             WHERE u.id = $1`,
+            [id]
+        );
+        const userRow = userRes.rows[0];
+        if (!userRow) {
+            throw new Error('Student not found');
+        }
+
+        const isAlsoTeacher = userRow.role === 'teacher' || userRow.has_teacher_profile === true;
+
+        if (isAlsoTeacher) {
+            const result = await adminTeachersService.deleteTeacher(id);
+            return {
+                message: result.message || 'Student (who was also a teacher) and all associated data have been permanently removed.',
+                wasAlsoTeacher: true,
+            };
+        }
+
+        const client = await db.pool.connect();
+        try {
+            await client.query('BEGIN');
+            const delRes = await client.query('DELETE FROM users WHERE id = $1', [id]);
+            if (delRes.rowCount === 0) {
+                throw new Error('Student not found');
+            }
+            await client.query('COMMIT');
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw error;
+        } finally {
+            client.release();
+        }
+
+        return { message: 'Student and all associated data have been permanently removed.', wasAlsoTeacher: false };
     }
 }
 
