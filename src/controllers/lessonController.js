@@ -1149,7 +1149,11 @@ class LessonController {
             const existingLesson = await lessonService.getLessonById(req.params.id);
             if (!existingLesson) return res.status(404).json({ error: 'Lesson not found' });
 
-            const course = await courseService.getCourseById(existingLesson.course_id);
+            // Load course in owner-aware mode so teacher can see inactive/draft courses too
+            const course = await courseService.getCourseById(existingLesson.course_id, req.user.id);
+            if (!course) {
+                return res.status(404).json({ error: 'Course not found' });
+            }
             if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
 
             await lessonService.deleteLesson(req.params.id);

@@ -86,7 +86,6 @@ class CourseController {
             const required = [
                 { key: 'title', value: title },
                 { key: 'shortDescription', value: shortDescription },
-                { key: 'fullDescription', value: fullDescription },
                 { key: 'level', value: level },
                 { key: 'courseType', value: courseType },
                 { key: 'price', value: price },
@@ -96,7 +95,7 @@ class CourseController {
             if (missing.length > 0) {
                 return res.status(400).json({
                     error: 'Missing required fields',
-                    required: ['title', 'shortDescription', 'fullDescription', 'level', 'courseType', 'price', 'currency'],
+                    required: ['title', 'shortDescription', 'level', 'courseType', 'price', 'currency'],
                     missing,
                 });
             }
