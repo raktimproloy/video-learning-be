@@ -1,3 +1,3 @@
 #!/bin/sh
 set -e
-docker build -t enclearn-backend .
+docker build -t shikkhabhumi-api .
