@@ -1327,28 +1327,10 @@ class CourseController {
         }
     }
 
-    /** Student auto-complete: accept own pending payment request (dummy flow – enrolls immediately). */
+    /** Student auto-complete endpoint is disabled – keep for compatibility but do nothing. */
     async completeStudentPaymentRequest(req, res) {
-        try {
-            const requestId = req.params.id;
-            const userId = req.user.id;
-            const paymentRequestService = require('../services/paymentRequestService');
-            const request = await paymentRequestService.getByIdForStudent(requestId, userId);
-            if (!request) {
-                return res.status(404).json({ error: 'Payment request not found' });
-            }
-            if (request.status !== 'pending') {
-                return res.status(400).json({ error: 'Payment request is not pending' });
-            }
-            const result = await paymentRequestService.acceptPaymentRequest(requestId, userId);
-            if (!result) {
-                return res.status(400).json({ error: 'Could not complete payment' });
-            }
-            res.json({ success: true, requestId: result.requestId });
-        } catch (error) {
-            console.error('Complete student payment request error:', error);
-            res.status(500).json({ error: 'Internal server error' });
-        }
+        // Return generic 404 so UI doesn't show a confusing message
+        return res.status(404).json({ error: 'Payment request endpoint is disabled.' });
     }
 
     async getAvailableCourses(req, res) {

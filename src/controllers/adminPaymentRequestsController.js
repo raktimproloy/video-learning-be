@@ -24,9 +24,18 @@ class AdminPaymentRequestsController {
     async accept(req, res) {
         try {
             const adminUserId = req.user?.id;
-            const result = await paymentRequestService.acceptPaymentRequest(req.params.id, adminUserId);
+            const { reason } = req.body || {};
+            const trimmedReason = typeof reason === "string" ? reason.trim() : "";
+            const result = await paymentRequestService.acceptPaymentRequest(
+                req.params.id,
+                adminUserId,
+                trimmedReason || null
+            );
             if (!result) {
                 return res.status(404).json({ error: 'Request not found or already processed' });
+            }
+            if (result.error) {
+                return res.status(400).json({ error: result.error });
             }
             res.json({ message: 'Payment accepted; student has been enrolled.', requestId: result.requestId });
         } catch (error) {
@@ -38,11 +47,21 @@ class AdminPaymentRequestsController {
     async reject(req, res) {
         try {
             const adminUserId = req.user?.id;
-            const result = await paymentRequestService.rejectPaymentRequest(req.params.id, adminUserId);
+            const { reason } = req.body || {};
+            const trimmedReason = typeof reason === 'string' ? reason.trim() : '';
+            const result = await paymentRequestService.rejectPaymentRequest(
+                req.params.id,
+                adminUserId,
+                trimmedReason || null
+            );
             if (!result) {
                 return res.status(404).json({ error: 'Request not found or already processed' });
             }
-            res.json({ message: 'Payment request rejected.', requestId: result.requestId });
+            res.json({
+                message: 'Payment request rejected.',
+                requestId: result.requestId,
+                rejectionReason: trimmedReason || null,
+            });
         } catch (error) {
             console.error('Admin reject payment request error:', error);
             res.status(500).json({ error: 'Internal server error' });

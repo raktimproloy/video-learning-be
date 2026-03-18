@@ -93,6 +93,8 @@ async function listPaymentRequests(options = {}) {
             pr.coupon_code,
             pr.invite_code,
             pr.reviewed_at,
+            pr.rejection_reason,
+            pr.acceptance_reason,
             pr.created_at,
             c.title AS course_title,
             u.email AS user_email,
@@ -134,6 +136,8 @@ async function listPaymentRequests(options = {}) {
             couponCode: row.coupon_code,
             inviteCode: row.invite_code,
             reviewedAt: row.reviewed_at,
+            rejectionReason: row.rejection_reason,
+            acceptanceReason: row.acceptance_reason,
             createdAt: row.created_at,
             courseTitle: row.course_title,
             userEmail: row.user_email,
@@ -147,12 +151,12 @@ async function listPaymentRequests(options = {}) {
  * Accept a payment request: enroll user in course (apply coupon if any) and update status.
  * Then creates a user notification and optionally calls the message API with sender phone.
  */
-async function acceptPaymentRequest(requestId, adminUserId) {
+async function acceptPaymentRequest(requestId, adminUserId, accessReason = null) {
     const request = await db.query(
         `SELECT pr.*, c.title AS course_title FROM course_payment_requests pr
          JOIN courses c ON c.id = pr.course_id
-         WHERE pr.id = $1 AND pr.status = $2`,
-        [requestId, 'pending']
+         WHERE pr.id = $1 AND pr.status IN ('pending', 'rejected')`,
+        [requestId]
     );
     if (!request.rows[0]) {
         return null;
@@ -160,25 +164,45 @@ async function acceptPaymentRequest(requestId, adminUserId) {
     const row = request.rows[0];
     const courseTitle = row.course_title || 'Course';
 
+    // Type-3 flow: if the request was previously rejected, admin must provide an access reason.
+    if (row.status === 'rejected' && (!accessReason || !String(accessReason).trim())) {
+        return { error: 'Access reason is required to re-approve a rejected payment request.' };
+    }
+
     await db.query('BEGIN');
     try {
-        if (row.coupon_code) {
-            const couponApplyService = require('./couponApplyService');
-            await couponApplyService.applyCoupon(row.coupon_code, row.user_id, row.course_id);
-        }
         const courseService = require('./courseService');
-        const amountPaid = row.amount != null && !Number.isNaN(parseFloat(row.amount)) ? parseFloat(row.amount) : null;
-        const currency = (row.currency && String(row.currency).trim()) || null;
-        await courseService.enrollUser(row.user_id, row.course_id, {
-            inviteCode: row.invite_code || undefined,
-            amountPaid: amountPaid ?? undefined,
-            currency: currency || undefined,
-        });
+
+        // Enroll only once (in case the same request was previously processed incorrectly).
+        const alreadyEnrolled = await courseService.isEnrolled(row.user_id, row.course_id);
+        if (!alreadyEnrolled) {
+            if (row.coupon_code) {
+                const couponApplyService = require('./couponApplyService');
+                await couponApplyService.applyCoupon(row.coupon_code, row.user_id, row.course_id);
+            }
+
+            const amountPaid =
+                row.amount != null && !Number.isNaN(parseFloat(row.amount))
+                    ? parseFloat(row.amount)
+                    : null;
+            const currency = (row.currency && String(row.currency).trim()) || null;
+
+            await courseService.enrollUser(row.user_id, row.course_id, {
+                inviteCode: row.invite_code || undefined,
+                amountPaid: amountPaid ?? undefined,
+                currency: currency || undefined,
+            });
+        }
+
         await db.query(
             `UPDATE course_payment_requests
-             SET status = 'accepted', reviewed_at = NOW(), reviewed_by = $1, updated_at = NOW()
-             WHERE id = $2`,
-            [adminUserId, requestId]
+             SET status = 'accepted',
+                 reviewed_at = NOW(),
+                 reviewed_by = $1,
+                 acceptance_reason = $2,
+                 updated_at = NOW()
+             WHERE id = $3`,
+            [adminUserId, accessReason || null, requestId]
         );
         await db.query('COMMIT');
 
@@ -223,7 +247,7 @@ async function getByStudent(userId, options = {}) {
     const result = await db.query(
         `SELECT pr.id, pr.course_id, pr.user_id, pr.payment_method, pr.sender_phone,
                 pr.transaction_id, pr.amount, pr.currency, pr.status, pr.coupon_code, pr.invite_code,
-                pr.reviewed_at, pr.created_at,
+                pr.reviewed_at, pr.rejection_reason, pr.acceptance_reason, pr.created_at,
                 c.title AS course_title, c.thumbnail_path, c.price, c.discount_price, c.currency AS course_currency,
                 COALESCE(tp.name, u.email) AS teacher_name
          FROM course_payment_requests pr
@@ -248,6 +272,8 @@ async function getByStudent(userId, options = {}) {
         couponCode: row.coupon_code,
         inviteCode: row.invite_code,
         reviewedAt: row.reviewed_at,
+        rejectionReason: row.rejection_reason,
+        acceptanceReason: row.acceptance_reason,
         createdAt: row.created_at,
         courseTitle: row.course_title,
         thumbnailPath: row.thumbnail_path,
@@ -265,7 +291,7 @@ async function getByIdForStudent(requestId, userId) {
     const result = await db.query(
         `SELECT pr.id, pr.course_id, pr.user_id, pr.payment_method, pr.sender_phone,
                 pr.transaction_id, pr.amount, pr.currency, pr.status, pr.coupon_code, pr.invite_code,
-                pr.reviewed_at, pr.created_at,
+                pr.reviewed_at, pr.rejection_reason, pr.acceptance_reason, pr.created_at,
                 c.title AS course_title, c.price, c.discount_price, c.currency AS course_currency,
                 COALESCE(tp.name, u.email) AS teacher_name, u.email AS teacher_email
          FROM course_payment_requests pr
@@ -292,6 +318,8 @@ async function getByIdForStudent(requestId, userId) {
         couponCode: row.coupon_code,
         inviteCode: row.invite_code,
         reviewedAt: row.reviewed_at,
+        rejectionReason: row.rejection_reason,
+        acceptanceReason: row.acceptance_reason,
         createdAt: row.created_at,
         courseTitle: row.course_title,
         coursePrice: price,
@@ -305,7 +333,7 @@ async function getByIdForStudent(requestId, userId) {
 /**
  * Reject a payment request. Sends decline SMS to sender_phone and creates a user notification.
  */
-async function rejectPaymentRequest(requestId, adminUserId) {
+async function rejectPaymentRequest(requestId, adminUserId, reason = null) {
     const selectResult = await db.query(
         `SELECT pr.user_id, pr.sender_phone, pr.course_id, c.title AS course_title
          FROM course_payment_requests pr
@@ -318,10 +346,14 @@ async function rejectPaymentRequest(requestId, adminUserId) {
 
     const result = await db.query(
         `UPDATE course_payment_requests
-         SET status = 'rejected', reviewed_at = NOW(), reviewed_by = $1, updated_at = NOW()
-         WHERE id = $2 AND status = 'pending'
+         SET status = 'rejected',
+             reviewed_at = NOW(),
+             reviewed_by = $1,
+             rejection_reason = $2,
+             updated_at = NOW()
+         WHERE id = $3 AND status = 'pending'
          RETURNING id`,
-        [adminUserId, requestId]
+        [adminUserId, reason || null, requestId]
     );
     if (!result.rows[0]) return null;
 
