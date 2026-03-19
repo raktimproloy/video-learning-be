@@ -7,6 +7,9 @@ const verifyToken = require('../middleware/authMiddleware');
 const multer = require('multer');
 const path = require('path');
 
+const ADMIN_VIDEO_UPLOAD_MAX_MB = Math.max(1, parseInt(process.env.ADMIN_VIDEO_UPLOAD_MAX_MB || '500', 10));
+const ADMIN_VIDEO_UPLOAD_MAX_BYTES = ADMIN_VIDEO_UPLOAD_MAX_MB * 1024 * 1024;
+
 const UPLOADS_DIR = path.resolve(__dirname, '../../uploads');
 if (!fs.existsSync(UPLOADS_DIR)) {
     fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -25,7 +28,7 @@ const storage = multer.diskStorage({
 const upload = multer({
     storage,
     // Normal (non-live) video upload limit
-    limits: { fileSize: 500 * 1024 * 1024 }, // 500MB max
+    limits: { fileSize: ADMIN_VIDEO_UPLOAD_MAX_BYTES },
 });
 
 // Protect admin routes with JWT
