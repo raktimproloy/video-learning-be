@@ -35,6 +35,26 @@ const upload = multer({
 router.use(verifyToken);
 
 router.post(
+    '/videos/r2-multipart/init',
+    adminController.initVideoMultipartUpload
+);
+
+router.post(
+    '/videos/r2-multipart/part-url',
+    adminController.getVideoMultipartPartUrl
+);
+
+router.post(
+    '/videos/r2-multipart/complete',
+    adminController.completeVideoMultipartUpload
+);
+
+router.post(
+    '/videos/r2-multipart/abort',
+    adminController.abortVideoMultipartUpload
+);
+
+router.post(
     '/videos',
     upload.any(), // video + note_file_N + assignment_file_N
     [

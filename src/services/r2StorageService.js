@@ -10,6 +10,10 @@ const {
   DeleteObjectCommand,
   ListObjectsV2Command,
   HeadObjectCommand,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
 } = require('@aws-sdk/client-s3');
 const { Upload } = require('@aws-sdk/lib-storage');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
@@ -325,6 +329,72 @@ async function getPresignedGetUrl(key, expiresIn = 3600) {
   );
 }
 
+/**
+ * Start multipart upload and return uploadId.
+ */
+async function createMultipartUpload(key, contentType = 'application/octet-stream') {
+  const client = getClient();
+  const res = await client.send(
+    new CreateMultipartUploadCommand({
+      Bucket: r2Config.bucketName,
+      Key: key,
+      ContentType: contentType,
+    })
+  );
+  return res.UploadId;
+}
+
+/**
+ * Presigned URL for uploading one part.
+ */
+async function getPresignedUploadPartUrl(key, uploadId, partNumber, expiresIn = 3600) {
+  const client = getClient();
+  return getSignedUrl(
+    client,
+    new UploadPartCommand({
+      Bucket: r2Config.bucketName,
+      Key: key,
+      UploadId: uploadId,
+      PartNumber: partNumber,
+    }),
+    { expiresIn }
+  );
+}
+
+/**
+ * Complete multipart upload with ETags from client.
+ */
+async function completeMultipartUpload(key, uploadId, parts) {
+  const client = getClient();
+  await client.send(
+    new CompleteMultipartUploadCommand({
+      Bucket: r2Config.bucketName,
+      Key: key,
+      UploadId: uploadId,
+      MultipartUpload: {
+        Parts: parts
+          .filter((p) => p && p.ETag && p.PartNumber)
+          .map((p) => ({ ETag: p.ETag, PartNumber: p.PartNumber })),
+      },
+    })
+  );
+  return key;
+}
+
+/**
+ * Abort multipart upload on failure/cancel.
+ */
+async function abortMultipartUpload(key, uploadId) {
+  const client = getClient();
+  await client.send(
+    new AbortMultipartUploadCommand({
+      Bucket: r2Config.bucketName,
+      Key: key,
+      UploadId: uploadId,
+    })
+  );
+}
+
 module.exports = {
   getClient,
   getVideoKeyPrefix,
@@ -346,6 +416,10 @@ module.exports = {
   deletePrefix,
   getPublicUrl,
   getPresignedGetUrl,
+  createMultipartUpload,
+  getPresignedUploadPartUrl,
+  completeMultipartUpload,
+  abortMultipartUpload,
   isConfigured: r2Config.isConfigured,
   bucketName: r2Config.bucketName,
 };

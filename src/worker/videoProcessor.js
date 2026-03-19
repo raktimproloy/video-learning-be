@@ -68,23 +68,24 @@ class VideoProcessor {
 
                 if (isR2Staging) {
                     logStep('R2', 'Source is R2 staging. Checking for input file...');
-                    const r2Mp4 = `${video.r2_key}/staging/input.mp4`;
-                    const r2Webm = `${video.r2_key}/staging/input.webm`;
-                    const localMp4 = path.join(workDir, 'input.mp4');
-                    const localWebm = path.join(workDir, 'input.webm');
-                    if (await r2Storage.objectExists(r2Mp4)) {
-                        logStep('R2', 'Downloading staging input.mp4 from R2...');
-                        await r2Storage.downloadToPath(r2Mp4, localMp4);
-                        sourcePath = localMp4;
-                        logStep('R2', 'Download complete: %s', localMp4);
-                    } else if (await r2Storage.objectExists(r2Webm)) {
-                        logStep('R2', 'Downloading staging input.webm from R2...');
-                        await r2Storage.downloadToPath(r2Webm, localWebm);
-                        sourcePath = localWebm;
-                        logStep('R2', 'Download complete: %s', localWebm);
-                    } else {
+                    const candidateExts = ['.mp4', '.webm', '.mov', '.mkv', '.avi'];
+                    let foundKey = null;
+                    let foundLocal = null;
+                    for (const ext of candidateExts) {
+                        const key = `${video.r2_key}/staging/input${ext}`;
+                        if (await r2Storage.objectExists(key)) {
+                            foundKey = key;
+                            foundLocal = path.join(workDir, `input${ext}`);
+                            break;
+                        }
+                    }
+                    if (!foundKey || !foundLocal) {
                         throw new Error('Staging file not found in R2. Try re-uploading the video.');
                     }
+                    logStep('R2', 'Downloading %s from R2 staging...', path.basename(foundKey));
+                    await r2Storage.downloadToPath(foundKey, foundLocal);
+                    sourcePath = foundLocal;
+                    logStep('R2', 'Download complete: %s', foundLocal);
                     stagingDirToDelete = null;
                 } else {
                     logStep('Source', 'Legacy/local staging. Checking path: %s', video.storage_path);

@@ -84,6 +84,85 @@ async function processVideoFiles(req, notes, assignments, videoId, lessonId, cou
 }
 
 class AdminController {
+    async initVideoMultipartUpload(req, res) {
+        try {
+            if (!r2Storage.isConfigured) {
+                return res.status(400).json({ error: 'R2 is not configured on server.' });
+            }
+            const ownerId = req.user.id;
+            const { lesson_id, file_name, file_type, file_size } = req.body || {};
+            if (!lesson_id || !file_name) {
+                return res.status(400).json({ error: 'lesson_id and file_name are required.' });
+            }
+
+            const lesson = await lessonService.getLessonById(lesson_id);
+            if (!lesson) return res.status(400).json({ error: 'Lesson not found' });
+            const courseId = lesson.course_id;
+            const effectiveCourseId = courseId || 'unknown';
+            const effectiveLessonId = lesson_id || 'unknown';
+
+            const ext = path.extname(file_name || '').toLowerCase();
+            const safeExt = ext || '.mp4';
+            const tempVideoId = `tmp-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+            const r2Prefix = r2Storage.getVideoKeyPrefix(ownerId, effectiveCourseId, effectiveLessonId, tempVideoId);
+            const objectKey = `${r2Prefix}/staging/input${safeExt}`;
+            const uploadId = await r2Storage.createMultipartUpload(objectKey, file_type || 'application/octet-stream');
+
+            return res.status(200).json({
+                uploadId,
+                objectKey,
+                r2Prefix,
+                partSize: 10 * 1024 * 1024,
+                fileSize: Number(file_size) || null,
+            });
+        } catch (error) {
+            console.error('Init multipart upload error:', error);
+            return res.status(500).json({ error: 'Failed to initialize multipart upload.' });
+        }
+    }
+
+    async getVideoMultipartPartUrl(req, res) {
+        try {
+            const { objectKey, uploadId, partNumber } = req.body || {};
+            if (!objectKey || !uploadId || !partNumber) {
+                return res.status(400).json({ error: 'objectKey, uploadId and partNumber are required.' });
+            }
+            const url = await r2Storage.getPresignedUploadPartUrl(objectKey, uploadId, Number(partNumber), 3600);
+            return res.status(200).json({ url });
+        } catch (error) {
+            console.error('Get multipart part URL error:', error);
+            return res.status(500).json({ error: 'Failed to create presigned URL.' });
+        }
+    }
+
+    async completeVideoMultipartUpload(req, res) {
+        try {
+            const { objectKey, uploadId, parts } = req.body || {};
+            if (!objectKey || !uploadId || !Array.isArray(parts) || parts.length === 0) {
+                return res.status(400).json({ error: 'objectKey, uploadId and parts are required.' });
+            }
+            await r2Storage.completeMultipartUpload(objectKey, uploadId, parts);
+            return res.status(200).json({ ok: true, objectKey });
+        } catch (error) {
+            console.error('Complete multipart upload error:', error);
+            return res.status(500).json({ error: 'Failed to complete multipart upload.' });
+        }
+    }
+
+    async abortVideoMultipartUpload(req, res) {
+        try {
+            const { objectKey, uploadId } = req.body || {};
+            if (!objectKey || !uploadId) {
+                return res.status(400).json({ error: 'objectKey and uploadId are required.' });
+            }
+            await r2Storage.abortMultipartUpload(objectKey, uploadId);
+            return res.status(200).json({ ok: true });
+        } catch (error) {
+            console.error('Abort multipart upload error:', error);
+            return res.status(500).json({ error: 'Failed to abort multipart upload.' });
+        }
+    }
+
     async addVideo(req, res) {
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
@@ -100,8 +179,10 @@ class AdminController {
         }
         const files = req.files || [];
         const videoFile = files.find((f) => f.fieldname === 'video');
-        if (!videoFile) {
-            return res.status(400).json({ error: 'No video file uploaded. Please select a video file.' });
+        const videoR2StagingKey = req.body?.video_r2_staging_key;
+        const videoR2Prefix = req.body?.video_r2_prefix;
+        if (!videoFile && !videoR2StagingKey) {
+            return res.status(400).json({ error: 'No video upload data found. Upload a video file first.' });
         }
 
         const ownerId = req.user.id;
@@ -145,12 +226,21 @@ class AdminController {
                     r2Key: null,
                 });
                 const r2Prefix = r2Storage.getVideoKeyPrefix(ownerId, effectiveCourseId, effectiveLessonId, video.id);
-                const r2StagingKey = `${r2Prefix}/staging/input.mp4`;
-                const uploadedPath = path.isAbsolute(videoFile.path) ? videoFile.path : path.resolve(process.cwd(), videoFile.path);
-                if (!fs.existsSync(uploadedPath)) throw new Error(`Uploaded file not found at ${uploadedPath}. Ensure uploads directory exists.`);
-                const fileBuffer = fs.readFileSync(uploadedPath);
-                await r2Storage.uploadFile(r2StagingKey, fileBuffer, 'video/mp4');
-                try { fs.unlinkSync(uploadedPath); } catch (e) {}
+                if (videoR2StagingKey && videoR2Prefix) {
+                    // Move finalized multipart object from temp prefix to final video prefix.
+                    const tempStream = await r2Storage.getObjectStream(videoR2StagingKey);
+                    const ext = path.extname(videoR2StagingKey) || '.mp4';
+                    const finalStagingKey = `${r2Prefix}/staging/input${ext}`;
+                    await r2Storage.uploadStream(finalStagingKey, tempStream, 'application/octet-stream');
+                    try { await r2Storage.deletePrefix(videoR2Prefix); } catch (e) {}
+                } else {
+                    const r2StagingKey = `${r2Prefix}/staging/input.mp4`;
+                    const uploadedPath = path.isAbsolute(videoFile.path) ? videoFile.path : path.resolve(process.cwd(), videoFile.path);
+                    if (!fs.existsSync(uploadedPath)) throw new Error(`Uploaded file not found at ${uploadedPath}. Ensure uploads directory exists.`);
+                    const fileBuffer = fs.readFileSync(uploadedPath);
+                    await r2Storage.uploadFile(r2StagingKey, fileBuffer, 'video/mp4');
+                    try { fs.unlinkSync(uploadedPath); } catch (e) {}
+                }
                 await adminService.updateVideoR2(video.id, r2Prefix);
 
                 if (notes.length > 0 || assignments.length > 0) {
