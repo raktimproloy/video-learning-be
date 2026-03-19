@@ -115,7 +115,12 @@ app.get('/health', (req, res) => {
 app.use((err, req, res, next) => {
     console.error(err.stack || err);
     if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(413).json({ error: 'File too large. Maximum size is 500 MB per upload.' });
+        const maxBytes = typeof err?.limit === 'number' ? err.limit : null;
+        const maxMb = maxBytes ? Math.round(maxBytes / (1024 * 1024)) : null;
+        const message = maxMb
+            ? `File too large. Maximum size is ${maxMb} MB per upload.`
+            : 'File too large.';
+        return res.status(413).json({ error: message });
     }
     if (err.code === 'LIMIT_UNEXPECTED_FILE') {
         return res.status(400).json({ error: 'Unexpected file field. Use "video" for the video file.' });

@@ -9,6 +9,9 @@ const authMiddleware = require('../middleware/authMiddleware');
 const optionalAuth = require('../middleware/optionalAuthMiddleware');
 const { requireRole } = require('../middleware/roleMiddleware');
 
+const COURSE_UPLOAD_MAX_MB = Math.max(1, parseInt(process.env.COURSE_UPLOAD_MAX_MB || '500', 10));
+const COURSE_UPLOAD_MAX_BYTES = COURSE_UPLOAD_MAX_MB * 1024 * 1024;
+
 // Configure multer for course file uploads
 const COURSES_UPLOAD_DIR = path.resolve(__dirname, '../../uploads/courses');
 if (!fs.existsSync(COURSES_UPLOAD_DIR)) {
@@ -28,7 +31,7 @@ const storage = multer.diskStorage({
 const upload = multer({ 
     storage,
     limits: {
-        fileSize: 100 * 1024 * 1024 // 100MB limit
+        fileSize: COURSE_UPLOAD_MAX_BYTES
     },
     fileFilter: (req, file, cb) => {
         // Allow images for thumbnail
