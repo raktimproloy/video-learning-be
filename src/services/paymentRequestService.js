@@ -97,6 +97,9 @@ async function listPaymentRequests(options = {}) {
             pr.acceptance_reason,
             pr.created_at,
             c.title AS course_title,
+            c.price AS course_price,
+            c.discount_price AS course_discount_price,
+            c.currency AS course_currency,
             u.email AS user_email,
             COALESCE(sp.name, u.email) AS user_name
         FROM course_payment_requests pr
@@ -140,6 +143,9 @@ async function listPaymentRequests(options = {}) {
             acceptanceReason: row.acceptance_reason,
             createdAt: row.created_at,
             courseTitle: row.course_title,
+            coursePrice: row.course_price ? parseFloat(row.course_price) : null,
+            courseDiscountPrice: row.course_discount_price ? parseFloat(row.course_discount_price) : null,
+            courseCurrency: row.course_currency,
             userEmail: row.user_email,
             userName: row.user_name,
         })),
