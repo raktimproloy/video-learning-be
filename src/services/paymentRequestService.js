@@ -1,5 +1,7 @@
 const db = require('../../db');
 const smsService = require('../utils/smsService');
+const ADMIN_NEW_PAYMENT_ALERT_PHONE =
+    process.env.ADMIN_NEW_PAYMENT_ALERT_PHONE || '01303644935';
 
 /**
  * Create a payment request (student checkout). Does not enroll; enrollment happens on admin accept.
@@ -42,6 +44,22 @@ async function createPaymentRequest(data) {
     if (phone) {
         smsService.sendPaymentPendingSms(phone).catch((err) => {
             console.error('Payment pending SMS failed:', err.message);
+        });
+    }
+
+    // Alert admin number about newly submitted payment requests (fire-and-forget).
+    const adminAlertPhone = ADMIN_NEW_PAYMENT_ALERT_PHONE && String(ADMIN_NEW_PAYMENT_ALERT_PHONE).trim()
+        ? String(ADMIN_NEW_PAYMENT_ALERT_PHONE).trim()
+        : null;
+    if (adminAlertPhone) {
+        smsService.sendNewPaymentRequestAlertSms(adminAlertPhone, {
+            requestId: result.rows[0]?.id,
+            courseId,
+            amount,
+            currency,
+            method: paymentMethod,
+        }).catch((err) => {
+            console.error('New payment request admin SMS failed:', err.message);
         });
     }
 

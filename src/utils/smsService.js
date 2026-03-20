@@ -162,10 +162,39 @@ async function sendPaymentDeclinedSms(phone, courseTitle) {
     }
 }
 
+/**
+ * Send admin alert SMS when a new payment request is submitted.
+ *
+ * @param {string} phone - Admin receiver phone
+ * @param {{ requestId?: string, courseId?: string, amount?: number|string, currency?: string, method?: string }} payload
+ */
+async function sendNewPaymentRequestAlertSms(phone, payload = {}) {
+    if (!phone || !String(phone).trim()) return;
+    const method = payload.method ? String(payload.method).toUpperCase() : 'UNKNOWN';
+    const amount =
+        payload.amount != null && !Number.isNaN(Number(payload.amount))
+            ? Number(payload.amount).toFixed(2)
+            : null;
+    const currency = payload.currency ? String(payload.currency).toUpperCase() : 'BDT';
+    const amountPart = amount ? `${amount} ${currency}` : currency;
+    const message = `Request added - ${amountPart} - ${method}`;
+
+    try {
+        const result = await sendSms(phone, message);
+        if (result.skipped) return;
+        if (!result.sent) {
+            console.warn('SMS (new payment request alert) not sent:', result.reason || result.errorMessage || result.responseCode);
+        }
+    } catch (err) {
+        console.error('SMS (new payment request alert) error:', err.message);
+    }
+}
+
 module.exports = {
     sendSms,
     sendPaymentPendingSms,
     sendPaymentAcceptedSms,
     sendPaymentDeclinedSms,
+    sendNewPaymentRequestAlertSms,
     normalizePhone,
 };
