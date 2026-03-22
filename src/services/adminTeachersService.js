@@ -2,6 +2,25 @@ const db = require('../../db');
 const r2Storage = require('./r2StorageService');
 const keyStorage = require('./keyStorageService');
 
+/** Safe length of notes/assignments JSON array column. */
+function jsonArrayLength(value) {
+    if (value == null) return 0;
+    let arr = value;
+    if (typeof value === 'string') {
+        try {
+            arr = JSON.parse(value);
+        } catch {
+            return 0;
+        }
+    }
+    return Array.isArray(arr) ? arr.length : 0;
+}
+
+function bump(map, key) {
+    const k = key == null || key === '' ? 'unset' : String(key);
+    map[k] = (map[k] || 0) + 1;
+}
+
 class AdminTeachersService {
     async list(skip = 0, limit = 10) {
         // Teacher rating from teacher_reviews (students review teacher directly)
@@ -99,6 +118,243 @@ class AdminTeachersService {
             rating: avgRating,
             reviewCount,
             joinedAt: row.created_at,
+        };
+    }
+
+    /**
+     * Full teaching inventory for admin: every course, lesson, and video with statuses, counts, views, upload dates.
+     * @param {string} teacherId
+     * @returns {Promise<object|null>}
+     */
+    async getFullReport(teacherId) {
+        const teacher = await this.getById(teacherId);
+        if (!teacher) return null;
+
+        const reviewsCheck = await db.query(`
+            SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'reviews')
+        `);
+        const hasReviews = reviewsCheck.rows[0]?.exists || false;
+        const ratingSub = hasReviews
+            ? `(SELECT COALESCE(AVG(r.rating), 0)::numeric(3,2) FROM reviews r WHERE r.course_id = c.id)`
+            : `0::numeric(3,2)`;
+        const reviewCountSub = hasReviews
+            ? `(SELECT COUNT(*)::int FROM reviews r WHERE r.course_id = c.id)`
+            : `0::int`;
+
+        const coursesResult = await db.query(
+            `SELECT
+                c.id,
+                c.title,
+                c.status,
+                c.created_at,
+                c.updated_at,
+                c.price,
+                c.discount_price,
+                c.currency,
+                ac.name AS category_name,
+                (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = c.id) AS student_count,
+                ${ratingSub} AS rating,
+                ${reviewCountSub} AS review_count
+             FROM courses c
+             LEFT JOIN admin_categories ac ON c.admin_category_id = ac.id
+             WHERE c.teacher_id = $1
+             ORDER BY c.created_at DESC`,
+            [teacherId]
+        );
+
+        const courseRows = coursesResult.rows;
+        const courseIds = courseRows.map((r) => r.id);
+
+        const courseStatusSummary = {};
+        for (const r of courseRows) {
+            const st = (r.status || 'unset').toLowerCase();
+            courseStatusSummary[st] = (courseStatusSummary[st] || 0) + 1;
+        }
+
+        if (courseIds.length === 0) {
+            return {
+                ...teacher,
+                courseStatusSummary,
+                aggregates: {
+                    totalCourses: 0,
+                    totalLessons: 0,
+                    lessonsByStatus: {},
+                    totalVideos: 0,
+                    videosByStatus: {},
+                    totalLessonNotes: 0,
+                    totalLessonAssignments: 0,
+                    totalVideoNotes: 0,
+                    totalVideoAssignments: 0,
+                    totalVideoViews: 0,
+                    totalDurationSeconds: 0,
+                },
+                courseBreakdown: [],
+            };
+        }
+
+        const lessonsResult = await db.query(
+            `SELECT l.id, l.course_id, l.title, l.status, l."order", l.is_preview, l.notes, l.assignments,
+                    l.created_at, l.updated_at,
+                    (SELECT COUNT(*)::int FROM videos v WHERE v.lesson_id = l.id) AS video_count
+             FROM lessons l
+             WHERE l.course_id = ANY($1::uuid[])
+             ORDER BY l.course_id, l."order" ASC NULLS LAST, l.created_at ASC`,
+            [courseIds]
+        );
+
+        const videosResult = await db.query(
+            `SELECT v.id, v.lesson_id, v.title, v.status, v.view_count, v.created_at,
+                    v.duration_seconds, v."order", v.notes, v.assignments, v.source_type,
+                    l.course_id, l.title AS lesson_title, l."order" AS lesson_order
+             FROM videos v
+             JOIN lessons l ON v.lesson_id = l.id
+             WHERE l.course_id = ANY($1::uuid[])
+             ORDER BY l.course_id, l."order" ASC NULLS LAST, v."order" ASC NULLS LAST, v.created_at ASC`,
+            [courseIds]
+        );
+
+        const lessonsByCourse = new Map();
+        for (const row of lessonsResult.rows) {
+            if (!lessonsByCourse.has(row.course_id)) lessonsByCourse.set(row.course_id, []);
+            lessonsByCourse.get(row.course_id).push(row);
+        }
+
+        const videosByCourse = new Map();
+        for (const row of videosResult.rows) {
+            if (!videosByCourse.has(row.course_id)) videosByCourse.set(row.course_id, []);
+            videosByCourse.get(row.course_id).push(row);
+        }
+
+        const aggregates = {
+            totalCourses: courseRows.length,
+            totalLessons: lessonsResult.rows.length,
+            lessonsByStatus: {},
+            totalVideos: videosResult.rows.length,
+            videosByStatus: {},
+            totalLessonNotes: 0,
+            totalLessonAssignments: 0,
+            totalVideoNotes: 0,
+            totalVideoAssignments: 0,
+            totalVideoViews: 0,
+            totalDurationSeconds: 0,
+        };
+
+        for (const row of lessonsResult.rows) {
+            bump(aggregates.lessonsByStatus, (row.status || 'active').toLowerCase());
+            aggregates.totalLessonNotes += jsonArrayLength(row.notes);
+            aggregates.totalLessonAssignments += jsonArrayLength(row.assignments);
+        }
+
+        for (const row of videosResult.rows) {
+            bump(
+                aggregates.videosByStatus,
+                row.status == null ? 'unset' : String(row.status).toLowerCase()
+            );
+            aggregates.totalVideoNotes += jsonArrayLength(row.notes);
+            aggregates.totalVideoAssignments += jsonArrayLength(row.assignments);
+            aggregates.totalVideoViews += parseInt(row.view_count, 10) || 0;
+            aggregates.totalDurationSeconds += parseInt(row.duration_seconds, 10) || 0;
+        }
+
+        const courseBreakdown = courseRows.map((cr) => {
+            const lid = cr.id;
+            const lessonRows = lessonsByCourse.get(lid) || [];
+            const videoRows = videosByCourse.get(lid) || [];
+
+            const lessonsByStatus = {};
+            let lessonNotes = 0;
+            let lessonAssignments = 0;
+            const lessons = lessonRows.map((l) => {
+                const n = jsonArrayLength(l.notes);
+                const a = jsonArrayLength(l.assignments);
+                lessonNotes += n;
+                lessonAssignments += a;
+                const lst = (l.status || 'active').toLowerCase();
+                lessonsByStatus[lst] = (lessonsByStatus[lst] || 0) + 1;
+                return {
+                    id: l.id,
+                    title: l.title,
+                    order: l.order,
+                    status: l.status || 'active',
+                    isPreview: !!l.is_preview,
+                    videoCount: parseInt(l.video_count, 10) || 0,
+                    notesCount: n,
+                    assignmentsCount: a,
+                    createdAt: l.created_at,
+                    updatedAt: l.updated_at,
+                };
+            });
+
+            const videosByStatus = {};
+            let videoNotes = 0;
+            let videoAssignments = 0;
+            let videoViews = 0;
+            let durationSeconds = 0;
+            const videos = videoRows.map((v) => {
+                const n = jsonArrayLength(v.notes);
+                const a = jsonArrayLength(v.assignments);
+                videoNotes += n;
+                videoAssignments += a;
+                const vc = parseInt(v.view_count, 10) || 0;
+                videoViews += vc;
+                const ds = parseInt(v.duration_seconds, 10) || 0;
+                durationSeconds += ds;
+                const vst = v.status == null ? 'unset' : String(v.status).toLowerCase();
+                videosByStatus[vst] = (videosByStatus[vst] || 0) + 1;
+                return {
+                    id: v.id,
+                    lessonId: v.lesson_id,
+                    lessonTitle: v.lesson_title,
+                    lessonOrder: v.lesson_order,
+                    title: v.title,
+                    order: v.order,
+                    status: v.status,
+                    sourceType: v.source_type || null,
+                    viewCount: vc,
+                    durationSeconds: ds,
+                    notesCount: n,
+                    assignmentsCount: a,
+                    createdAt: v.created_at,
+                    // videos table has no updated_at; use created_at for API shape
+                    updatedAt: v.created_at,
+                };
+            });
+
+            return {
+                id: cr.id,
+                title: cr.title,
+                status: cr.status || 'active',
+                category: cr.category_name || null,
+                price: parseFloat(cr.price) || 0,
+                discountPrice: cr.discount_price != null ? parseFloat(cr.discount_price) : null,
+                currency: cr.currency || 'USD',
+                students: parseInt(cr.student_count, 10) || 0,
+                rating: parseFloat(cr.rating) || 0,
+                reviewCount: parseInt(cr.review_count, 10) || 0,
+                createdAt: cr.created_at,
+                updatedAt: cr.updated_at,
+                lessonsByStatus,
+                videosByStatus,
+                counts: {
+                    lessons: lessonRows.length,
+                    videos: videoRows.length,
+                    lessonNotes,
+                    lessonAssignments,
+                    videoNotes,
+                    videoAssignments,
+                    videoViews,
+                    durationSeconds,
+                },
+                lessons,
+                videos,
+            };
+        });
+
+        return {
+            ...teacher,
+            courseStatusSummary,
+            aggregates,
+            courseBreakdown,
         };
     }
 

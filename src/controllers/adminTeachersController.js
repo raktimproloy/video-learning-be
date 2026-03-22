@@ -28,6 +28,19 @@ class AdminTeachersController {
         }
     }
 
+    async getFullReport(req, res) {
+        try {
+            const report = await adminTeachersService.getFullReport(req.params.id);
+            if (!report) {
+                return res.status(404).json({ error: 'Teacher not found' });
+            }
+            res.json(report);
+        } catch (error) {
+            console.error('Admin teacher full report error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
     async update(req, res) {
         try {
             const teacher = await adminTeachersService.updateTeacher(req.params.id, req.body);
