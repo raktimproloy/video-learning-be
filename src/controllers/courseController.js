@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const cache = require('../utils/ttlCache');
 const path = require('path');
 const fs = require('fs');
+const userService = require('../services/userService');
 
 function enrichCourseMediaUrls(courses, req) {
     const apiUrl = process.env.BASE_URL || 'http://localhost:5000';
@@ -81,6 +82,9 @@ class CourseController {
             const currency = trim(raw.currency);
             const hasLiveClass = raw.hasLiveClass;
             const hasAssignments = raw.hasAssignments;
+            const testCourse = raw.testCourse;
+            const currentUser = await userService.findById(req.user.id);
+            const isCoreMember = !!currentUser?.core_member;
 
             // Validate required fields and report which are missing
             const required = [
@@ -212,7 +216,8 @@ class CourseController {
                 discountPrice: discountPrice ? parseFloat(discountPrice) : null,
                 currency: currency,
                 hasLiveClass: hasLiveClass === 'true' || hasLiveClass === true,
-                hasAssignments: hasAssignments === 'true' || hasAssignments === true
+                hasAssignments: hasAssignments === 'true' || hasAssignments === true,
+                testCourse: isCoreMember && (testCourse === 'true' || testCourse === true)
             };
 
             const course = await courseService.createCourse(req.user.id, courseData);
@@ -803,8 +808,11 @@ class CourseController {
                 currency,
                 hasLiveClass,
                 hasAssignments,
+                testCourse,
                 status
             } = req.body;
+            const currentUser = await userService.findById(req.user.id);
+            const isCoreMember = !!currentUser?.core_member;
 
             // Build update data object (only include fields that are provided)
             const courseData = {};
@@ -834,6 +842,7 @@ class CourseController {
             if (currency !== undefined) courseData.currency = currency;
             if (hasLiveClass !== undefined) courseData.hasLiveClass = hasLiveClass === 'true' || hasLiveClass === true;
             if (hasAssignments !== undefined) courseData.hasAssignments = hasAssignments === 'true' || hasAssignments === true;
+            if (testCourse !== undefined) courseData.testCourse = isCoreMember && (testCourse === 'true' || testCourse === true);
             if (status !== undefined) {
                 const allowed = ['draft', 'active', 'inactive', 'archived'];
                 if (!allowed.includes(String(status))) {

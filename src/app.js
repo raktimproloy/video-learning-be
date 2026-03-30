@@ -36,6 +36,7 @@ const couponRoutes = require('./routes/couponRoutes');
 const meRoutes = require('./routes/meRoutes');
 const teacherDiscoveryRoutes = require('./routes/teacherDiscoveryRoutes');
 const fcmRoutes = require('./routes/fcmRoutes');
+const recordingDraftRoutes = require('./routes/recordingDraftRoutes');
 
 const app = express();
 
@@ -105,6 +106,7 @@ app.use('/v1/coupons', couponRoutes);
 app.use('/v1/me', meRoutes);
 app.use('/v1/teachers', teacherDiscoveryRoutes);
 app.use('/v1/fcm', fcmRoutes);
+app.use('/v1/recordings', recordingDraftRoutes);
 
 // Health Check
 app.get('/health', (req, res) => {

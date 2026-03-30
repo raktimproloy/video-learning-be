@@ -5,7 +5,7 @@
  */
 const db = require('../../db');
 
-const PROVIDERS = ['agora', '100ms', 'youtube', 'aws_ivs'];
+const PROVIDERS = ['agora', 'stream', '100ms', 'youtube', 'aws_ivs'];
 
 /**
  * Record usage for a completed live session. Call when session ends (endDiscarded or markSaved).
@@ -94,6 +94,7 @@ async function getProviderWithFreeMinutes(liveSettings = {}) {
 
     const providerEnabled = {
         agora: enabled('agoraEnabled'),
+        stream: enabled('streamEnabled'),
         '100ms': enabled('hundredMsEnabled'),
         youtube: enabled('youtubeEnabled'),
     };

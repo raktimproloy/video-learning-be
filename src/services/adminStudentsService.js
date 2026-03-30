@@ -1,5 +1,6 @@
 const db = require('../../db');
 const adminTeachersService = require('./adminTeachersService');
+const { hasColumn } = require('../utils/dbSchemaCache');
 
 class AdminStudentsService {
     async list(skip = 0, limit = 10, q = null) {
@@ -16,6 +17,7 @@ class AdminStudentsService {
             `SELECT 
                 u.id,
                 u.email,
+                COALESCE(u.core_member, false) as core_member,
                 u.created_at,
                 COALESCE(sp.name, u.email) as name,
                 (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.user_id = u.id) as enrolled_count
@@ -47,6 +49,7 @@ class AdminStudentsService {
             id: row.id,
             email: row.email,
             name: row.name || row.email,
+            coreMember: !!row.core_member,
             enrolledCourses: parseInt(row.enrolled_count, 10) || 0,
             completedCourses: completedMap[row.id] || 0,
             joinedAt: row.created_at,
@@ -63,14 +66,17 @@ class AdminStudentsService {
     }
 
     async getById(id) {
+        const hasBio = await hasColumn('student_profiles', 'bio');
+        const bioSelect = hasBio ? 'sp.bio' : 'NULL::text as bio';
         const result = await db.query(
             `SELECT 
                 u.id,
                 u.email,
                 u.role,
+                COALESCE(u.core_member, false) as core_member,
                 u.created_at,
                 sp.name,
-                sp.bio,
+                ${bioSelect},
                 sp.phone,
                 sp.profile_image_path,
                 EXISTS (SELECT 1 FROM teacher_profiles tp WHERE tp.user_id = u.id) AS has_teacher_profile
@@ -108,6 +114,7 @@ class AdminStudentsService {
             id: row.id,
             email: row.email,
             name: row.name || row.email,
+            coreMember: !!row.core_member,
             bio: row.bio || null,
             phone: row.phone || null,
             profileImagePath: row.profile_image_path || null,
@@ -132,6 +139,13 @@ class AdminStudentsService {
                 await client.query(
                     'UPDATE users SET email = $1 WHERE id = $2',
                     [payload.email, id]
+                );
+            }
+
+            if (payload.coreMember !== undefined) {
+                await client.query(
+                    'UPDATE users SET core_member = $1 WHERE id = $2',
+                    [!!payload.coreMember, id]
                 );
             }
 

@@ -28,7 +28,7 @@ async function getSettings(req, res) {
                 })),
                 share: platformSettings.share,
                 discounts: platformSettings.discounts,
-                live: platformSettings.live || { liveClassEnabled: true, agoraEnabled: true, hundredMsEnabled: true, awsIvsEnabled: false, youtubeEnabled: true },
+                live: platformSettings.live || { liveClassEnabled: true, agoraEnabled: true, streamEnabled: false, hundredMsEnabled: true, awsIvsEnabled: false, youtubeEnabled: true },
             };
         });
 

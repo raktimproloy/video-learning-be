@@ -28,6 +28,7 @@ async function getBootstrap(req, res) {
                     email: user.email,
                     role: user.role || 'student',
                     linkedGoogle: !!user.google_id,
+                    coreMember: !!user.core_member,
                 },
             };
 

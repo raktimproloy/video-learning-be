@@ -178,15 +178,16 @@ module.exports = {
                 ...(settings || {
                     liveClassEnabled: true,
                     agoraEnabled: true,
+                    streamEnabled: false,
                     hundredMsEnabled: true,
                     awsIvsEnabled: false,
                     youtubeEnabled: true,
                     liveClassDurationMinutes: 60,
                 }),
                 usage: usage || {
-                    teachersByService: { agora: 0, '100ms': 0, aws_ivs: 0, youtube: 0 },
-                    studentsByService: { agora: 0, '100ms': 0, aws_ivs: 0, youtube: 0 },
-                    sessionsByService: { agora: 0, '100ms': 0, aws_ivs: 0, youtube: 0 },
+                    teachersByService: { agora: 0, stream: 0, '100ms': 0, aws_ivs: 0, youtube: 0 },
+                    studentsByService: { agora: 0, stream: 0, '100ms': 0, aws_ivs: 0, youtube: 0 },
+                    sessionsByService: { agora: 0, stream: 0, '100ms': 0, aws_ivs: 0, youtube: 0 },
                     activeNow: 0,
                 },
             });
@@ -200,10 +201,11 @@ module.exports = {
     async updateLiveSettings(req, res) {
         try {
             const adminId = getAdminId(req);
-            const { liveClassEnabled, agoraEnabled, hundredMsEnabled, awsIvsEnabled, youtubeEnabled, liveClassDurationMinutes } = req.body || {};
+            const { liveClassEnabled, agoraEnabled, streamEnabled, hundredMsEnabled, awsIvsEnabled, youtubeEnabled, liveClassDurationMinutes } = req.body || {};
             const settings = await adminSettingsService.updateLiveSettings(adminId, {
                 liveClassEnabled,
                 agoraEnabled,
+                streamEnabled,
                 hundredMsEnabled,
                 awsIvsEnabled,
                 youtubeEnabled,

@@ -1,5 +1,17 @@
 const db = require('../../db');
 const adminCategoryService = require('./adminCategoryService');
+const { hasColumn } = require('../utils/dbSchemaCache');
+
+/** SQL fragment to hide invite-only test courses from public listings (empty if column not migrated). */
+async function sqlHideTestCourses(tableAlias) {
+    if (!(await hasColumn('courses', 'test_course'))) return '';
+    return ` AND COALESCE(${tableAlias}.test_course, false) = false`;
+}
+
+async function sqlHideTestCoursesBare() {
+    if (!(await hasColumn('courses', 'test_course'))) return '';
+    return ` AND COALESCE(test_course, false) = false`;
+}
 
 class CourseService {
     async createCourse(teacherId, courseData) {
@@ -23,42 +35,79 @@ class CourseService {
             discountPrice,
             currency,
             hasLiveClass,
-            hasAssignments
+            hasAssignments,
+            testCourse
         } = courseData;
 
-        const result = await db.query(
-            `INSERT INTO courses (
-                teacher_id, title, description, short_description, full_description,
-                category, subcategory, main_category_id, sub_category_id, admin_category_id, tags, language, subtitle, level, course_type,
-                thumbnail_path, intro_video_path, price, discount_price, currency,
-                has_live_class, has_assignments, status
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, 'draft')
-            RETURNING *`,
-            [
-                teacherId,
-                title,
-                shortDescription || fullDescription || '', // description for backward compatibility
-                shortDescription || null,
-                fullDescription || null,
-                category || null,
-                subcategory || null,
-                main_category_id || null,
-                sub_category_id || null,
-                admin_category_id || null,
-                JSON.stringify(tags || []),
-                language || 'English',
-                subtitle || null,
-                level || null,
-                courseType || 'lesson-based',
-                thumbnailPath || null,
-                introVideoPath || null,
-                price ? parseFloat(price) : null,
-                discountPrice ? parseFloat(discountPrice) : null,
-                currency || 'USD',
-                hasLiveClass || false,
-                hasAssignments || false
-            ]
-        );
+        const hasTestCol = await hasColumn('courses', 'test_course');
+        const result = hasTestCol
+            ? await db.query(
+                `INSERT INTO courses (
+                    teacher_id, title, description, short_description, full_description,
+                    category, subcategory, main_category_id, sub_category_id, admin_category_id, tags, language, subtitle, level, course_type,
+                    thumbnail_path, intro_video_path, price, discount_price, currency,
+                    has_live_class, has_assignments, test_course, status
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, 'draft')
+                RETURNING *`,
+                [
+                    teacherId,
+                    title,
+                    shortDescription || fullDescription || '', // description for backward compatibility
+                    shortDescription || null,
+                    fullDescription || null,
+                    category || null,
+                    subcategory || null,
+                    main_category_id || null,
+                    sub_category_id || null,
+                    admin_category_id || null,
+                    JSON.stringify(tags || []),
+                    language || 'English',
+                    subtitle || null,
+                    level || null,
+                    courseType || 'lesson-based',
+                    thumbnailPath || null,
+                    introVideoPath || null,
+                    price ? parseFloat(price) : null,
+                    discountPrice ? parseFloat(discountPrice) : null,
+                    currency || 'USD',
+                    hasLiveClass || false,
+                    hasAssignments || false,
+                    testCourse || false,
+                ]
+            )
+            : await db.query(
+                `INSERT INTO courses (
+                    teacher_id, title, description, short_description, full_description,
+                    category, subcategory, main_category_id, sub_category_id, admin_category_id, tags, language, subtitle, level, course_type,
+                    thumbnail_path, intro_video_path, price, discount_price, currency,
+                    has_live_class, has_assignments, status
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, 'draft')
+                RETURNING *`,
+                [
+                    teacherId,
+                    title,
+                    shortDescription || fullDescription || '', // description for backward compatibility
+                    shortDescription || null,
+                    fullDescription || null,
+                    category || null,
+                    subcategory || null,
+                    main_category_id || null,
+                    sub_category_id || null,
+                    admin_category_id || null,
+                    JSON.stringify(tags || []),
+                    language || 'English',
+                    subtitle || null,
+                    level || null,
+                    courseType || 'lesson-based',
+                    thumbnailPath || null,
+                    introVideoPath || null,
+                    price ? parseFloat(price) : null,
+                    discountPrice ? parseFloat(discountPrice) : null,
+                    currency || 'USD',
+                    hasLiveClass || false,
+                    hasAssignments || false,
+                ]
+            );
         const course = result.rows[0];
         if (admin_category_id) {
             await adminCategoryService.incrementCourseCountForPath(admin_category_id);
@@ -166,6 +215,8 @@ class CourseService {
         const reviewsCountQuery = hasReviewsTable
             ? `(SELECT COUNT(*)::int FROM reviews r WHERE r.course_id = courses.id)`
             : `0::int`;
+
+        const hideTest = await sqlHideTestCourses('courses');
         
         const result = await db.query(
             `SELECT 
@@ -195,6 +246,7 @@ class CourseService {
             LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
             LEFT JOIN admin_categories ac ON courses.admin_category_id = ac.id
             WHERE COALESCE(courses.status, 'active') = 'active'
+            ${hideTest}
             ORDER BY courses.created_at DESC`,
             params
         );
@@ -259,6 +311,8 @@ class CourseService {
 
         params.push(limit, offset);
 
+        const hideTest = await sqlHideTestCourses('courses');
+
         const result = await db.query(
             `SELECT 
                 courses.*,
@@ -287,13 +341,15 @@ class CourseService {
             LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
             LEFT JOIN admin_categories ac ON courses.admin_category_id = ac.id
             WHERE COALESCE(courses.status, 'active') = 'active'
+            ${hideTest}
             ORDER BY purchase_count DESC NULLS LAST, rating DESC NULLS LAST, courses.created_at DESC
             LIMIT $${params.length - 1} OFFSET $${params.length}`,
             params
         );
 
+        const hideTestBare = await sqlHideTestCoursesBare();
         const countResult = await db.query(
-            `SELECT COUNT(*)::int as total FROM courses WHERE COALESCE(status, 'active') = 'active'`
+            `SELECT COUNT(*)::int as total FROM courses WHERE COALESCE(status, 'active') = 'active'${hideTestBare}`
         );
         const total = countResult.rows[0]?.total || 0;
 
@@ -348,6 +404,7 @@ class CourseService {
             params.push(userId);
         }
 
+        const hideTest = await sqlHideTestCourses('courses');
         const baseSelect = `
             courses.*,
             users.email as teacher_email,
@@ -370,7 +427,7 @@ class CourseService {
             LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
             LEFT JOIN admin_categories ac ON courses.admin_category_id = ac.id
         `;
-        const activeWhere = `WHERE COALESCE(courses.status, 'active') = 'active'`;
+        const activeWhere = `WHERE COALESCE(courses.status, 'active') = 'active'${hideTest}`;
 
         const parseRow = (row) => ({
             ...row,
@@ -476,6 +533,9 @@ class CourseService {
 
         const conditions = [];
         conditions.push(`COALESCE(courses.status, 'active') = 'active'`);
+        if (await hasColumn('courses', 'test_course')) {
+            conditions.push(`COALESCE(courses.test_course, false) = false`);
+        }
         if (live === true || live === '1' || live === 1) {
             conditions.push('courses.has_live_class = true');
         }
@@ -668,6 +728,8 @@ class CourseService {
             ? `(SELECT COUNT(*)::int FROM reviews r WHERE r.course_id = courses.id)`
             : `0::int`;
 
+        const hideTestOther = await sqlHideTestCourses('courses');
+
         // Get teacher's other courses (public, limit to 4)
         const otherCoursesResult = await db.query(
             `SELECT 
@@ -689,6 +751,7 @@ class CourseService {
             LEFT JOIN users ON courses.teacher_id = users.id 
              WHERE courses.teacher_id = $1 AND courses.id != $2
                AND (COALESCE(courses.status, 'active') = 'active')
+               ${hideTestOther}
             ORDER BY courses.created_at DESC
             LIMIT 4`,
             [course.teacher_id, course.id]
@@ -924,6 +987,7 @@ class CourseService {
             currency,
             hasLiveClass,
             hasAssignments,
+            testCourse,
             status
         } = courseData;
 
@@ -1024,6 +1088,10 @@ class CourseService {
         if (hasAssignments !== undefined) {
             updates.push(`has_assignments = $${paramIndex++}`);
             values.push(hasAssignments);
+        }
+        if (testCourse !== undefined && (await hasColumn('courses', 'test_course'))) {
+            updates.push(`test_course = $${paramIndex++}`);
+            values.push(testCourse);
         }
         if (status !== undefined) {
             updates.push(`status = $${paramIndex++}`);
@@ -1243,6 +1311,7 @@ class CourseService {
     }
 
     async getUnpurchasedCourses(userId) {
+        const hideTest = await sqlHideTestCourses('c');
         const result = await db.query(
             `SELECT 
                 c.*,
@@ -1258,6 +1327,7 @@ class CourseService {
                  SELECT course_id FROM course_enrollments WHERE user_id = $1
              )
              AND (COALESCE(c.status, 'active') = 'active')
+             ${hideTest}
              ORDER BY c.created_at DESC`,
             [userId]
         );

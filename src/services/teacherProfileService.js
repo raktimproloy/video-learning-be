@@ -118,6 +118,7 @@ class TeacherProfileService {
                 tp.facebook_url,
                 tp.twitter_url,
                 u.email as login_email,
+                COALESCE(u.core_member, false) as core_member,
                 (SELECT COUNT(*) FROM courses WHERE teacher_id = u.id) as total_courses,
                 (SELECT COUNT(*) FROM course_enrollments ce 
                  JOIN courses c ON ce.course_id = c.id 
@@ -163,6 +164,7 @@ class TeacherProfileService {
             profile_image_path: profile.profile_image_path,
             institute_name: profile.institute_name || null,
             is_verified: !!profile.is_verified,
+            coreMember: !!profile.core_member,
             specialization,
             education,
             experience,

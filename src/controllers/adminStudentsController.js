@@ -34,6 +34,7 @@ class AdminStudentsController {
             const payload = {
                 name: req.body.name,
                 email: req.body.email,
+                coreMember: typeof req.body.coreMember === 'boolean' ? req.body.coreMember : (typeof req.body.coreMember === 'string' ? req.body.coreMember === 'true' : undefined),
             };
             const updated = await adminStudentsService.updateStudent(id, payload);
             if (!updated) {
