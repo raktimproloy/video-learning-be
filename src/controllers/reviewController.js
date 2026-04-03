@@ -16,13 +16,29 @@ class ReviewController {
             const review = await reviewService.createOrUpdateReview(
                 req.user.id,
                 courseId,
-                parseInt(rating),
-                comment || null
+                parseInt(rating, 10),
+                comment
             );
 
-            res.json(review);
+            res.status(201).json({
+                id: review.id,
+                courseId: review.course_id,
+                userId: review.user_id,
+                rating: parseInt(review.rating, 10),
+                comment: review.comment ?? null,
+                createdAt: review.created_at,
+            });
         } catch (error) {
             console.error('Create/update review error:', error);
+            if (error.code === 'COURSE_NOT_FOUND') {
+                return res.status(404).json({ error: error.message });
+            }
+            if (error.code === 'NOT_ENROLLED') {
+                return res.status(403).json({ error: error.message });
+            }
+            if (error.code === 'COMMENT_TOO_LONG') {
+                return res.status(400).json({ error: error.message });
+            }
             if (error.code === 'REVIEW_ALREADY_EXISTS') {
                 return res.status(409).json({ error: error.message });
             }

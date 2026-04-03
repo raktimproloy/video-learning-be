@@ -257,6 +257,34 @@ class AdminCoursesService {
     }
 
     /**
+     * Single review in the same shape as getCourseReviews list items (camelCase for admin API).
+     */
+    async getReviewAdminById(reviewId) {
+        const result = await db.query(
+            `SELECT r.id, r.user_id, r.course_id, r.rating, r.comment, r.created_at, r.updated_at,
+                    u.email as user_email, COALESCE(sp.name, u.email) as user_name
+             FROM reviews r
+             JOIN users u ON r.user_id = u.id
+             LEFT JOIN student_profiles sp ON u.id = sp.user_id
+             WHERE r.id = $1`,
+            [reviewId]
+        );
+        const r = result.rows[0];
+        if (!r) return null;
+        return {
+            id: r.id,
+            userId: r.user_id,
+            courseId: r.course_id,
+            rating: parseInt(r.rating, 10),
+            comment: r.comment || null,
+            createdAt: r.created_at,
+            updatedAt: r.updated_at,
+            userEmail: r.user_email,
+            userName: r.user_name || r.user_email,
+        };
+    }
+
+    /**
      * Ensure video belongs to course (via lesson). Returns video row or null.
      */
     async getVideoInCourse(courseId, videoId) {

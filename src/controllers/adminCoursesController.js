@@ -209,10 +209,17 @@ class AdminCoursesController {
             if (review.course_id !== courseId) {
                 return res.status(400).json({ error: 'Review does not belong to this course' });
             }
-            const updated = await reviewService.updateReviewById(reviewId, { rating, comment });
-            res.json(updated);
+            await reviewService.updateReviewById(reviewId, { rating, comment });
+            const dto = await adminCoursesService.getReviewAdminById(reviewId);
+            if (!dto) {
+                return res.status(404).json({ error: 'Review not found' });
+            }
+            res.json(dto);
         } catch (error) {
             if (error.message === 'Rating must be between 1 and 5') {
+                return res.status(400).json({ error: error.message });
+            }
+            if (String(error.message || '').includes('Comment must be at most')) {
                 return res.status(400).json({ error: error.message });
             }
             console.error('Admin update review error:', error);

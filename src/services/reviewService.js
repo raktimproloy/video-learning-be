@@ -1,10 +1,30 @@
 const db = require('../../db');
 
+const REVIEW_COMMENT_MAX_LENGTH = 2000;
+
 class ReviewService {
     /**
      * Create a review. One review per user per course; once submitted it cannot be changed.
+     * Requires an active enrollment for the course.
      */
     async createOrUpdateReview(userId, courseId, rating, comment) {
+        const courseCheck = await db.query('SELECT id FROM courses WHERE id = $1', [courseId]);
+        if (!courseCheck.rows[0]) {
+            const err = new Error('Course not found');
+            err.code = 'COURSE_NOT_FOUND';
+            throw err;
+        }
+
+        const enrollCheck = await db.query(
+            `SELECT 1 FROM course_enrollments WHERE user_id = $1 AND course_id = $2 LIMIT 1`,
+            [userId, courseId]
+        );
+        if (!enrollCheck.rows[0]) {
+            const err = new Error('You must be enrolled in this course to leave a review.');
+            err.code = 'NOT_ENROLLED';
+            throw err;
+        }
+
         const existingReview = await db.query(
             `SELECT id, rating, comment FROM reviews WHERE user_id = $1 AND course_id = $2`,
             [userId, courseId]
@@ -16,11 +36,19 @@ class ReviewService {
             throw err;
         }
 
+        let text = comment == null ? null : String(comment).trim();
+        if (text === '') text = null;
+        if (text && text.length > REVIEW_COMMENT_MAX_LENGTH) {
+            const err = new Error(`Comment must be at most ${REVIEW_COMMENT_MAX_LENGTH} characters.`);
+            err.code = 'COMMENT_TOO_LONG';
+            throw err;
+        }
+
         const result = await db.query(
             `INSERT INTO reviews (user_id, course_id, rating, comment)
              VALUES ($1, $2, $3, $4)
              RETURNING *`,
-            [userId, courseId, rating, comment == null ? null : String(comment)]
+            [userId, courseId, rating, text]
         );
         return result.rows[0];
     }
@@ -137,8 +165,12 @@ class ReviewService {
             idx++;
         }
         if (comment !== undefined) {
+            const c = comment === '' || comment == null ? null : String(comment);
+            if (c && c.length > REVIEW_COMMENT_MAX_LENGTH) {
+                throw new Error(`Comment must be at most ${REVIEW_COMMENT_MAX_LENGTH} characters.`);
+            }
             updates.push(`comment = $${idx}`);
-            values.push(comment === '' || comment == null ? null : String(comment));
+            values.push(c);
             idx++;
         }
         if (updates.length === 0) return this.getReviewById(reviewId);
