@@ -3,7 +3,10 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 
 class AdminCoursesService {
-    async list(skip = 0, limit = 10, q = null) {
+    /**
+     * @param {string} [listType] 'platform' = lesson/video courses (excludes external). 'external' = URL-only courses.
+     */
+    async list(skip = 0, limit = 10, q = null, listType = 'platform') {
         const reviewsCheck = await db.query(`
             SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'reviews')
         `);
@@ -15,23 +18,36 @@ class AdminCoursesService {
             ? `(SELECT COUNT(*)::int FROM reviews r WHERE r.course_id = c.id)`
             : `0::int`;
 
-        let whereClause = '';
+        const conds = [];
         const params = [];
         if (q && String(q).trim()) {
             const search = `%${String(q).trim().replace(/%/g, '\\%')}%`;
-            whereClause = `WHERE (c.title ILIKE $1 OR c.description ILIKE $1)`;
+            const idx = params.length + 1;
+            conds.push(
+                `(c.title ILIKE $${idx} OR c.description ILIKE $${idx} OR c.short_description ILIKE $${idx})`
+            );
             params.push(search);
         }
+        if (listType === 'external') {
+            conds.push(`c.course_type = 'external'`);
+        } else {
+            conds.push(`(c.course_type IS NULL OR c.course_type <> 'external')`);
+        }
+        const whereClause = `WHERE ${conds.join(' AND ')}`;
+
+        const countResult = await db.query(
+            `SELECT COUNT(*)::int as total FROM courses c 
+             LEFT JOIN users ON c.teacher_id = users.id
+             LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
+             LEFT JOIN admin_categories ac ON c.admin_category_id = ac.id
+             ${whereClause}`,
+            params
+        );
+        const total = countResult.rows[0]?.total || 0;
 
         params.push(limit, skip);
         const limitIdx = params.length - 1;
         const offsetIdx = params.length;
-
-        const countResult = await db.query(
-            `SELECT COUNT(*)::int as total FROM courses c ${whereClause}`,
-            params.slice(0, params.length - 2)
-        );
-        const total = countResult.rows[0]?.total || 0;
 
         const result = await db.query(
             `SELECT 
@@ -43,6 +59,8 @@ class AdminCoursesService {
                 c.discount_price,
                 c.currency,
                 c.level,
+                c.language,
+                c.course_type,
                 c.status,
                 c.created_at,
                 c.teacher_id,
@@ -65,7 +83,7 @@ class AdminCoursesService {
             params
         );
 
-        const courses = result.rows.map(row => ({
+        const courses = result.rows.map((row) => ({
             id: row.id,
             title: row.title,
             description: row.description || row.short_description || '',
@@ -73,10 +91,14 @@ class AdminCoursesService {
             discountPrice: row.discount_price ? parseFloat(row.discount_price) : null,
             currency: row.currency || 'USD',
             level: row.level || null,
+            language: row.language || null,
+            courseType: row.course_type || null,
             status: row.status || 'active',
             teacherId: row.teacher_id,
-            teacherName: row.teacher_name || row.teacher_email || 'Unknown',
-            teacherEmail: row.teacher_email,
+            teacherName: row.teacher_id
+                ? row.teacher_name || row.teacher_email || 'Unknown'
+                : '—',
+            teacherEmail: row.teacher_id ? row.teacher_email : null,
             category: row.category_name || row.category || null,
             students: parseInt(row.purchase_count, 10) || 0,
             lessons: parseInt(row.lesson_count, 10) || 0,
@@ -148,8 +170,10 @@ class AdminCoursesService {
             hasAssignments: row.has_assignments,
             tags,
             teacherId: row.teacher_id,
-            teacherName: row.teacher_name || row.teacher_email || 'Unknown',
-            teacherEmail: row.teacher_email,
+            teacherName: row.teacher_id
+                ? row.teacher_name || row.teacher_email || 'Unknown'
+                : null,
+            teacherEmail: row.teacher_id ? row.teacher_email : null,
             category: row.category_name || row.category,
             adminCategoryId: row.admin_category_id,
             students: parseInt(row.purchase_count, 10) || 0,
@@ -160,6 +184,12 @@ class AdminCoursesService {
             thumbnailPath: row.thumbnail_path,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
+            externalUrl: row.external_url ?? null,
+            externalIntroVideoUrl: row.external_intro_video_url ?? null,
+            externalWhatsapp: row.external_whatsapp ?? null,
+            externalPhone: row.external_phone ?? null,
+            priceDisplayPeriod: row.price_display_period ?? null,
+            visitorCount: row.visitor_count != null ? parseInt(row.visitor_count, 10) : 0,
         };
     }
 

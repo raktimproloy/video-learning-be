@@ -48,6 +48,9 @@ function enrichCourseMediaUrls(courses, req) {
                 course.intro_video_url = `${apiUrl}${course.intro_video_path.startsWith('/') ? '' : '/'}${course.intro_video_path}`;
             }
         }
+        if (course.external_intro_video_url) {
+            course.intro_video_url = course.intro_video_url || course.external_intro_video_url;
+        }
         
         return course;
     });
@@ -85,6 +88,76 @@ class CourseController {
             const testCourse = raw.testCourse;
             const currentUser = await userService.findById(req.user.id);
             const isCoreMember = !!currentUser?.core_member;
+
+            if (courseType === 'external') {
+                const externalUrl = trim(raw.externalUrl);
+                const externalIntroVideoUrl = trim(raw.externalIntroVideoUrl) || null;
+                const externalWhatsapp = trim(raw.externalWhatsapp) || null;
+                const externalPhone = trim(raw.externalPhone) || null;
+                const priceDisplayPeriod = trim(raw.priceDisplayPeriod) || null;
+                if (!title || !shortDescription || !externalUrl || price === undefined || price === '' || !currency) {
+                    return res.status(400).json({
+                        error: 'External URL courses require: title, shortDescription, externalUrl, price, currency',
+                    });
+                }
+                let parsedTags = [];
+                try {
+                    parsedTags = tags ? (typeof tags === 'string' ? JSON.parse(tags) : tags) : [];
+                } catch (e) {
+                    parsedTags = [];
+                }
+                let thumbnailPath = null;
+                if (req.files?.thumbnail?.length > 0) {
+                    const file = req.files.thumbnail[0];
+                    if (r2Storage.isConfigured) {
+                        const fileBuffer = fs.readFileSync(file.path);
+                        const r2Key = await r2Storage.uploadCourseMedia(
+                            req.user.id,
+                            null,
+                            fileBuffer,
+                            file.originalname,
+                            'thumbnail'
+                        );
+                        thumbnailPath = r2Key;
+                        fs.unlinkSync(file.path);
+                    } else {
+                        thumbnailPath = `/uploads/courses/${file.filename}`;
+                    }
+                }
+                const specific = trim(raw.specific_category_id) || trim(raw.admin_category_id) || null;
+                const course = await courseService.createExternalCourse(req.user.id, {
+                    title: title.trim(),
+                    shortDescription: shortDescription.trim(),
+                    fullDescription: (fullDescription || shortDescription).trim(),
+                    category: category || null,
+                    subcategory: subcategory || null,
+                    main_category_id: main_category_id || null,
+                    sub_category_id: sub_category_id || null,
+                    admin_category_id: specific,
+                    tags: parsedTags,
+                    language: language || 'English',
+                    subtitle: subtitle || null,
+                    level: level || 'All levels',
+                    price: parseFloat(price),
+                    discountPrice: discountPrice ? parseFloat(discountPrice) : null,
+                    currency: currency,
+                    thumbnailPath,
+                    status: 'draft',
+                    externalUrl: externalUrl,
+                    externalIntroVideoUrl,
+                    externalWhatsapp,
+                    externalPhone,
+                    priceDisplayPeriod: ['monthly', 'yearly', 'one_time'].includes(priceDisplayPeriod)
+                        ? priceDisplayPeriod
+                        : null,
+                    testCourse: isCoreMember && (testCourse === 'true' || testCourse === true),
+                });
+                const enriched = enrichCourseMediaUrls([course], req)[0];
+                if (enriched.external_intro_video_url) {
+                    enriched.intro_video_url = enriched.external_intro_video_url;
+                }
+                return res.status(201).json(enriched);
+            }
 
             // Validate required fields and report which are missing
             const required = [
@@ -573,19 +646,21 @@ class CourseController {
             let responseBody;
             if (isAnonymous) {
                 responseBody = await cache.getOrSet(`public:homeSections:limit=${limitPerSection}`, 60 * 1000, async () => {
-                    const { live, academic, skill } = await courseService.getHomeSections(null, limitPerSection);
+                    const { live, academic, skill, external } = await courseService.getHomeSections(null, limitPerSection);
                     return {
                         live: enrichCourseMediaUrls(live, req),
                         academic: enrichCourseMediaUrls(academic, req),
                         skill: enrichCourseMediaUrls(skill, req),
+                        external: enrichCourseMediaUrls(external, req),
                     };
                 });
             } else {
-                const { live, academic, skill } = await courseService.getHomeSections(userId, limitPerSection);
+                const { live, academic, skill, external } = await courseService.getHomeSections(userId, limitPerSection);
                 responseBody = {
                     live: enrichCourseMediaUrls(live, req),
                     academic: enrichCourseMediaUrls(academic, req),
                     skill: enrichCourseMediaUrls(skill, req),
+                    external: enrichCourseMediaUrls(external, req),
                 };
             }
 
@@ -612,6 +687,29 @@ class CourseController {
         }
     }
 
+    async getHomeAnalytics(req, res) {
+        try {
+            const stats = await courseService.getHomepageAnalytics();
+            res.json(stats);
+        } catch (error) {
+            console.error('Get home analytics error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async recordExternalClick(req, res) {
+        try {
+            const row = await courseService.incrementExternalVisitorCount(req.params.id);
+            if (!row) {
+                return res.status(404).json({ error: 'Course not found or not an external URL course' });
+            }
+            res.json({ ok: true, visitorCount: row.visitor_count });
+        } catch (error) {
+            console.error('External click error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
     async searchCourses(req, res) {
         try {
             const userId = req.user?.id || null;
@@ -620,7 +718,8 @@ class CourseController {
             const live = req.query.live === '1' || req.query.live === 'true';
             const page = req.query.page || 1;
             const limit = req.query.limit || 12;
-            const result = await courseService.searchCourses(userId, { q, category, live, page, limit });
+            const externalOnly = req.query.external === '1' || req.query.external === 'true';
+            const result = await courseService.searchCourses(userId, { q, category, live, page, limit, externalOnly });
             const enriched = enrichCourseMediaUrls(result.courses, req);
             res.json({
                 courses: enriched,
@@ -809,7 +908,12 @@ class CourseController {
                 hasLiveClass,
                 hasAssignments,
                 testCourse,
-                status
+                status,
+                externalUrl,
+                externalIntroVideoUrl,
+                externalWhatsapp,
+                externalPhone,
+                priceDisplayPeriod,
             } = req.body;
             const currentUser = await userService.findById(req.user.id);
             const isCoreMember = !!currentUser?.core_member;
@@ -849,6 +953,16 @@ class CourseController {
                     return res.status(400).json({ error: 'Invalid status. Use: draft, active, inactive, or archived.' });
                 }
                 courseData.status = status;
+            }
+            if (externalUrl !== undefined) courseData.externalUrl = String(externalUrl).trim() || null;
+            if (externalIntroVideoUrl !== undefined) {
+                courseData.externalIntroVideoUrl = String(externalIntroVideoUrl).trim() || null;
+            }
+            if (externalWhatsapp !== undefined) courseData.externalWhatsapp = String(externalWhatsapp).trim() || null;
+            if (externalPhone !== undefined) courseData.externalPhone = String(externalPhone).trim() || null;
+            if (priceDisplayPeriod !== undefined) {
+                const p = String(priceDisplayPeriod).trim();
+                courseData.priceDisplayPeriod = ['monthly', 'yearly', 'one_time'].includes(p) ? p : null;
             }
 
             // Handle file uploads - upload to R2 if configured, otherwise use local storage
@@ -1023,7 +1137,11 @@ class CourseController {
             }
 
             const course = await courseService.updateCourse(req.params.id, courseData);
-            res.json(course);
+            const enriched = enrichCourseMediaUrls([course], req)[0];
+            if (enriched?.external_intro_video_url) {
+                enriched.intro_video_url = enriched.intro_video_url || enriched.external_intro_video_url;
+            }
+            res.json(enriched);
         } catch (error) {
             if (error.message && error.message.includes('Live class cannot be turned off')) {
                 return res.status(400).json({ error: error.message });
@@ -1157,6 +1275,11 @@ class CourseController {
             if (!course) {
                 return res.status(404).json({ error: 'Course not found' });
             }
+            if (course.course_type === 'external') {
+                return res.status(400).json({
+                    error: 'This course is hosted on an external site. Open the course page to use the teacher’s link.',
+                });
+            }
             if (course.status && course.status !== 'active') {
                 return res.status(400).json({ error: 'This course is not available for purchase' });
             }
@@ -1223,6 +1346,11 @@ class CourseController {
             const course = await courseService.getCourseByIdSimple(courseId);
             if (!course) {
                 return res.status(404).json({ error: 'Course not found' });
+            }
+            if (course.course_type === 'external') {
+                return res.status(400).json({
+                    error: 'Payment requests are not available for external URL courses.',
+                });
             }
             if (course.status && course.status !== 'active') {
                 return res.status(400).json({ error: 'This course is not available for purchase' });

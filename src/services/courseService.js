@@ -13,6 +13,12 @@ async function sqlHideTestCoursesBare() {
     return ` AND COALESCE(test_course, false) = false`;
 }
 
+/** URL-only listings (excluded from standard LMS course grids). Pass empty string for bare `courses` table in subqueries without alias. */
+function sqlNonExternal(tableAlias = 'courses') {
+    const p = tableAlias ? `${tableAlias}.` : '';
+    return ` AND ${p}course_type IS DISTINCT FROM 'external'`;
+}
+
 class CourseService {
     async createCourse(teacherId, courseData) {
         const {
@@ -120,6 +126,202 @@ class CourseService {
             // ignore
         }
         return course;
+    }
+
+    /**
+     * Create an external URL course (no lessons). Requires migration 070 columns.
+     */
+    async createExternalCourse(teacherId, data) {
+        const {
+            title,
+            shortDescription,
+            fullDescription,
+            tags,
+            language,
+            subtitle,
+            level,
+            price,
+            discountPrice,
+            currency,
+            thumbnailPath,
+            status,
+            externalUrl,
+            externalIntroVideoUrl,
+            externalWhatsapp,
+            externalPhone,
+            priceDisplayPeriod,
+            main_category_id,
+            sub_category_id,
+            admin_category_id,
+            category,
+            subcategory,
+            visitorCount,
+        } = data;
+
+        const hasExt = await hasColumn('courses', 'external_url');
+        if (!hasExt) {
+            throw new Error('External courses are not supported on this database (run migration 070).');
+        }
+
+        const hasTestCol = await hasColumn('courses', 'test_course');
+        const vc = visitorCount != null ? Math.max(0, parseInt(visitorCount, 10) || 0) : 0;
+
+        const insertSql = hasTestCol
+            ? `INSERT INTO courses (
+                    teacher_id, title, description, short_description, full_description,
+                    category, subcategory, main_category_id, sub_category_id, admin_category_id,
+                    tags, language, subtitle, level, course_type,
+                    thumbnail_path, intro_video_path, price, discount_price, currency,
+                    has_live_class, has_assignments, test_course, status,
+                    external_url, external_intro_video_url, external_whatsapp, external_phone,
+                    price_display_period, visitor_count
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'external',
+                    $15, NULL, $16, $17, $18, false, false, $19, $20,
+                    $21, $22, $23, $24, $25, $26
+                ) RETURNING *`
+            : `INSERT INTO courses (
+                    teacher_id, title, description, short_description, full_description,
+                    category, subcategory, main_category_id, sub_category_id, admin_category_id,
+                    tags, language, subtitle, level, course_type,
+                    thumbnail_path, intro_video_path, price, discount_price, currency,
+                    has_live_class, has_assignments, status,
+                    external_url, external_intro_video_url, external_whatsapp, external_phone,
+                    price_display_period, visitor_count
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'external',
+                    $15, NULL, $16, $17, $18, false, false, $19,
+                    $20, $21, $22, $23, $24, $25
+                ) RETURNING *`;
+
+        const desc = shortDescription || fullDescription || '';
+        const safePrice = (p) => {
+            if (p == null) return null;
+            const s = String(p).trim();
+            if (s === '') return null;
+            const n = parseFloat(s);
+            return Number.isNaN(n) ? null : n;
+        };
+        const pPrice = safePrice(price);
+        const pDiscount = safePrice(discountPrice);
+        const tid = teacherId != null && String(teacherId).trim() !== '' ? String(teacherId).trim() : null;
+        const params = hasTestCol
+            ? [
+                  tid,
+                  title,
+                  desc,
+                  shortDescription || null,
+                  fullDescription || null,
+                  category || null,
+                  subcategory || null,
+                  main_category_id || null,
+                  sub_category_id || null,
+                  admin_category_id || null,
+                  JSON.stringify(tags || []),
+                  language || 'English',
+                  subtitle || null,
+                  level || null,
+                  thumbnailPath || null,
+                  pPrice,
+                  pDiscount,
+                  currency || 'USD',
+                  data.testCourse || false,
+                  status || 'draft',
+                  externalUrl || null,
+                  externalIntroVideoUrl || null,
+                  externalWhatsapp || null,
+                  externalPhone || null,
+                  priceDisplayPeriod || null,
+                  vc,
+              ]
+            : [
+                  tid,
+                  title,
+                  desc,
+                  shortDescription || null,
+                  fullDescription || null,
+                  category || null,
+                  subcategory || null,
+                  main_category_id || null,
+                  sub_category_id || null,
+                  admin_category_id || null,
+                  JSON.stringify(tags || []),
+                  language || 'English',
+                  subtitle || null,
+                  level || null,
+                  thumbnailPath || null,
+                  pPrice,
+                  pDiscount,
+                  currency || 'USD',
+                  status || 'draft',
+                  externalUrl || null,
+                  externalIntroVideoUrl || null,
+                  externalWhatsapp || null,
+                  externalPhone || null,
+                  priceDisplayPeriod || null,
+                  vc,
+              ];
+
+        const result = await db.query(insertSql, params);
+        const course = result.rows[0];
+        if (admin_category_id) {
+            await adminCategoryService.incrementCourseCountForPath(admin_category_id);
+        }
+        if (tid) {
+            try {
+                const teacherProfileService = require('./teacherProfileService');
+                await teacherProfileService.syncVerifiedBadge(tid);
+            } catch {
+                // ignore
+            }
+        }
+        return course;
+    }
+
+    async incrementExternalVisitorCount(courseId) {
+        if (!(await hasColumn('courses', 'visitor_count'))) return null;
+        const r = await db.query(
+            `UPDATE courses
+             SET visitor_count = visitor_count + 1, updated_at = NOW()
+             WHERE id = $1 AND course_type = 'external'
+             RETURNING visitor_count`,
+            [courseId]
+        );
+        return r.rows[0] || null;
+    }
+
+    async getHomepageAnalytics() {
+        const students = await db.query(`
+            SELECT
+                COUNT(*) FILTER (WHERE COALESCE(core_member, false) = true)::int AS core_members,
+                COUNT(*) FILTER (WHERE COALESCE(core_member, false) = false)::int AS standard
+            FROM users WHERE role = 'student'
+        `);
+        const enrollments = await db.query(`SELECT COUNT(*)::int AS c FROM course_enrollments`);
+        const studentsTotal = await db.query(
+            `SELECT COUNT(*)::int AS c FROM users WHERE role = 'student'`
+        );
+        const coursesTotal = await db.query(`SELECT COUNT(*)::int AS c FROM courses`);
+        const teachersTotal = await db.query(
+            `SELECT COUNT(*)::int AS c FROM users WHERE role = 'teacher'`
+        );
+        const srow = students.rows[0] || { core_members: 0, standard: 0 };
+        const enr = enrollments.rows[0]?.c || 0;
+        const st = studentsTotal.rows[0]?.c || 0;
+        const totalCourses = coursesTotal.rows[0]?.c || 0;
+        const totalTeachers = teachersTotal.rows[0]?.c || 0;
+        const purchaseConversionPercent =
+            st > 0 ? Math.round((enr / st) * 1000) / 10 : 0;
+        const avgEnrollsPerStudent = st > 0 ? Math.round((enr / st) * 100) / 100 : 0;
+        return {
+            studentTypes: { coreMember: srow.core_members || 0, standard: srow.standard || 0 },
+            totalEnrollments: enr,
+            purchaseConversionPercent,
+            totalStudents: st,
+            totalCourses,
+            totalTeachers,
+            avgEnrollsPerStudent,
+        };
     }
 
     async getCoursesByTeacher(teacherId) {
@@ -247,6 +449,7 @@ class CourseService {
             LEFT JOIN admin_categories ac ON courses.admin_category_id = ac.id
             WHERE COALESCE(courses.status, 'active') = 'active'
             ${hideTest}
+            ${sqlNonExternal()}
             ORDER BY courses.created_at DESC`,
             params
         );
@@ -342,6 +545,7 @@ class CourseService {
             LEFT JOIN admin_categories ac ON courses.admin_category_id = ac.id
             WHERE COALESCE(courses.status, 'active') = 'active'
             ${hideTest}
+            ${sqlNonExternal()}
             ORDER BY purchase_count DESC NULLS LAST, rating DESC NULLS LAST, courses.created_at DESC
             LIMIT $${params.length - 1} OFFSET $${params.length}`,
             params
@@ -349,7 +553,7 @@ class CourseService {
 
         const hideTestBare = await sqlHideTestCoursesBare();
         const countResult = await db.query(
-            `SELECT COUNT(*)::int as total FROM courses WHERE COALESCE(status, 'active') = 'active'${hideTestBare}`
+            `SELECT COUNT(*)::int as total FROM courses WHERE COALESCE(status, 'active') = 'active'${hideTestBare}${sqlNonExternal('')}`
         );
         const total = countResult.rows[0]?.total || 0;
 
@@ -428,6 +632,7 @@ class CourseService {
             LEFT JOIN admin_categories ac ON courses.admin_category_id = ac.id
         `;
         const activeWhere = `WHERE COALESCE(courses.status, 'active') = 'active'${hideTest}`;
+        const activeWhereNonExternal = `WHERE COALESCE(courses.status, 'active') = 'active'${hideTest}${sqlNonExternal()}`;
 
         const parseRow = (row) => ({
             ...row,
@@ -451,7 +656,7 @@ class CourseService {
         const liveParams = [...params];
         const liveResult = await db.query(
             `SELECT ${baseSelect} ${baseFrom}
-             ${activeWhere} AND courses.has_live_class = true
+             ${activeWhereNonExternal} AND courses.has_live_class = true
              ORDER BY purchase_count DESC NULLS LAST, rating DESC NULLS LAST, courses.created_at DESC
              LIMIT ${limitVal}`,
             liveParams
@@ -470,7 +675,7 @@ class CourseService {
             const acParams = [...academicParams, ...academicCategoryIds];
             const acResult = await db.query(
                 `SELECT ${baseSelect} ${baseFrom}
-                 ${activeWhere} ${excludeLive} AND courses.admin_category_id IN (${placeholders})
+                 ${activeWhereNonExternal} ${excludeLive} AND courses.admin_category_id IN (${placeholders})
                  ORDER BY purchase_count DESC NULLS LAST, rating DESC NULLS LAST, courses.created_at DESC
                  LIMIT ${limitVal}`,
                 acParams
@@ -485,18 +690,28 @@ class CourseService {
 
         const skillResult = await db.query(
             `SELECT ${baseSelect} ${baseFrom}
-             ${activeWhere} ${excludeUsed}
+             ${activeWhereNonExternal} ${excludeUsed}
              ORDER BY purchase_count DESC NULLS LAST, rating DESC NULLS LAST, courses.created_at DESC
              LIMIT ${limitVal}`,
             skillParams
         );
         const skill = skillResult.rows.map(parseRow);
 
-        return { live, academic, skill };
+        const extParams = [...params];
+        const extResult = await db.query(
+            `SELECT ${baseSelect} ${baseFrom}
+             ${activeWhere} AND courses.course_type = 'external'
+             ORDER BY COALESCE(courses.visitor_count, 0) DESC, courses.created_at DESC
+             LIMIT ${limitVal}`,
+            extParams
+        );
+        const external = extResult.rows.map(parseRow);
+
+        return { live, academic, skill, external };
     }
 
     async searchCourses(userId = null, options = {}) {
-        const { q = '', category = '', live = false, page = 1, limit: limitParam = 12 } = options;
+        const { q = '', category = '', live = false, page = 1, limit: limitParam = 12, externalOnly = false } = options;
         const limit = Math.min(Math.max(parseInt(limitParam, 10) || 12, 1), 50);
         const offset = (Math.max(parseInt(page, 10) || 1, 1) - 1) * limit;
 
@@ -535,6 +750,11 @@ class CourseService {
         conditions.push(`COALESCE(courses.status, 'active') = 'active'`);
         if (await hasColumn('courses', 'test_course')) {
             conditions.push(`COALESCE(courses.test_course, false) = false`);
+        }
+        if (externalOnly === true) {
+            conditions.push(`courses.course_type = 'external'`);
+        } else {
+            conditions.push(`courses.course_type IS DISTINCT FROM 'external'`);
         }
         if (live === true || live === '1' || live === 1) {
             conditions.push('courses.has_live_class = true');
@@ -696,6 +916,96 @@ class CourseService {
             [course.teacher_id]
         );
         const teacher = teacherResult.rows[0] || null;
+
+        if (course.course_type === 'external') {
+            const reviewsTableCheck = await db.query(`
+                SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'reviews')
+            `);
+            const hasReviewsTable = reviewsTableCheck.rows[0]?.exists || false;
+            let reviews = [];
+            if (hasReviewsTable) {
+                const reviewService = require('./reviewService');
+                const reviewRows = await reviewService.getReviewsByCourse(id, 3, 0);
+                reviews = reviewRows.map((r) => ({
+                    id: r.id,
+                    userName: r.user_name || r.user_email || 'Student',
+                    user_profile_image_path: r.user_profile_image_path || null,
+                    rating: parseInt(r.rating) || 0,
+                    comment: r.comment || '',
+                    createdAt: r.created_at,
+                    helpful: 0,
+                }));
+            }
+            const reviewsRatingQuery = hasReviewsTable
+                ? `(SELECT COALESCE(AVG(r.rating), 0)::numeric(3,2) FROM reviews r WHERE r.course_id = courses.id)`
+                : `0::numeric(3,2)`;
+            const reviewsCountQuery = hasReviewsTable
+                ? `(SELECT COUNT(*)::int FROM reviews r WHERE r.course_id = courses.id)`
+                : `0::int`;
+            const hideTestOther = await sqlHideTestCourses('courses');
+            const otherCoursesResult = await db.query(
+                `SELECT 
+                    courses.*,
+                    users.email as teacher_email,
+                    CASE 
+                        WHEN courses.tags IS NULL THEN '[]'::jsonb
+                        WHEN jsonb_typeof(courses.tags) = 'string' THEN courses.tags::jsonb
+                        ELSE courses.tags
+                    END as tags,
+                    ${reviewsRatingQuery} as rating,
+                    ${reviewsCountQuery} as review_count,
+                    (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = courses.id) as purchase_count,
+                    0 as total_lessons,
+                    0 as total_videos
+                FROM courses 
+                LEFT JOIN users ON courses.teacher_id = users.id 
+                 WHERE courses.teacher_id = $1 AND courses.id != $2
+                   AND (COALESCE(courses.status, 'active') = 'active')
+                   ${hideTestOther}
+                   ${sqlNonExternal()}
+                ORDER BY courses.created_at DESC
+                LIMIT 4`,
+                [course.teacher_id, course.id]
+            );
+            const otherCourses = otherCoursesResult.rows.map((row) => ({
+                ...row,
+                tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : (row.tags || []),
+                rating: parseFloat(row.rating) || 0,
+                review_count: row.review_count || 0,
+                purchase_count: row.purchase_count || 0,
+                total_lessons: row.total_lessons || 0,
+                total_videos: row.total_videos || 0,
+            }));
+            const courseWithMeta = {
+                ...course,
+                total_notes: 0,
+                total_assignments: 0,
+                total_duration_seconds: 0,
+            };
+            return {
+                course: courseWithMeta,
+                pendingPaymentRequestId: null,
+                teacher: teacher
+                    ? {
+                          id: teacher.id,
+                          email: teacher.email,
+                          name: teacher.name || teacher.email,
+                          profile_image_path: teacher.profile_image_path || null,
+                          institute_name: teacher.institute_name || null,
+                          is_verified: !!teacher.is_verified,
+                          address: teacher.address || null,
+                          totalStudents: parseInt(teacher.total_students) || course.purchase_count || 0,
+                          total_courses: parseInt(teacher.total_courses, 10) || 0,
+                          rating: parseFloat(teacher.teacher_rating) || 0,
+                      }
+                    : null,
+                lessons: [],
+                videos: [],
+                otherCourses,
+                reviews,
+                bundles: [],
+            };
+        }
 
         // Get lessons for this course (pass teacherId so owner sees all, students only see active)
         const lessonService = require('./lessonService');
@@ -988,7 +1298,14 @@ class CourseService {
             hasLiveClass,
             hasAssignments,
             testCourse,
-            status
+            status,
+            externalUrl,
+            externalIntroVideoUrl,
+            externalWhatsapp,
+            externalPhone,
+            priceDisplayPeriod,
+            visitorCount,
+            teacherId,
         } = courseData;
 
         // Build dynamic update query
@@ -1097,6 +1414,38 @@ class CourseService {
             updates.push(`status = $${paramIndex++}`);
             values.push(status);
         }
+        if (await hasColumn('courses', 'external_url')) {
+            if (externalUrl !== undefined) {
+                updates.push(`external_url = $${paramIndex++}`);
+                values.push(externalUrl || null);
+            }
+            if (externalIntroVideoUrl !== undefined) {
+                updates.push(`external_intro_video_url = $${paramIndex++}`);
+                values.push(externalIntroVideoUrl || null);
+            }
+            if (externalWhatsapp !== undefined) {
+                updates.push(`external_whatsapp = $${paramIndex++}`);
+                values.push(externalWhatsapp || null);
+            }
+            if (externalPhone !== undefined) {
+                updates.push(`external_phone = $${paramIndex++}`);
+                values.push(externalPhone || null);
+            }
+            if (priceDisplayPeriod !== undefined) {
+                updates.push(`price_display_period = $${paramIndex++}`);
+                values.push(priceDisplayPeriod || null);
+            }
+            if (visitorCount !== undefined) {
+                updates.push(`visitor_count = $${paramIndex++}`);
+                values.push(Math.max(0, parseInt(visitorCount, 10) || 0));
+            }
+        }
+
+        if (teacherId !== undefined) {
+            const tid = teacherId === null || teacherId === '' ? null : String(teacherId).trim();
+            updates.push(`teacher_id = $${paramIndex++}`);
+            values.push(tid || null);
+        }
 
         // Always update updated_at
         updates.push(`updated_at = NOW()`);
@@ -1108,7 +1457,16 @@ class CourseService {
             `UPDATE courses SET ${updates.join(', ')} WHERE id = ${idParam} RETURNING *`,
             values
         );
-        return result.rows[0];
+        const updated = result.rows[0];
+        if (teacherId !== undefined && updated?.teacher_id) {
+            try {
+                const teacherProfileService = require('./teacherProfileService');
+                await teacherProfileService.syncVerifiedBadge(updated.teacher_id);
+            } catch {
+                // ignore
+            }
+        }
+        return updated;
     }
 
     async deleteCourse(id) {
@@ -1328,6 +1686,7 @@ class CourseService {
              )
              AND (COALESCE(c.status, 'active') = 'active')
              ${hideTest}
+             ${sqlNonExternal('c')}
              ORDER BY c.created_at DESC`,
             [userId]
         );

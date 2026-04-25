@@ -4,17 +4,136 @@ const lessonService = require('../services/lessonService');
 const videoService = require('../services/videoService');
 const reviewService = require('../services/reviewService');
 const r2Storage = require('../services/r2StorageService');
+const userService = require('../services/userService');
 const path = require('path');
 const fs = require('fs');
 
+/** @param {unknown} v */
+function parseOptNum(v) {
+    if (v === undefined || v === null) return null;
+    const s = String(v).trim();
+    if (s === '') return null;
+    const n = parseFloat(s);
+    return Number.isNaN(n) ? null : n;
+}
+
 class AdminCoursesController {
+    async createUrlCourse(req, res) {
+        try {
+            const {
+                teacherId,
+                title,
+                shortDescription,
+                fullDescription,
+                externalUrl,
+                externalIntroVideoUrl,
+                externalWhatsapp,
+                externalPhone,
+                priceDisplayPeriod,
+                price,
+                discountPrice,
+                currency,
+                language,
+                subtitle,
+                level,
+                status,
+                tags,
+                admin_category_id,
+                main_category_id,
+                sub_category_id,
+                visitorCount,
+            } = req.body;
+
+            if (!title || !shortDescription || !externalUrl) {
+                return res.status(400).json({ error: 'title, shortDescription, and externalUrl are required' });
+            }
+
+            const effectiveTeacherId =
+                teacherId && String(teacherId).trim() ? String(teacherId).trim() : null;
+            if (effectiveTeacherId) {
+                const account = await userService.findById(effectiveTeacherId);
+                if (!account || account.role !== 'teacher') {
+                    return res.status(400).json({ error: 'Invalid teacher user' });
+                }
+            }
+
+            const r2OwnerKey = effectiveTeacherId || 'unassigned';
+
+            let thumbnailPath = null;
+            if (req.files?.thumbnail?.length) {
+                const file = req.files.thumbnail[0];
+                if (r2Storage.isConfigured) {
+                    const buf = fs.readFileSync(file.path);
+                    const r2Key = await r2Storage.uploadCourseMedia(
+                        r2OwnerKey,
+                        null,
+                        buf,
+                        file.originalname,
+                        'thumbnail'
+                    );
+                    thumbnailPath = r2Key;
+                    try {
+                        fs.unlinkSync(file.path);
+                    } catch (e) {
+                        /* ignore */
+                    }
+                } else {
+                    thumbnailPath = `/uploads/courses/${file.filename}`;
+                }
+            }
+
+            let parsedTags = [];
+            try {
+                parsedTags = tags ? (typeof tags === 'string' ? JSON.parse(tags) : tags) : [];
+            } catch (e) {
+                parsedTags = [];
+            }
+
+            const pdp = priceDisplayPeriod ? String(priceDisplayPeriod).trim() : '';
+            const course = await courseService.createExternalCourse(effectiveTeacherId, {
+                title: String(title).trim(),
+                shortDescription: String(shortDescription).trim(),
+                fullDescription: fullDescription
+                    ? String(fullDescription).trim()
+                    : String(shortDescription).trim(),
+                category: null,
+                subcategory: null,
+                main_category_id: main_category_id || null,
+                sub_category_id: sub_category_id || null,
+                admin_category_id: admin_category_id || null,
+                tags: parsedTags,
+                language: language || 'English',
+                subtitle: subtitle ? String(subtitle).trim() : null,
+                level: level ? String(level).trim() : 'All levels',
+                price: parseOptNum(price),
+                discountPrice: parseOptNum(discountPrice),
+                currency: currency || 'BDT',
+                thumbnailPath,
+                status: status || 'active',
+                externalUrl: String(externalUrl).trim(),
+                externalIntroVideoUrl: externalIntroVideoUrl ? String(externalIntroVideoUrl).trim() : null,
+                externalWhatsapp: externalWhatsapp ? String(externalWhatsapp).trim() : null,
+                externalPhone: externalPhone ? String(externalPhone).trim() : null,
+                priceDisplayPeriod: ['monthly', 'yearly', 'one_time'].includes(pdp) ? pdp : null,
+                visitorCount: visitorCount != null ? parseInt(visitorCount, 10) : 0,
+            });
+            const detail = await adminCoursesService.getById(course.id);
+            res.status(201).json(detail);
+        } catch (error) {
+            console.error('Admin create URL course error:', error);
+            res.status(500).json({ error: error.message || 'Internal server error' });
+        }
+    }
+
     async list(req, res) {
         try {
             const skip = Math.max(0, parseInt(req.query.skip, 10) || 0);
             const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 10));
             const q = req.query.q || null;
+            const typeParam = (req.query.type || 'platform').toString().toLowerCase();
+            const listType = typeParam === 'external' ? 'external' : 'platform';
 
-            const { courses, total } = await adminCoursesService.list(skip, limit, q);
+            const { courses, total } = await adminCoursesService.list(skip, limit, q, listType);
             res.json({ courses, total });
         } catch (error) {
             console.error('Admin courses list error:', error);
@@ -113,7 +232,14 @@ class AdminCoursesController {
                 hasAssignments,
                 adminCategoryId,
                 admin_category_id,
+                teacherId,
                 tags,
+                externalUrl,
+                externalIntroVideoUrl,
+                externalWhatsapp,
+                externalPhone,
+                priceDisplayPeriod,
+                visitorCount,
             } = req.body;
 
             const courseData = {};
@@ -129,7 +255,10 @@ class AdminCoursesController {
             if (discountPrice !== undefined) courseData.discountPrice = discountPrice;
             if (currency !== undefined) courseData.currency = String(currency);
             if (language !== undefined) courseData.language = String(language);
-            if (subtitle !== undefined) courseData.subtitle = String(subtitle).trim();
+            if (subtitle !== undefined) {
+                courseData.subtitle =
+                    subtitle === null || subtitle === '' ? null : String(subtitle).trim();
+            }
             if (courseType !== undefined) courseData.courseType = courseType;
 
             if (hasLiveClass !== undefined) {
@@ -160,6 +289,36 @@ class AdminCoursesController {
                     });
                 }
                 courseData.status = status;
+            }
+            if (externalUrl !== undefined) courseData.externalUrl = externalUrl ? String(externalUrl).trim() : null;
+            if (externalIntroVideoUrl !== undefined) {
+                courseData.externalIntroVideoUrl = externalIntroVideoUrl ? String(externalIntroVideoUrl).trim() : null;
+            }
+            if (externalWhatsapp !== undefined) {
+                courseData.externalWhatsapp = externalWhatsapp ? String(externalWhatsapp).trim() : null;
+            }
+            if (externalPhone !== undefined) {
+                courseData.externalPhone = externalPhone ? String(externalPhone).trim() : null;
+            }
+            if (priceDisplayPeriod !== undefined) {
+                const p = String(priceDisplayPeriod || '').trim();
+                courseData.priceDisplayPeriod = ['monthly', 'yearly', 'one_time'].includes(p) ? p : null;
+            }
+            if (visitorCount !== undefined) {
+                courseData.visitorCount = Math.max(0, parseInt(visitorCount, 10) || 0);
+            }
+
+            if (teacherId !== undefined) {
+                if (teacherId === null || teacherId === '') {
+                    courseData.teacherId = null;
+                } else {
+                    const tid = String(teacherId).trim();
+                    const tAccount = await userService.findById(tid);
+                    if (!tAccount || tAccount.role !== 'teacher') {
+                        return res.status(400).json({ error: 'Invalid teacher user' });
+                    }
+                    courseData.teacherId = tid;
+                }
             }
 
             const updated = await courseService.updateCourse(req.params.id, courseData);

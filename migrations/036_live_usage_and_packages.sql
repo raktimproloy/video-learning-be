@@ -52,8 +52,19 @@ BEGIN
     EXECUTE 'ALTER TABLE live_sessions DROP CONSTRAINT ' || quote_ident(r.conname);
   END LOOP;
 END $$;
+
+-- Existing rows may use providers or casing not in the new check (e.g. stream, GetStream, typos).
+-- Normalize and map unknowns so ADD CONSTRAINT can succeed. Include 'stream' to align with 069.
+UPDATE live_sessions
+SET provider = lower(btrim(COALESCE(provider, 'agora')))
+WHERE provider IS DISTINCT FROM lower(btrim(COALESCE(provider, 'agora')));
+
+UPDATE live_sessions
+SET provider = 'aws_ivs'
+WHERE provider NOT IN ('agora', '100ms', 'aws_ivs', 'youtube', 'stream');
+
 ALTER TABLE live_sessions ADD CONSTRAINT live_sessions_provider_check
-    CHECK (provider IN ('agora', '100ms', 'aws_ivs', 'youtube'));
+    CHECK (provider IN ('agora', '100ms', 'aws_ivs', 'youtube', 'stream'));
 
 -- Admin: enable/disable 100ms in live settings
 ALTER TABLE admin_live_settings ADD COLUMN IF NOT EXISTS hundred_ms_enabled BOOLEAN NOT NULL DEFAULT true;
