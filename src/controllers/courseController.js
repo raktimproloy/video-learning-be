@@ -646,21 +646,25 @@ class CourseController {
             let responseBody;
             if (isAnonymous) {
                 responseBody = await cache.getOrSet(`public:homeSections:limit=${limitPerSection}`, 60 * 1000, async () => {
-                    const { live, academic, skill, external } = await courseService.getHomeSections(null, limitPerSection);
+                    const { live, academic, skill, external, externalAcademic, externalSkill } = await courseService.getHomeSections(null, limitPerSection);
                     return {
                         live: enrichCourseMediaUrls(live, req),
                         academic: enrichCourseMediaUrls(academic, req),
                         skill: enrichCourseMediaUrls(skill, req),
                         external: enrichCourseMediaUrls(external, req),
+                        externalAcademic: enrichCourseMediaUrls(externalAcademic, req),
+                        externalSkill: enrichCourseMediaUrls(externalSkill, req),
                     };
                 });
             } else {
-                const { live, academic, skill, external } = await courseService.getHomeSections(userId, limitPerSection);
+                const { live, academic, skill, external, externalAcademic, externalSkill } = await courseService.getHomeSections(userId, limitPerSection);
                 responseBody = {
                     live: enrichCourseMediaUrls(live, req),
                     academic: enrichCourseMediaUrls(academic, req),
                     skill: enrichCourseMediaUrls(skill, req),
                     external: enrichCourseMediaUrls(external, req),
+                    externalAcademic: enrichCourseMediaUrls(externalAcademic, req),
+                    externalSkill: enrichCourseMediaUrls(externalSkill, req),
                 };
             }
 

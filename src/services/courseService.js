@@ -584,8 +584,8 @@ class CourseService {
     }
 
     /**
-     * Get home page sections: live (8), academic (8), skill (8). No course appears in more than one section.
-     * Order: fill live first, then academic from remaining, then skill from remaining.
+     * Get home page sections. No non-external course appears in more than one section.
+     * External courses are split by the same top-level category roots used by normal courses.
      */
     async getHomeSections(userId = null, limitPerSection = 8) {
         const reviewsTableCheck = await db.query(`
@@ -668,6 +668,7 @@ class CourseService {
         if (liveIds.length > 0) academicParams.push(liveIds);
 
         const academicCategoryIds = await adminCategoryService.getCategoryAndDescendantIds('academic');
+        const skillCategoryIds = await adminCategoryService.getCategoryAndDescendantIds('skill-based');
         let academic = [];
         if (academicCategoryIds.length > 0) {
             const acParamStart = academicParams.length + 1;
@@ -697,17 +698,39 @@ class CourseService {
         );
         const skill = skillResult.rows.map(parseRow);
 
-        const extParams = [...params];
-        const extResult = await db.query(
-            `SELECT ${baseSelect} ${baseFrom}
-             ${activeWhere} AND courses.course_type = 'external'
-             ORDER BY COALESCE(courses.visitor_count, 0) DESC, courses.created_at DESC
-             LIMIT ${limitVal}`,
-            extParams
-        );
-        const external = extResult.rows.map(parseRow);
+        const fetchExternalByCategoryIds = async (categoryIds) => {
+            if (!categoryIds.length) return [];
+            const extParams = [...params, ...categoryIds.map((id) => String(id))];
+            const extParamStart = params.length + 1;
+            const placeholders = categoryIds.map((_, i) => `$${extParamStart + i}`).join(', ');
+            const extResult = await db.query(
+                `SELECT ${baseSelect} ${baseFrom}
+                 ${activeWhere} AND courses.course_type = 'external'
+                 AND (
+                    courses.admin_category_id IN (${placeholders})
+                    OR courses.main_category_id IN (${placeholders})
+                    OR courses.sub_category_id IN (${placeholders})
+                 )
+                 ORDER BY COALESCE(courses.visitor_count, 0) DESC, courses.created_at DESC
+                 LIMIT ${limitVal}`,
+                extParams
+            );
+            return extResult.rows.map(parseRow);
+        };
 
-        return { live, academic, skill, external };
+        const [externalAcademic, externalSkill] = await Promise.all([
+            fetchExternalByCategoryIds(academicCategoryIds),
+            fetchExternalByCategoryIds(skillCategoryIds),
+        ]);
+        const external = [...externalAcademic, ...externalSkill]
+            .sort((a, b) => {
+                const visitors = (Number(b.visitor_count) || 0) - (Number(a.visitor_count) || 0);
+                if (visitors !== 0) return visitors;
+                return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+            })
+            .slice(0, limitVal);
+
+        return { live, academic, skill, external, externalAcademic, externalSkill };
     }
 
     async searchCourses(userId = null, options = {}) {
@@ -751,9 +774,10 @@ class CourseService {
         if (await hasColumn('courses', 'test_course')) {
             conditions.push(`COALESCE(courses.test_course, false) = false`);
         }
+        const categoryFilter = (category && typeof category === 'string') ? category.trim() : '';
         if (externalOnly === true) {
             conditions.push(`courses.course_type = 'external'`);
-        } else {
+        } else if (!categoryFilter) {
             conditions.push(`courses.course_type IS DISTINCT FROM 'external'`);
         }
         if (live === true || live === '1' || live === 1) {
@@ -772,7 +796,6 @@ class CourseService {
             whereIndex++;
         }
 
-        const categoryFilter = (category && typeof category === 'string') ? category.trim() : '';
         if (categoryFilter) {
             const categoryIds = await adminCategoryService.getCategoryAndDescendantIds(categoryFilter);
             if (categoryIds.length > 0) {
