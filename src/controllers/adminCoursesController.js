@@ -42,6 +42,7 @@ class AdminCoursesController {
                 main_category_id,
                 sub_category_id,
                 visitorCount,
+                institutionName,
             } = req.body;
 
             if (!title || !shortDescription || !externalUrl) {
@@ -116,6 +117,7 @@ class AdminCoursesController {
                 externalPhone: externalPhone ? String(externalPhone).trim() : null,
                 priceDisplayPeriod: ['monthly', 'yearly', 'one_time'].includes(pdp) ? pdp : null,
                 visitorCount: visitorCount != null ? parseInt(visitorCount, 10) : 0,
+                institutionName: institutionName != null && String(institutionName).trim() ? String(institutionName).trim() : null,
             });
             const detail = await adminCoursesService.getById(course.id);
             res.status(201).json(detail);
@@ -240,6 +242,7 @@ class AdminCoursesController {
                 externalPhone,
                 priceDisplayPeriod,
                 visitorCount,
+                institutionName,
             } = req.body;
 
             const courseData = {};
@@ -306,6 +309,12 @@ class AdminCoursesController {
             }
             if (visitorCount !== undefined) {
                 courseData.visitorCount = Math.max(0, parseInt(visitorCount, 10) || 0);
+            }
+            if (institutionName !== undefined) {
+                courseData.institutionName =
+                    institutionName === null || institutionName === ''
+                        ? null
+                        : String(institutionName).trim() || null;
             }
 
             if (teacherId !== undefined) {

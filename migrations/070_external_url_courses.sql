@@ -17,7 +17,12 @@ ALTER TABLE courses ADD COLUMN IF NOT EXISTS external_phone TEXT;
 ALTER TABLE courses ADD COLUMN IF NOT EXISTS price_display_period TEXT
   CHECK (price_display_period IS NULL OR price_display_period = ANY (ARRAY['monthly'::text, 'yearly'::text, 'one_time'::text]));
 ALTER TABLE courses ADD COLUMN IF NOT EXISTS visitor_count INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE courses ADD CONSTRAINT courses_visitor_count_nonnegative CHECK (visitor_count >= 0);
+-- Safe to re-run: run_migrations.js executes all files every time
+DO $$ BEGIN
+  ALTER TABLE courses ADD CONSTRAINT courses_visitor_count_nonnegative CHECK (visitor_count >= 0);
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_courses_course_type_external ON courses (course_type) WHERE course_type = 'external';
 

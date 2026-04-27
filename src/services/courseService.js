@@ -156,6 +156,7 @@ class CourseService {
             category,
             subcategory,
             visitorCount,
+            institutionName,
         } = data;
 
         const hasExt = await hasColumn('courses', 'external_url');
@@ -164,7 +165,13 @@ class CourseService {
         }
 
         const hasTestCol = await hasColumn('courses', 'test_course');
+        const hasInstNameCol = await hasColumn('courses', 'institution_name');
         const vc = visitorCount != null ? Math.max(0, parseInt(visitorCount, 10) || 0) : 0;
+        const inst = hasInstNameCol
+            ? institutionName != null && String(institutionName).trim()
+                ? String(institutionName).trim()
+                : null
+            : null;
 
         const insertSql = hasTestCol
             ? `INSERT INTO courses (
@@ -174,11 +181,11 @@ class CourseService {
                     thumbnail_path, intro_video_path, price, discount_price, currency,
                     has_live_class, has_assignments, test_course, status,
                     external_url, external_intro_video_url, external_whatsapp, external_phone,
-                    price_display_period, visitor_count
+                    price_display_period, visitor_count${hasInstNameCol ? ', institution_name' : ''}
                 ) VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'external',
                     $15, NULL, $16, $17, $18, false, false, $19, $20,
-                    $21, $22, $23, $24, $25, $26
+                    $21, $22, $23, $24, $25, $26${hasInstNameCol ? ', $27' : ''}
                 ) RETURNING *`
             : `INSERT INTO courses (
                     teacher_id, title, description, short_description, full_description,
@@ -187,11 +194,11 @@ class CourseService {
                     thumbnail_path, intro_video_path, price, discount_price, currency,
                     has_live_class, has_assignments, status,
                     external_url, external_intro_video_url, external_whatsapp, external_phone,
-                    price_display_period, visitor_count
+                    price_display_period, visitor_count${hasInstNameCol ? ', institution_name' : ''}
                 ) VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'external',
                     $15, NULL, $16, $17, $18, false, false, $19,
-                    $20, $21, $22, $23, $24, $25
+                    $20, $21, $22, $23, $24, $25${hasInstNameCol ? ', $26' : ''}
                 ) RETURNING *`;
 
         const desc = shortDescription || fullDescription || '';
@@ -205,7 +212,7 @@ class CourseService {
         const pPrice = safePrice(price);
         const pDiscount = safePrice(discountPrice);
         const tid = teacherId != null && String(teacherId).trim() !== '' ? String(teacherId).trim() : null;
-        const params = hasTestCol
+        const baseParams = hasTestCol
             ? [
                   tid,
                   title,
@@ -261,7 +268,7 @@ class CourseService {
                   priceDisplayPeriod || null,
                   vc,
               ];
-
+        const params = hasInstNameCol ? [...baseParams, inst] : baseParams;
         const result = await db.query(insertSql, params);
         const course = result.rows[0];
         if (admin_category_id) {
@@ -1329,6 +1336,7 @@ class CourseService {
             priceDisplayPeriod,
             visitorCount,
             teacherId,
+            institutionName,
         } = courseData;
 
         // Build dynamic update query
@@ -1462,6 +1470,15 @@ class CourseService {
                 updates.push(`visitor_count = $${paramIndex++}`);
                 values.push(Math.max(0, parseInt(visitorCount, 10) || 0));
             }
+        }
+
+        if (institutionName !== undefined && (await hasColumn('courses', 'institution_name'))) {
+            const ins =
+                institutionName === null || institutionName === ''
+                    ? null
+                    : String(institutionName).trim() || null;
+            updates.push(`institution_name = $${paramIndex++}`);
+            values.push(ins);
         }
 
         if (teacherId !== undefined) {

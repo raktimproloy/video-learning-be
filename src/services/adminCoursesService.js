@@ -190,6 +190,7 @@ class AdminCoursesService {
             externalPhone: row.external_phone ?? null,
             priceDisplayPeriod: row.price_display_period ?? null,
             visitorCount: row.visitor_count != null ? parseInt(row.visitor_count, 10) : 0,
+            institutionName: row.institution_name != null && String(row.institution_name).trim() ? String(row.institution_name).trim() : null,
         };
     }
 
