@@ -52,8 +52,11 @@ async function run() {
   const academic = JSON.parse(fs.readFileSync(academicPath, 'utf8'));
   const skillBased = JSON.parse(fs.readFileSync(skillPath, 'utf8'));
 
-  const client = await db.pool.connect();
+    const client = await db.pool.connect();
   try {
+    /** All category slugs in the table must be unique for URL lookup; share one set across the whole seed. */
+    const globalCategorySlugs = new Set();
+
     // 1) Remove existing roots so we can re-seed idempotently
     const rootsToReplace = ['academic', 'skill-based'];
     for (const slug of rootsToReplace) {
@@ -75,9 +78,9 @@ async function run() {
       ['Academic', academicRootSlug]
     );
     const academicRootId = academicRootRes.rows[0].id;
+    globalCategorySlugs.add(academicRootSlug);
     console.log('Created root: Academic');
 
-    const academicLevelSlugs = new Set();
     let displayOrder = 0;
     /** Defer "Jobs & Others" so order is: Class 11 & 12 → Admission → Honours → Jobs & Others */
     const JOBS_AND_OTHERS_LEVEL = 'Jobs & Others';
@@ -89,7 +92,7 @@ async function run() {
         jobsAndOthersLevel = level;
         continue;
       }
-      const levelSlug = ensureUniqueSlug(slugify(levelName), academicLevelSlugs);
+      const levelSlug = ensureUniqueSlug(slugify(levelName), globalCategorySlugs);
       const levelRes = await client.query(
         `INSERT INTO admin_categories (parent_id, name, name_bn, slug, description, status, level, display_order)
          VALUES ($1, $2, NULL, $3, NULL, 'active', 1, $4)
@@ -97,12 +100,11 @@ async function run() {
         [academicRootId, levelName, levelSlug, displayOrder++]
       );
       const levelId = levelRes.rows[0].id;
-      const usedSlugs = new Set();
       let bookOrder = 0;
       for (const book of level.books || []) {
         const name = book.english_name || book.bangla_name || 'Book';
         const nameBn = book.bangla_name || null;
-        const slug = ensureUniqueSlug(slugify(name), usedSlugs);
+        const slug = ensureUniqueSlug(slugify(name), globalCategorySlugs);
         await client.query(
           `INSERT INTO admin_categories (parent_id, name, name_bn, slug, description, status, level, display_order)
            VALUES ($1, $2, $3, $4, NULL, 'active', 2, $5)`,
@@ -115,7 +117,7 @@ async function run() {
     // 2b) Honours / Undergraduate (after Admission, before Jobs & Others)
     if (academic.honours && academic.honours.faculties && academic.honours.faculties.length > 0) {
       const honoursLevelName = academic.honours.education_level || 'Honours / Undergraduate';
-      const honoursSlug = ensureUniqueSlug(slugify(honoursLevelName), academicLevelSlugs);
+      const honoursSlug = ensureUniqueSlug(slugify(honoursLevelName), globalCategorySlugs);
       const honoursRes = await client.query(
         `INSERT INTO admin_categories (parent_id, name, name_bn, slug, description, status, level, display_order)
          VALUES ($1, $2, NULL, $3, NULL, 'active', 1, $4)
@@ -123,11 +125,10 @@ async function run() {
         [academicRootId, honoursLevelName, honoursSlug, displayOrder++]
       );
       const honoursId = honoursRes.rows[0].id;
-      const facultySlugs = new Set();
       let facultyOrder = 0;
       for (const faculty of academic.honours.faculties) {
         const name = faculty.faculty_name || 'Faculty';
-        const slug = ensureUniqueSlug(slugify(name), facultySlugs);
+        const slug = ensureUniqueSlug(slugify(name), globalCategorySlugs);
         await client.query(
           `INSERT INTO admin_categories (parent_id, name, name_bn, slug, description, status, level, display_order)
            VALUES ($1, $2, NULL, $3, NULL, 'active', 2, $4)`,
@@ -140,7 +141,7 @@ async function run() {
     // 2c) Jobs & Others last
     if (jobsAndOthersLevel) {
       const levelName = jobsAndOthersLevel.level || JOBS_AND_OTHERS_LEVEL;
-      const levelSlug = ensureUniqueSlug(slugify(levelName), academicLevelSlugs);
+      const levelSlug = ensureUniqueSlug(slugify(levelName), globalCategorySlugs);
       const levelRes = await client.query(
         `INSERT INTO admin_categories (parent_id, name, name_bn, slug, description, status, level, display_order)
          VALUES ($1, $2, NULL, $3, NULL, 'active', 1, $4)
@@ -148,12 +149,11 @@ async function run() {
         [academicRootId, levelName, levelSlug, displayOrder++]
       );
       const levelId = levelRes.rows[0].id;
-      const usedSlugs = new Set();
       let bookOrder = 0;
       for (const book of jobsAndOthersLevel.books || []) {
         const name = book.english_name || book.bangla_name || 'Book';
         const nameBn = book.bangla_name || null;
-        const slug = ensureUniqueSlug(slugify(name), usedSlugs);
+        const slug = ensureUniqueSlug(slugify(name), globalCategorySlugs);
         await client.query(
           `INSERT INTO admin_categories (parent_id, name, name_bn, slug, description, status, level, display_order)
            VALUES ($1, $2, $3, $4, NULL, 'active', 2, $5)`,
@@ -171,13 +171,13 @@ async function run() {
       ['Skill-based', 'skill-based']
     );
     const skillRootId = skillRootRes.rows[0].id;
+    globalCategorySlugs.add('skill-based');
     console.log('Created root: Skill-based');
 
-    const skillCatSlugs = new Set();
     displayOrder = 0;
     for (const cat of skillBased.skill_categories || []) {
       const catName = cat.category || 'Category';
-      const catSlug = ensureUniqueSlug(slugify(catName), skillCatSlugs);
+      const catSlug = ensureUniqueSlug(slugify(catName), globalCategorySlugs);
       const catRes = await client.query(
         `INSERT INTO admin_categories (parent_id, name, name_bn, slug, description, status, level, display_order)
          VALUES ($1, $2, NULL, $3, NULL, 'active', 1, $4)
@@ -185,12 +185,11 @@ async function run() {
         [skillRootId, catName, catSlug, displayOrder++]
       );
       const catId = catRes.rows[0].id;
-      const usedSlugs = new Set();
       let courseOrder = 0;
       for (const course of cat.courses || []) {
         const name = course.english_name || course.bangla_name || 'Course';
         const nameBn = course.bangla_name || null;
-        const slug = ensureUniqueSlug(slugify(name), usedSlugs);
+        const slug = ensureUniqueSlug(slugify(name), globalCategorySlugs);
         await client.query(
           `INSERT INTO admin_categories (parent_id, name, name_bn, slug, description, status, level, display_order)
            VALUES ($1, $2, $3, $4, NULL, 'active', 2, $5)`,

@@ -297,6 +297,25 @@ class CourseService {
         return r.rows[0] || null;
     }
 
+    /**
+     * Valid outbound URL for an active external listing (for authenticated open-external).
+     * @returns {Promise<string|null>}
+     */
+    async getExternalOutboundUrl(courseId) {
+        if (!(await hasColumn('courses', 'external_url'))) return null;
+        const r = await db.query(
+            `SELECT external_url FROM courses
+             WHERE id = $1
+               AND course_type = 'external'
+               AND (COALESCE(status, 'active') = 'active')
+               AND external_url IS NOT NULL
+               AND TRIM(external_url) <> ''`,
+            [courseId]
+        );
+        const raw = r.rows[0]?.external_url;
+        return raw != null && String(raw).trim() ? String(raw).trim() : null;
+    }
+
     async getHomepageAnalytics() {
         const students = await db.query(`
             SELECT

@@ -714,6 +714,33 @@ class CourseController {
         }
     }
 
+    /** POST — requires auth; returns redirect URL (not exposed in public course details). */
+    async openExternalCourse(req, res) {
+        try {
+            const target = await courseService.getExternalOutboundUrl(req.params.id);
+            if (!target) {
+                return res.status(404).json({ error: 'Course not found or no external link' });
+            }
+            let parsed;
+            try {
+                parsed = new URL(target);
+            } catch {
+                return res.status(400).json({ error: 'Invalid external URL' });
+            }
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+                return res.status(400).json({ error: 'Invalid external URL' });
+            }
+            const row = await courseService.incrementExternalVisitorCount(req.params.id);
+            res.json({
+                redirectUrl: target,
+                visitorCount: row?.visitor_count ?? null,
+            });
+        } catch (error) {
+            console.error('Open external course error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
     async searchCourses(req, res) {
         try {
             const userId = req.user?.id || null;
@@ -756,6 +783,10 @@ class CourseController {
             // Ensure thumbnail is always passed: explicit thumbnail_url and thumbnail_path for frontend
             enrichedCourse.thumbnail_url = enrichedCourse.thumbnail_url ?? null;
             enrichedCourse.thumbnail_path = enrichedCourse.thumbnail_path ?? null;
+            // Outbound partner URL is only released via POST /courses/:id/open-external (authenticated).
+            if (enrichedCourse.course_type === 'external') {
+                delete enrichedCourse.external_url;
+            }
 
             // Enrich teacher with avatar URL and camelCase fields for frontend
             let enrichedTeacher = details.teacher;

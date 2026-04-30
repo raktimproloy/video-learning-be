@@ -9,11 +9,12 @@ const cache = require('../utils/ttlCache');
  */
 async function getSettings(req, res) {
     try {
-        const body = await cache.getOrSet('public:settings:v1', 10 * 60 * 1000, async () => {
-            const [tree, platformSettings] = await Promise.all([
-                adminCategoryService.getTreeForSelect(),
+        const body = await cache.getOrSet('public:settings:v2', 10 * 60 * 1000, async () => {
+            const [publicCounts, platformSettings] = await Promise.all([
+                adminCategoryService.getPublicListingCourseCountByCategoryId(),
                 adminSettingsService.getAllForPublic(),
             ]);
+            const tree = await adminCategoryService.getTreeForSelect(publicCounts);
             return {
                 categories: tree.map(c => ({
                     id: c.id,

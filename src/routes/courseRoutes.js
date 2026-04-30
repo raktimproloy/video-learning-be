@@ -83,6 +83,12 @@ router.get('/search', optionalAuth, courseController.searchCourses);
 router.get('/by-invite/:code', courseController.getCourseByInviteCode);
 router.get('/:id/details', optionalAuth, courseController.getCourseDetails);
 router.post('/:id/external-click', optionalAuth, courseController.recordExternalClick);
+router.post(
+    '/:id/open-external',
+    authMiddleware,
+    requireRole(['student', 'teacher', 'admin']),
+    courseController.openExternalCourse
+);
 router.get('/:id/teacher/live-report', authMiddleware, requireRole(['teacher']), courseController.getCourseLiveReport);
 router.get('/:id', optionalAuth, courseController.getCourseById);
 

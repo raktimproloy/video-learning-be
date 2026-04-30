@@ -1,7 +1,8 @@
 const db = require('../../db');
 const cache = require('../utils/ttlCache');
+const { hasColumn } = require('../utils/dbSchemaCache');
 
-const PUBLIC_SETTINGS_CACHE_KEY = 'public:settings:v1';
+const PUBLIC_SETTINGS_CACHE_KEY = 'public:settings:v2';
 
 /**
  * Generate URL-friendly slug from name
@@ -203,11 +204,68 @@ class AdminCategoryService {
     }
 
     /**
+     * Rolled-up course counts visible on the public site (active listings only).
+     * Matches /courses/search: status active, non-test; uses admin_category_id only (same as stored course_count semantics).
+     * Draft and inactive courses are excluded so mega-menu badges match browse results.
+     * @returns {Promise<Map<string, number>>} category id -> visible course count (includes descendants)
+     */
+    async getPublicListingCourseCountByCategoryId() {
+        const hasTest = await hasColumn('courses', 'test_course');
+        const testClause = hasTest ? 'AND COALESCE(c.test_course, false) = false' : '';
+        const directRes = await db.query(
+            `SELECT c.admin_category_id AS id, COUNT(*)::int AS cnt
+             FROM courses c
+             WHERE COALESCE(c.status, 'active') = 'active'
+             ${testClause}
+             AND c.admin_category_id IS NOT NULL
+             GROUP BY c.admin_category_id`
+        );
+        const direct = new Map();
+        for (const row of directRes.rows) {
+            direct.set(row.id, row.cnt);
+        }
+
+        const catsRes = await db.query(
+            `SELECT id, parent_id FROM admin_categories WHERE status = 'active'`
+        );
+        const children = new Map();
+        for (const row of catsRes.rows) {
+            if (!row.parent_id) continue;
+            if (!children.has(row.parent_id)) children.set(row.parent_id, []);
+            children.get(row.parent_id).push(row.id);
+        }
+
+        const memo = new Map();
+        const totalFor = (id) => {
+            if (memo.has(id)) return memo.get(id);
+            let t = direct.get(id) || 0;
+            for (const cid of children.get(id) || []) {
+                t += totalFor(cid);
+            }
+            memo.set(id, t);
+            return t;
+        };
+
+        const result = new Map();
+        for (const row of catsRes.rows) {
+            result.set(row.id, totalFor(row.id));
+        }
+        return result;
+    }
+
+    /**
      * Get full tree for dropdown (all levels, flattened with path).
      * Each item: { id, name, slug, path, level, parentId, courseCount }
      * Max 3 levels: 0 (root), 1 (child), 2 (grandchild).
+     * @param {Map<string, number>|null} courseCountOverrides — if set (e.g. public-visible rollup), replaces DB course_count
      */
-    async getTreeForSelect() {
+    async getTreeForSelect(courseCountOverrides = null) {
+        const countForRow = (id, dbVal) => {
+            if (courseCountOverrides && courseCountOverrides.has(id)) {
+                return courseCountOverrides.get(id) ?? 0;
+            }
+            return parseInt(dbVal, 10) || 0;
+        };
         const rootsRes = await db.query(
             `SELECT id, name, name_bn, slug, parent_id, COALESCE(level, 0) as level, COALESCE(course_count, 0) as course_count, COALESCE(display_order, 0) as display_order
              FROM admin_categories WHERE parent_id IS NULL AND status = 'active' ORDER BY COALESCE(display_order, 0), name ASC`
@@ -222,7 +280,7 @@ class AdminCategoryService {
                 path: r.name,
                 level: 0,
                 parentId: null,
-                courseCount: parseInt(r.course_count, 10) || 0,
+                courseCount: countForRow(r.id, r.course_count),
                 displayOrder: parseInt(r.display_order, 10) || 0,
             });
             const childrenRes = await db.query(
@@ -239,7 +297,7 @@ class AdminCategoryService {
                     path: `${r.name} > ${c.name}`,
                     level: 1,
                     parentId: c.parent_id,
-                    courseCount: parseInt(c.course_count, 10) || 0,
+                    courseCount: countForRow(c.id, c.course_count),
                     displayOrder: parseInt(c.display_order, 10) || 0,
                 });
                 const grandRes = await db.query(
@@ -256,7 +314,7 @@ class AdminCategoryService {
                         path: `${r.name} > ${c.name} > ${g.name}`,
                         level: 2,
                         parentId: g.parent_id,
-                        courseCount: parseInt(g.course_count, 10) || 0,
+                        courseCount: countForRow(g.id, g.course_count),
                         displayOrder: parseInt(g.display_order, 10) || 0,
                     });
                 }
@@ -355,24 +413,55 @@ class AdminCategoryService {
     }
 
     /**
-     * Get category ids for filtering: the category matching slug (or id) and ALL its descendants.
-     * Used when searching courses by category - show courses in this category or any subcategory.
+     * Tree depth is capped at 3 (root → child → grandchild) in this codebase.
+     * @param {string} rootId
+     * @returns {Promise<string[]>}
      */
-    async getCategoryAndDescendantIds(slugOrId) {
-        if (!slugOrId) return [];
-        const byId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(slugOrId));
-        const row = byId
-            ? (await db.query('SELECT id, slug FROM admin_categories WHERE id = $1', [slugOrId])).rows[0]
-            : (await db.query('SELECT id, slug FROM admin_categories WHERE slug = $1 AND status = $2', [String(slugOrId).toLowerCase().trim(), 'active'])).rows[0];
-        if (!row) return [];
-        const ids = [row.id];
-        const children = (await db.query('SELECT id FROM admin_categories WHERE parent_id = $1 AND status = $2', [row.id, 'active'])).rows;
+    async _collectSelfAndDescendantIds(rootId) {
+        const ids = [rootId];
+        const children = (await db.query(
+            'SELECT id FROM admin_categories WHERE parent_id = $1 AND status = $2',
+            [rootId, 'active']
+        )).rows;
         for (const c of children) {
             ids.push(c.id);
-            const grand = (await db.query('SELECT id FROM admin_categories WHERE parent_id = $1 AND status = $2', [c.id, 'active'])).rows;
+            const grand = (await db.query(
+                'SELECT id FROM admin_categories WHERE parent_id = $1 AND status = $2',
+                [c.id, 'active']
+            )).rows;
             for (const g of grand) ids.push(g.id);
         }
         return ids;
+    }
+
+    /**
+     * Get category ids for filtering: the category matching slug (or id) and ALL its descendants.
+     * Used when searching courses by category - show courses in this category or any subcategory.
+     * When multiple categories share the same slug (e.g. "English" under Class 7 and Class 8),
+     * all matching branches are merged so legacy ?category=english links still find every matching course.
+     */
+    async getCategoryAndDescendantIds(slugOrId) {
+        if (!slugOrId) return [];
+        const raw = String(slugOrId).trim();
+        const byId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw);
+        let rootRows;
+        if (byId) {
+            const row = (await db.query('SELECT id FROM admin_categories WHERE id = $1', [raw])).rows[0];
+            rootRows = row ? [row] : [];
+        } else {
+            rootRows = (await db.query(
+                'SELECT id FROM admin_categories WHERE slug = $1 AND status = $2',
+                [raw.toLowerCase(), 'active']
+            )).rows;
+        }
+        if (!rootRows.length) return [];
+
+        const merged = new Set();
+        for (const r of rootRows) {
+            const branch = await this._collectSelfAndDescendantIds(r.id);
+            branch.forEach((id) => merged.add(id));
+        }
+        return [...merged];
     }
 
     async create(data) {
