@@ -186,6 +186,7 @@ class AdminCoursesService {
             updatedAt: row.updated_at,
             externalUrl: row.external_url ?? null,
             externalIntroVideoUrl: row.external_intro_video_url ?? null,
+            externalThumbnailUrl: row.external_thumbnail_url ?? null,
             externalWhatsapp: row.external_whatsapp ?? null,
             externalPhone: row.external_phone ?? null,
             priceDisplayPeriod: row.price_display_period ?? null,

@@ -1,6 +1,7 @@
 const db = require('../../db');
 const adminCategoryService = require('./adminCategoryService');
 const { hasColumn } = require('../utils/dbSchemaCache');
+const { normalizeExternalImageUrl } = require('../utils/externalMediaUrl');
 
 /** SQL fragment to hide invite-only test courses from public listings (empty if column not migrated). */
 async function sqlHideTestCourses(tableAlias) {
@@ -129,7 +130,7 @@ class CourseService {
     }
 
     /**
-     * Create an external URL course (no lessons). Requires migration 070 columns.
+     * Create an external URL course (no lessons). Requires migration 070; optional 073 external_thumbnail_url.
      */
     async createExternalCourse(teacherId, data) {
         const {
@@ -146,7 +147,6 @@ class CourseService {
             thumbnailPath,
             status,
             externalUrl,
-            externalIntroVideoUrl,
             externalWhatsapp,
             externalPhone,
             priceDisplayPeriod,
@@ -166,6 +166,8 @@ class CourseService {
 
         const hasTestCol = await hasColumn('courses', 'test_course');
         const hasInstNameCol = await hasColumn('courses', 'institution_name');
+        const hasExtThumb = await hasColumn('courses', 'external_thumbnail_url');
+
         const vc = visitorCount != null ? Math.max(0, parseInt(visitorCount, 10) || 0) : 0;
         const inst = hasInstNameCol
             ? institutionName != null && String(institutionName).trim()
@@ -173,33 +175,8 @@ class CourseService {
                 : null
             : null;
 
-        const insertSql = hasTestCol
-            ? `INSERT INTO courses (
-                    teacher_id, title, description, short_description, full_description,
-                    category, subcategory, main_category_id, sub_category_id, admin_category_id,
-                    tags, language, subtitle, level, course_type,
-                    thumbnail_path, intro_video_path, price, discount_price, currency,
-                    has_live_class, has_assignments, test_course, status,
-                    external_url, external_intro_video_url, external_whatsapp, external_phone,
-                    price_display_period, visitor_count${hasInstNameCol ? ', institution_name' : ''}
-                ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'external',
-                    $15, NULL, $16, $17, $18, false, false, $19, $20,
-                    $21, $22, $23, $24, $25, $26${hasInstNameCol ? ', $27' : ''}
-                ) RETURNING *`
-            : `INSERT INTO courses (
-                    teacher_id, title, description, short_description, full_description,
-                    category, subcategory, main_category_id, sub_category_id, admin_category_id,
-                    tags, language, subtitle, level, course_type,
-                    thumbnail_path, intro_video_path, price, discount_price, currency,
-                    has_live_class, has_assignments, status,
-                    external_url, external_intro_video_url, external_whatsapp, external_phone,
-                    price_display_period, visitor_count${hasInstNameCol ? ', institution_name' : ''}
-                ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'external',
-                    $15, NULL, $16, $17, $18, false, false, $19,
-                    $20, $21, $22, $23, $24, $25${hasInstNameCol ? ', $26' : ''}
-                ) RETURNING *`;
+        const hasUploadedThumb = !!(thumbnailPath && String(thumbnailPath).trim());
+        const extThumbStored = hasExtThumb && !hasUploadedThumb ? normalizeExternalImageUrl(data.externalThumbnailUrl) : null;
 
         const desc = shortDescription || fullDescription || '';
         const safePrice = (p) => {
@@ -212,64 +189,86 @@ class CourseService {
         const pPrice = safePrice(price);
         const pDiscount = safePrice(discountPrice);
         const tid = teacherId != null && String(teacherId).trim() !== '' ? String(teacherId).trim() : null;
-        const baseParams = hasTestCol
-            ? [
-                  tid,
-                  title,
-                  desc,
-                  shortDescription || null,
-                  fullDescription || null,
-                  category || null,
-                  subcategory || null,
-                  main_category_id || null,
-                  sub_category_id || null,
-                  admin_category_id || null,
-                  JSON.stringify(tags || []),
-                  language || 'English',
-                  subtitle || null,
-                  level || null,
-                  thumbnailPath || null,
-                  pPrice,
-                  pDiscount,
-                  currency || 'USD',
-                  data.testCourse || false,
-                  status || 'draft',
-                  externalUrl || null,
-                  externalIntroVideoUrl || null,
-                  externalWhatsapp || null,
-                  externalPhone || null,
-                  priceDisplayPeriod || null,
-                  vc,
-              ]
-            : [
-                  tid,
-                  title,
-                  desc,
-                  shortDescription || null,
-                  fullDescription || null,
-                  category || null,
-                  subcategory || null,
-                  main_category_id || null,
-                  sub_category_id || null,
-                  admin_category_id || null,
-                  JSON.stringify(tags || []),
-                  language || 'English',
-                  subtitle || null,
-                  level || null,
-                  thumbnailPath || null,
-                  pPrice,
-                  pDiscount,
-                  currency || 'USD',
-                  status || 'draft',
-                  externalUrl || null,
-                  externalIntroVideoUrl || null,
-                  externalWhatsapp || null,
-                  externalPhone || null,
-                  priceDisplayPeriod || null,
-                  vc,
-              ];
-        const params = hasInstNameCol ? [...baseParams, inst] : baseParams;
-        const result = await db.query(insertSql, params);
+
+        const cols = [
+            'teacher_id',
+            'title',
+            'description',
+            'short_description',
+            'full_description',
+            'category',
+            'subcategory',
+            'main_category_id',
+            'sub_category_id',
+            'admin_category_id',
+            'tags',
+            'language',
+            'subtitle',
+            'level',
+            'course_type',
+            'thumbnail_path',
+            'intro_video_path',
+            'price',
+            'discount_price',
+            'currency',
+            'has_live_class',
+            'has_assignments',
+        ];
+        const vals = [
+            tid,
+            title,
+            desc,
+            shortDescription || null,
+            fullDescription || null,
+            category || null,
+            subcategory || null,
+            main_category_id || null,
+            sub_category_id || null,
+            admin_category_id || null,
+            JSON.stringify(tags || []),
+            language || 'English',
+            subtitle || null,
+            level || null,
+            'external',
+            thumbnailPath || null,
+            null,
+            pPrice,
+            pDiscount,
+            currency || 'USD',
+            false,
+            false,
+        ];
+        if (hasTestCol) {
+            cols.push('test_course');
+            vals.push(data.testCourse || false);
+        }
+        cols.push('status');
+        vals.push(status || 'draft');
+
+        cols.push('external_url', 'external_intro_video_url');
+        vals.push(externalUrl || null, null);
+
+        if (hasExtThumb) {
+            cols.push('external_thumbnail_url');
+            vals.push(extThumbStored);
+        }
+
+        cols.push('external_whatsapp', 'external_phone', 'price_display_period', 'visitor_count');
+        vals.push(
+            externalWhatsapp || null,
+            externalPhone || null,
+            priceDisplayPeriod || null,
+            vc
+        );
+
+        if (hasInstNameCol) {
+            cols.push('institution_name');
+            vals.push(inst);
+        }
+
+        const placeholders = vals.map((_, i) => `$${i + 1}`).join(', ');
+        const insertSql = `INSERT INTO courses (${cols.join(', ')}) VALUES (${placeholders}) RETURNING *`;
+        const result = await db.query(insertSql, vals);
         const course = result.rows[0];
         if (admin_category_id) {
             await adminCategoryService.incrementCourseCountForPath(admin_category_id);
@@ -1350,6 +1349,7 @@ class CourseService {
             status,
             externalUrl,
             externalIntroVideoUrl,
+            externalThumbnailUrl,
             externalWhatsapp,
             externalPhone,
             priceDisplayPeriod,
@@ -1426,6 +1426,10 @@ class CourseService {
         if (thumbnailPath !== undefined) {
             updates.push(`thumbnail_path = $${paramIndex++}`);
             values.push(thumbnailPath);
+            if (thumbnailPath && (await hasColumn('courses', 'external_thumbnail_url'))) {
+                updates.push(`external_thumbnail_url = $${paramIndex++}`);
+                values.push(null);
+            }
         }
         if (introVideoPath !== undefined) {
             updates.push(`intro_video_path = $${paramIndex++}`);
@@ -1472,6 +1476,10 @@ class CourseService {
             if (externalIntroVideoUrl !== undefined) {
                 updates.push(`external_intro_video_url = $${paramIndex++}`);
                 values.push(externalIntroVideoUrl || null);
+            }
+            if (externalThumbnailUrl !== undefined && (await hasColumn('courses', 'external_thumbnail_url'))) {
+                updates.push(`external_thumbnail_url = $${paramIndex++}`);
+                values.push(normalizeExternalImageUrl(externalThumbnailUrl));
             }
             if (externalWhatsapp !== undefined) {
                 updates.push(`external_whatsapp = $${paramIndex++}`);

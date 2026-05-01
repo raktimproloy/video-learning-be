@@ -7,6 +7,7 @@ const r2Storage = require('../services/r2StorageService');
 const userService = require('../services/userService');
 const path = require('path');
 const fs = require('fs');
+const { normalizeExternalImageUrl } = require('../utils/externalMediaUrl');
 
 /** @param {unknown} v */
 function parseOptNum(v) {
@@ -26,7 +27,6 @@ class AdminCoursesController {
                 shortDescription,
                 fullDescription,
                 externalUrl,
-                externalIntroVideoUrl,
                 externalWhatsapp,
                 externalPhone,
                 priceDisplayPeriod,
@@ -110,9 +110,11 @@ class AdminCoursesController {
                 discountPrice: parseOptNum(discountPrice),
                 currency: currency || 'BDT',
                 thumbnailPath,
+                externalThumbnailUrl: thumbnailPath
+                    ? null
+                    : normalizeExternalImageUrl(req.body.externalThumbnailUrl ?? req.body.external_thumbnail_url),
                 status: status || 'active',
                 externalUrl: String(externalUrl).trim(),
-                externalIntroVideoUrl: externalIntroVideoUrl ? String(externalIntroVideoUrl).trim() : null,
                 externalWhatsapp: externalWhatsapp ? String(externalWhatsapp).trim() : null,
                 externalPhone: externalPhone ? String(externalPhone).trim() : null,
                 priceDisplayPeriod: ['monthly', 'yearly', 'one_time'].includes(pdp) ? pdp : null,
@@ -237,7 +239,7 @@ class AdminCoursesController {
                 teacherId,
                 tags,
                 externalUrl,
-                externalIntroVideoUrl,
+                externalThumbnailUrl,
                 externalWhatsapp,
                 externalPhone,
                 priceDisplayPeriod,
@@ -294,8 +296,12 @@ class AdminCoursesController {
                 courseData.status = status;
             }
             if (externalUrl !== undefined) courseData.externalUrl = externalUrl ? String(externalUrl).trim() : null;
-            if (externalIntroVideoUrl !== undefined) {
-                courseData.externalIntroVideoUrl = externalIntroVideoUrl ? String(externalIntroVideoUrl).trim() : null;
+            if (externalThumbnailUrl !== undefined) {
+                const s =
+                    externalThumbnailUrl === null || externalThumbnailUrl === ''
+                        ? ''
+                        : String(externalThumbnailUrl).trim();
+                courseData.externalThumbnailUrl = s || null;
             }
             if (externalWhatsapp !== undefined) {
                 courseData.externalWhatsapp = externalWhatsapp ? String(externalWhatsapp).trim() : null;

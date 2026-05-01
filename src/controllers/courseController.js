@@ -9,6 +9,7 @@ const cache = require('../utils/ttlCache');
 const path = require('path');
 const fs = require('fs');
 const userService = require('../services/userService');
+const { normalizeExternalImageUrl } = require('../utils/externalMediaUrl');
 
 function enrichCourseMediaUrls(courses, req) {
     const apiUrl = process.env.BASE_URL || 'http://localhost:5000';
@@ -33,6 +34,9 @@ function enrichCourseMediaUrls(courses, req) {
                 // Fallback - assume it's a relative path
                 course.thumbnail_url = `${apiUrl}${course.thumbnail_path.startsWith('/') ? '' : '/'}${course.thumbnail_path}`;
             }
+        } else if (course.external_thumbnail_url) {
+            const u = normalizeExternalImageUrl(course.external_thumbnail_url);
+            if (u) course.thumbnail_url = u;
         }
         
         // Handle intro video URL
@@ -48,10 +52,6 @@ function enrichCourseMediaUrls(courses, req) {
                 course.intro_video_url = `${apiUrl}${course.intro_video_path.startsWith('/') ? '' : '/'}${course.intro_video_path}`;
             }
         }
-        if (course.external_intro_video_url) {
-            course.intro_video_url = course.intro_video_url || course.external_intro_video_url;
-        }
-        
         return course;
     });
 }
@@ -91,7 +91,7 @@ class CourseController {
 
             if (courseType === 'external') {
                 const externalUrl = trim(raw.externalUrl);
-                const externalIntroVideoUrl = trim(raw.externalIntroVideoUrl) || null;
+                const externalThumbnailUrlRaw = trim(raw.externalThumbnailUrl) || null;
                 const externalWhatsapp = trim(raw.externalWhatsapp) || null;
                 const externalPhone = trim(raw.externalPhone) || null;
                 const priceDisplayPeriod = trim(raw.priceDisplayPeriod) || null;
@@ -124,6 +124,7 @@ class CourseController {
                         thumbnailPath = `/uploads/courses/${file.filename}`;
                     }
                 }
+                const externalThumbnailUrl = thumbnailPath ? null : externalThumbnailUrlRaw;
                 const specific = trim(raw.specific_category_id) || trim(raw.admin_category_id) || null;
                 const course = await courseService.createExternalCourse(req.user.id, {
                     title: title.trim(),
@@ -144,7 +145,7 @@ class CourseController {
                     thumbnailPath,
                     status: 'draft',
                     externalUrl: externalUrl,
-                    externalIntroVideoUrl,
+                    externalThumbnailUrl,
                     externalWhatsapp,
                     externalPhone,
                     priceDisplayPeriod: ['monthly', 'yearly', 'one_time'].includes(priceDisplayPeriod)
@@ -153,9 +154,6 @@ class CourseController {
                     testCourse: isCoreMember && (testCourse === 'true' || testCourse === true),
                 });
                 const enriched = enrichCourseMediaUrls([course], req)[0];
-                if (enriched.external_intro_video_url) {
-                    enriched.intro_video_url = enriched.external_intro_video_url;
-                }
                 return res.status(201).json(enriched);
             }
 
@@ -945,7 +943,7 @@ class CourseController {
                 testCourse,
                 status,
                 externalUrl,
-                externalIntroVideoUrl,
+                externalThumbnailUrl,
                 externalWhatsapp,
                 externalPhone,
                 priceDisplayPeriod,
@@ -990,8 +988,9 @@ class CourseController {
                 courseData.status = status;
             }
             if (externalUrl !== undefined) courseData.externalUrl = String(externalUrl).trim() || null;
-            if (externalIntroVideoUrl !== undefined) {
-                courseData.externalIntroVideoUrl = String(externalIntroVideoUrl).trim() || null;
+            if (externalThumbnailUrl !== undefined) {
+                const s = String(externalThumbnailUrl).trim();
+                courseData.externalThumbnailUrl = s || null;
             }
             if (externalWhatsapp !== undefined) courseData.externalWhatsapp = String(externalWhatsapp).trim() || null;
             if (externalPhone !== undefined) courseData.externalPhone = String(externalPhone).trim() || null;
@@ -1173,9 +1172,6 @@ class CourseController {
 
             const course = await courseService.updateCourse(req.params.id, courseData);
             const enriched = enrichCourseMediaUrls([course], req)[0];
-            if (enriched?.external_intro_video_url) {
-                enriched.intro_video_url = enriched.intro_video_url || enriched.external_intro_video_url;
-            }
             res.json(enriched);
         } catch (error) {
             if (error.message && error.message.includes('Live class cannot be turned off')) {
