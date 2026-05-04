@@ -2,7 +2,7 @@ const http = require('http');
 const app = require('./src/app');
 const { initSocket } = require('./src/socket');
 
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 5000;
 const server = http.createServer(app);
 const serverTimeoutMs = Math.max(60_000, parseInt(process.env.SERVER_TIMEOUT_MS || '900000', 10));
 

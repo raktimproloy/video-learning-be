@@ -13,7 +13,7 @@
     "start": "node index.js",
     "worker": "node src/worker/index.js",
     "worker:2": "node src/worker/runWorkers.js 2",
-    "dev": "nodemon index.js",
+    "dev": "nodemon --ignore storage/** index.js",
     "docker:build": "sh build.sh"
   },
   "keywords": [],

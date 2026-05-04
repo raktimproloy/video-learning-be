@@ -802,8 +802,6 @@ class CourseService {
         const categoryFilter = (category && typeof category === 'string') ? category.trim() : '';
         if (externalOnly === true) {
             conditions.push(`courses.course_type = 'external'`);
-        } else if (!categoryFilter) {
-            conditions.push(`courses.course_type IS DISTINCT FROM 'external'`);
         }
         if (live === true || live === '1' || live === 1) {
             conditions.push('courses.has_live_class = true');

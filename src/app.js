@@ -14,6 +14,7 @@ const adminDashboardRoutes = require('./routes/adminDashboardRoutes');
 const adminTeachersRoutes = require('./routes/adminTeachersRoutes');
 const adminStudentsRoutes = require('./routes/adminStudentsRoutes');
 const adminCoursesRoutes = require('./routes/adminCoursesRoutes');
+const adminExternalCourseImportRoutes = require('./routes/adminExternalCourseImportRoutes');
 const adminCategoryRoutes = require('./routes/adminCategoryRoutes');
 const adminSettingsRoutes = require('./routes/adminSettingsRoutes');
 const adminPaymentRequestsRoutes = require('./routes/adminPaymentRequestsRoutes');
@@ -63,7 +64,8 @@ app.use(cors({
 app.use(morgan('combined'));
 
 // Body Parser Middleware
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Local video files (when storage_provider = 'local'). R2 videos are streamed via /v1/video/:id/stream/*
 app.use('/videos', express.static(path.join(__dirname, '../public/videos')));
@@ -84,6 +86,7 @@ app.use('/v1/admin/users', adminUserRoutes);
 app.use('/v1/admin/teachers', adminTeachersRoutes);
 app.use('/v1/admin/students', adminStudentsRoutes);
 app.use('/v1/admin/courses', adminCoursesRoutes);
+app.use('/v1/admin/external-course-imports', adminExternalCourseImportRoutes);
 app.use('/v1/admin/categories', adminCategoryRoutes);
 app.use('/v1/admin/settings', adminSettingsRoutes);
 app.use('/v1/admin/payment-requests', adminPaymentRequestsRoutes);
