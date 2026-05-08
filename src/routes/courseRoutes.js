@@ -85,8 +85,7 @@ router.get('/:id/details', optionalAuth, courseController.getCourseDetails);
 router.post('/:id/external-click', optionalAuth, courseController.recordExternalClick);
 router.post(
     '/:id/open-external',
-    authMiddleware,
-    requireRole(['student', 'teacher', 'admin']),
+    optionalAuth,
     courseController.openExternalCourse
 );
 router.get('/:id/teacher/live-report', authMiddleware, requireRole(['teacher']), courseController.getCourseLiveReport);

@@ -43,6 +43,7 @@ router.post(
     adminCoursesController.createUrlCourse
 );
 // More specific routes first (before /:id)
+router.post('/external/generate-visitors', adminCoursesController.generateExternalVisitors);
 router.get('/:id/stats', adminCoursesController.getStats);
 router.get('/:id/reviews', adminCoursesController.getReviews);
 router.put('/:id/reviews/:reviewId', adminCoursesController.updateReview);

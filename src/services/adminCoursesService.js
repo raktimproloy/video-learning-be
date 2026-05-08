@@ -1,6 +1,31 @@
 const db = require('../../db');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+
+const generatedCachePath = path.join(__dirname, '../../external_visitors_generated.json');
+
+function getGeneratedIds() {
+    try {
+        if (fs.existsSync(generatedCachePath)) {
+            const data = fs.readFileSync(generatedCachePath, 'utf8');
+            return new Set(JSON.parse(data));
+        }
+    } catch (e) {
+        // ignore
+    }
+    return new Set();
+}
+
+function saveGeneratedIds(idsSet) {
+    try {
+        fs.writeFileSync(generatedCachePath, JSON.stringify(Array.from(idsSet)));
+    } catch (e) {
+        // ignore
+    }
+}
+
 
 class AdminCoursesService {
     /**
@@ -486,6 +511,40 @@ class AdminCoursesService {
         } finally {
             client.release();
         }
+    }
+
+    /**
+     * Generate random visitor counts (0-5) for external courses that haven't been processed yet.
+     */
+    async generateExternalVisitorCounts() {
+        const generatedIds = getGeneratedIds();
+
+        // Find all external courses
+        const coursesRes = await db.query(`SELECT id FROM courses WHERE course_type = 'external'`);
+        const allCourses = coursesRes.rows;
+
+        const idsToUpdate = allCourses
+            .map(c => c.id)
+            .filter(id => !generatedIds.has(id));
+
+        if (idsToUpdate.length === 0) {
+            return { updated: 0, courses: [] };
+        }
+
+        const result = await db.query(`
+            UPDATE courses 
+            SET visitor_count = COALESCE(visitor_count, 0) + floor(random() * 6)::int 
+            WHERE id = ANY($1)
+            RETURNING id, visitor_count;
+        `, [idsToUpdate]);
+
+        for (const row of result.rows) {
+            generatedIds.add(row.id);
+        }
+
+        saveGeneratedIds(generatedIds);
+
+        return { updated: result.rowCount, courses: result.rows };
     }
 }
 

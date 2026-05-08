@@ -51,12 +51,6 @@ class AdminCoursesController {
 
             const effectiveTeacherId =
                 teacherId && String(teacherId).trim() ? String(teacherId).trim() : null;
-            if (effectiveTeacherId) {
-                const account = await userService.findById(effectiveTeacherId);
-                if (!account || account.role !== 'teacher') {
-                    return res.status(400).json({ error: 'Invalid teacher user' });
-                }
-            }
 
             const r2OwnerKey = effectiveTeacherId || 'unassigned';
 
@@ -327,12 +321,7 @@ class AdminCoursesController {
                 if (teacherId === null || teacherId === '') {
                     courseData.teacherId = null;
                 } else {
-                    const tid = String(teacherId).trim();
-                    const tAccount = await userService.findById(tid);
-                    if (!tAccount || tAccount.role !== 'teacher') {
-                        return res.status(400).json({ error: 'Invalid teacher user' });
-                    }
-                    courseData.teacherId = tid;
+                    courseData.teacherId = String(teacherId).trim();
                 }
             }
 
@@ -546,6 +535,16 @@ class AdminCoursesController {
             res.json({ message: 'Course deleted successfully' });
         } catch (error) {
             console.error('Admin delete course error:', error);
+            res.status(500).json({ error: 'Internal server error', details: error.message });
+        }
+    }
+
+    async generateExternalVisitors(req, res) {
+        try {
+            const result = await adminCoursesService.generateExternalVisitorCounts();
+            res.json(result);
+        } catch (error) {
+            console.error('Admin generate external visitors error:', error);
             res.status(500).json({ error: 'Internal server error', details: error.message });
         }
     }

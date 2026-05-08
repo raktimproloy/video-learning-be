@@ -20,6 +20,10 @@ function sqlNonExternal(tableAlias = 'courses') {
     return ` AND ${p}course_type IS DISTINCT FROM 'external'`;
 }
 
+let homeSectionsCache = null;
+let homeSectionsCacheExpiry = 0;
+const HOME_SECTIONS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
 class CourseService {
     async createCourse(teacherId, courseData) {
         const {
@@ -612,150 +616,184 @@ class CourseService {
      * Get home page sections. No non-external course appears in more than one section.
      * External courses are split by the same top-level category roots used by normal courses.
      */
+    /**
+     * Get home page sections. No non-external course appears in more than one section.
+     * External courses are split by the same top-level category roots used by normal courses.
+     * Courses are randomly selected and cached to reduce database load.
+     */
     async getHomeSections(userId = null, limitPerSection = 8) {
-        const reviewsTableCheck = await db.query(`
-            SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'reviews')
-        `);
-        const hasReviewsTable = reviewsTableCheck.rows[0]?.exists || false;
-        const reviewsRatingQuery = hasReviewsTable
-            ? `(SELECT COALESCE(AVG(r.rating), 0)::numeric(3,2) FROM reviews r WHERE r.course_id = courses.id)`
-            : `0::numeric(3,2)`;
-        const reviewsCountQuery = hasReviewsTable
-            ? `(SELECT COUNT(*)::int FROM reviews r WHERE r.course_id = courses.id)`
-            : `0::int`;
+        const now = Date.now();
+        if (!homeSectionsCache || now > homeSectionsCacheExpiry) {
+            const limitVal = Math.min(Math.max(parseInt(limitPerSection, 10) || 8, 1), 20);
 
-        let purchaseCheck = ', false as is_purchased';
-        let ownershipCheck = ', false as is_owned';
-        const params = [];
-        if (userId) {
-            purchaseCheck = `, EXISTS(SELECT 1 FROM course_enrollments ce WHERE ce.course_id = courses.id AND ce.user_id = $1) as is_purchased`;
-            ownershipCheck = `, (courses.teacher_id = $1) as is_owned`;
-            params.push(userId);
+            const reviewsTableCheck = await db.query(`
+                SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'reviews')
+            `);
+            const hasReviewsTable = reviewsTableCheck.rows[0]?.exists || false;
+            const reviewsRatingQuery = hasReviewsTable
+                ? `(SELECT COALESCE(AVG(r.rating), 0)::numeric(3,2) FROM reviews r WHERE r.course_id = courses.id)`
+                : `0::numeric(3,2)`;
+            const reviewsCountQuery = hasReviewsTable
+                ? `(SELECT COUNT(*)::int FROM reviews r WHERE r.course_id = courses.id)`
+                : `0::int`;
+
+            const hideTest = await sqlHideTestCourses('courses');
+            const purchaseCheck = ', false as is_purchased';
+            const ownershipCheck = ', false as is_owned';
+
+            const baseSelect = `
+                courses.*,
+                users.email as teacher_email,
+                COALESCE(tp.name, users.email) as teacher_name,
+                users.id as teacher_id,
+                CASE WHEN courses.tags IS NULL THEN '[]'::jsonb WHEN jsonb_typeof(courses.tags) = 'string' THEN courses.tags::jsonb ELSE courses.tags END as tags,
+                COALESCE(ac.slug, LOWER(REPLACE(TRIM(COALESCE(courses.category, '')), ' ', '-'))) as category_slug,
+                ac.name as category_name,
+                ac.name_bn as category_name_bn
+                ${purchaseCheck} ${ownershipCheck},
+                ${reviewsRatingQuery} as rating,
+                ${reviewsCountQuery} as review_count,
+                (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = courses.id) as purchase_count,
+                (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id) as total_lessons,
+                (SELECT COUNT(*)::int FROM videos v JOIN lessons l ON v.lesson_id = l.id WHERE l.course_id = courses.id) as total_videos
+            `;
+            const baseFrom = `
+                FROM courses
+                LEFT JOIN users ON courses.teacher_id = users.id
+                LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
+                LEFT JOIN admin_categories ac ON courses.admin_category_id = ac.id
+            `;
+            const activeWhere = `WHERE COALESCE(courses.status, 'active') = 'active'${hideTest}`;
+            const activeWhereNonExternal = `WHERE COALESCE(courses.status, 'active') = 'active'${hideTest}${sqlNonExternal()}`;
+
+            const parseRow = (row) => ({
+                ...row,
+                tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : (row.tags || []),
+                teacher_name: row.teacher_name || row.teacher_email || 'Teacher',
+                teacher_id: row.teacher_id,
+                is_purchased: false,
+                is_owned: false,
+                rating: parseFloat(row.rating) || 0,
+                review_count: row.review_count || 0,
+                purchase_count: row.purchase_count || 0,
+                total_lessons: row.total_lessons || 0,
+                total_videos: row.total_videos || 0,
+                category_slug: row.category_slug || null,
+                category_name: row.category_name || null,
+                category_name_bn: row.category_name_bn || null,
+            });
+
+            const liveResult = await db.query(
+                `SELECT ${baseSelect} ${baseFrom}
+                 ${activeWhereNonExternal} AND courses.has_live_class = true
+                 ORDER BY RANDOM()
+                 LIMIT ${limitVal}`
+            );
+            const live = liveResult.rows.map(parseRow);
+            const liveIds = live.map((c) => c.id);
+            const excludeLive = liveIds.length > 0 ? `AND courses.id != ALL($1::uuid[])` : '';
+            const academicParams = liveIds.length > 0 ? [liveIds] : [];
+
+            const academicCategoryIds = await adminCategoryService.getCategoryAndDescendantIds('academic');
+            const skillCategoryIds = await adminCategoryService.getCategoryAndDescendantIds('skill-based');
+            let academic = [];
+            if (academicCategoryIds.length > 0) {
+                const acParamStart = academicParams.length + 1;
+                const placeholders = academicCategoryIds.map((_, i) => `$${acParamStart + i}`).join(', ');
+                const acParams = [...academicParams, ...academicCategoryIds];
+                const acResult = await db.query(
+                    `SELECT ${baseSelect} ${baseFrom}
+                     ${activeWhereNonExternal} ${excludeLive} AND courses.admin_category_id IN (${placeholders})
+                     ORDER BY RANDOM()
+                     LIMIT ${limitVal}`,
+                    acParams
+                );
+                academic = acResult.rows.map(parseRow);
+            }
+
+            const academicIds = academic.map((c) => c.id);
+            const usedIds = [...liveIds, ...academicIds];
+            const excludeUsed = usedIds.length > 0 ? `AND courses.id != ALL($1::uuid[])` : '';
+            const skillParams = usedIds.length > 0 ? [usedIds] : [];
+
+            const skillResult = await db.query(
+                `SELECT ${baseSelect} ${baseFrom}
+                 ${activeWhereNonExternal} ${excludeUsed}
+                 ORDER BY RANDOM()
+                 LIMIT ${limitVal}`,
+                skillParams
+            );
+            const skill = skillResult.rows.map(parseRow);
+
+            const fetchExternalByCategoryIds = async (categoryIds) => {
+                if (!categoryIds.length) return [];
+                const placeholders = categoryIds.map((_, i) => `$${i + 1}`).join(', ');
+                const extParams = categoryIds.map((id) => String(id));
+                const extResult = await db.query(
+                    `SELECT ${baseSelect} ${baseFrom}
+                     ${activeWhere} AND courses.course_type = 'external'
+                     AND (
+                        courses.admin_category_id IN (${placeholders})
+                        OR courses.main_category_id IN (${placeholders})
+                        OR courses.sub_category_id IN (${placeholders})
+                     )
+                     ORDER BY RANDOM()
+                     LIMIT ${limitVal}`,
+                    extParams
+                );
+                return extResult.rows.map(parseRow);
+            };
+
+            const [externalAcademic, externalSkill] = await Promise.all([
+                fetchExternalByCategoryIds(academicCategoryIds),
+                fetchExternalByCategoryIds(skillCategoryIds),
+            ]);
+
+            const external = [...externalAcademic, ...externalSkill]
+                .sort(() => 0.5 - Math.random())
+                .slice(0, limitVal);
+
+            homeSectionsCache = { live, academic, skill, external, externalAcademic, externalSkill };
+            homeSectionsCacheExpiry = now + HOME_SECTIONS_CACHE_TTL;
         }
 
-        const hideTest = await sqlHideTestCourses('courses');
-        const baseSelect = `
-            courses.*,
-            users.email as teacher_email,
-            COALESCE(tp.name, users.email) as teacher_name,
-            users.id as teacher_id,
-            CASE WHEN courses.tags IS NULL THEN '[]'::jsonb WHEN jsonb_typeof(courses.tags) = 'string' THEN courses.tags::jsonb ELSE courses.tags END as tags,
-            COALESCE(ac.slug, LOWER(REPLACE(TRIM(COALESCE(courses.category, '')), ' ', '-'))) as category_slug,
-            ac.name as category_name,
-            ac.name_bn as category_name_bn
-            ${purchaseCheck} ${ownershipCheck},
-            ${reviewsRatingQuery} as rating,
-            ${reviewsCountQuery} as review_count,
-            (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = courses.id) as purchase_count,
-            (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id) as total_lessons,
-            (SELECT COUNT(*)::int FROM videos v JOIN lessons l ON v.lesson_id = l.id WHERE l.course_id = courses.id) as total_videos
-        `;
-        const baseFrom = `
-            FROM courses
-            LEFT JOIN users ON courses.teacher_id = users.id
-            LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
-            LEFT JOIN admin_categories ac ON courses.admin_category_id = ac.id
-        `;
-        const activeWhere = `WHERE COALESCE(courses.status, 'active') = 'active'${hideTest}`;
-        const activeWhereNonExternal = `WHERE COALESCE(courses.status, 'active') = 'active'${hideTest}${sqlNonExternal()}`;
-
-        const parseRow = (row) => ({
-            ...row,
-            tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : (row.tags || []),
-            teacher_name: row.teacher_name || row.teacher_email || 'Teacher',
-            teacher_id: row.teacher_id,
-            is_purchased: row.is_purchased || false,
-            is_owned: row.is_owned || false,
-            rating: parseFloat(row.rating) || 0,
-            review_count: row.review_count || 0,
-            purchase_count: row.purchase_count || 0,
-            total_lessons: row.total_lessons || 0,
-            total_videos: row.total_videos || 0,
-            category_slug: row.category_slug || null,
-            category_name: row.category_name || null,
-            category_name_bn: row.category_name_bn || null,
+        const clone = (sections) => ({
+            live: [...sections.live],
+            academic: [...sections.academic],
+            skill: [...sections.skill],
+            external: [...sections.external],
+            externalAcademic: [...sections.externalAcademic],
+            externalSkill: [...sections.externalSkill]
         });
 
-        const limitVal = Math.min(Math.max(parseInt(limitPerSection, 10) || 8, 1), 20);
+        const cachedSections = clone(homeSectionsCache);
 
-        const liveParams = [...params];
-        const liveResult = await db.query(
-            `SELECT ${baseSelect} ${baseFrom}
-             ${activeWhereNonExternal} AND courses.has_live_class = true
-             ORDER BY purchase_count DESC NULLS LAST, rating DESC NULLS LAST, courses.created_at DESC
-             LIMIT ${limitVal}`,
-            liveParams
-        );
-        const live = liveResult.rows.map(parseRow);
-        const liveIds = live.map((c) => c.id);
-        const excludeLive = liveIds.length > 0 ? `AND courses.id != ALL($${params.length + 1}::uuid[])` : '';
-        const academicParams = [...params];
-        if (liveIds.length > 0) academicParams.push(liveIds);
-
-        const academicCategoryIds = await adminCategoryService.getCategoryAndDescendantIds('academic');
-        const skillCategoryIds = await adminCategoryService.getCategoryAndDescendantIds('skill-based');
-        let academic = [];
-        if (academicCategoryIds.length > 0) {
-            const acParamStart = academicParams.length + 1;
-            const placeholders = academicCategoryIds.map((_, i) => `$${acParamStart + i}`).join(', ');
-            const acParams = [...academicParams, ...academicCategoryIds];
-            const acResult = await db.query(
-                `SELECT ${baseSelect} ${baseFrom}
-                 ${activeWhereNonExternal} ${excludeLive} AND courses.admin_category_id IN (${placeholders})
-                 ORDER BY purchase_count DESC NULLS LAST, rating DESC NULLS LAST, courses.created_at DESC
-                 LIMIT ${limitVal}`,
-                acParams
+        if (userId) {
+            const enrollmentsResult = await db.query(
+                `SELECT course_id FROM course_enrollments WHERE user_id = $1`,
+                [userId]
             );
-            academic = acResult.rows.map(parseRow);
+            const purchasedIds = new Set(enrollmentsResult.rows.map(r => r.course_id));
+
+            const attachFlags = (courseList) => {
+                for (let i = 0; i < courseList.length; i++) {
+                    courseList[i] = {
+                        ...courseList[i],
+                        is_owned: courseList[i].teacher_id === userId,
+                        is_purchased: purchasedIds.has(courseList[i].id)
+                    };
+                }
+            };
+
+            attachFlags(cachedSections.live);
+            attachFlags(cachedSections.academic);
+            attachFlags(cachedSections.skill);
+            attachFlags(cachedSections.external);
+            attachFlags(cachedSections.externalAcademic);
+            attachFlags(cachedSections.externalSkill);
         }
-        const academicIds = academic.map((c) => c.id);
-        const usedIds = [...liveIds, ...academicIds];
-        const skillParams = [...params];
-        const excludeUsed = usedIds.length > 0 ? `AND courses.id != ALL($${params.length + 1}::uuid[])` : '';
-        if (usedIds.length > 0) skillParams.push(usedIds);
 
-        const skillResult = await db.query(
-            `SELECT ${baseSelect} ${baseFrom}
-             ${activeWhereNonExternal} ${excludeUsed}
-             ORDER BY purchase_count DESC NULLS LAST, rating DESC NULLS LAST, courses.created_at DESC
-             LIMIT ${limitVal}`,
-            skillParams
-        );
-        const skill = skillResult.rows.map(parseRow);
-
-        const fetchExternalByCategoryIds = async (categoryIds) => {
-            if (!categoryIds.length) return [];
-            const extParams = [...params, ...categoryIds.map((id) => String(id))];
-            const extParamStart = params.length + 1;
-            const placeholders = categoryIds.map((_, i) => `$${extParamStart + i}`).join(', ');
-            const extResult = await db.query(
-                `SELECT ${baseSelect} ${baseFrom}
-                 ${activeWhere} AND courses.course_type = 'external'
-                 AND (
-                    courses.admin_category_id IN (${placeholders})
-                    OR courses.main_category_id IN (${placeholders})
-                    OR courses.sub_category_id IN (${placeholders})
-                 )
-                 ORDER BY COALESCE(courses.visitor_count, 0) DESC, courses.created_at DESC
-                 LIMIT ${limitVal}`,
-                extParams
-            );
-            return extResult.rows.map(parseRow);
-        };
-
-        const [externalAcademic, externalSkill] = await Promise.all([
-            fetchExternalByCategoryIds(academicCategoryIds),
-            fetchExternalByCategoryIds(skillCategoryIds),
-        ]);
-        const external = [...externalAcademic, ...externalSkill]
-            .sort((a, b) => {
-                const visitors = (Number(b.visitor_count) || 0) - (Number(a.visitor_count) || 0);
-                if (visitors !== 0) return visitors;
-                return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-            })
-            .slice(0, limitVal);
-
-        return { live, academic, skill, external, externalAcademic, externalSkill };
+        return cachedSections;
     }
 
     async searchCourses(userId = null, options = {}) {
