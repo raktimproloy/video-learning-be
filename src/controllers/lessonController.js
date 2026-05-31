@@ -324,9 +324,20 @@ class LessonController {
             if (req.user.role === 'teacher') {
                 const currentUser = await userService.findById(req.user.id);
                 if (!currentUser) return res.status(404).json({ error: 'User not found' });
-                if (!currentUser.core_member) {
+
+                const liveSettings = await adminSettingsService.getLiveSettings() || {
+                    liveClassEnabled: true,
+                    agoraEnabled: true,
+                    streamEnabled: false,
+                    hundredMsEnabled: true,
+                    awsIvsEnabled: false,
+                    youtubeEnabled: false,
+                };
+
+                if (!liveSettings.liveClassEnabled && !currentUser.core_member) {
                     return res.status(403).json({ error: 'Live is available for Core Members only.' });
                 }
+
                 if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
                 if (is_live === true) {
                     if (!course.has_live_class) {
@@ -334,17 +345,6 @@ class LessonController {
                             error: 'This course does not have live class enabled. Request to enable it from the course page or course settings.',
                             code: 'LIVE_NOT_ENABLED_FOR_COURSE',
                         });
-                    }
-                    const liveSettings = await adminSettingsService.getLiveSettings() || {
-                        liveClassEnabled: true,
-                        agoraEnabled: true,
-                        streamEnabled: false,
-                        hundredMsEnabled: true,
-                        awsIvsEnabled: false,
-                        youtubeEnabled: false,
-                    };
-                    if (!liveSettings.liveClassEnabled && !currentUser.core_member) {
-                        return res.status(503).json({ error: 'Live classes are currently disabled by the platform.' });
                     }
                     // Auto-select provider: use first enabled service with free minutes; else AWS IVS (fallback).
                     let { provider } = await liveUsageService.getProviderWithFreeMinutes(liveSettings);
@@ -425,9 +425,6 @@ class LessonController {
             const currentUser = await userService.findById(req.user.id);
             if (!currentUser) return res.status(404).json({ error: 'User not found' });
             const userRole = currentUser.role || req.user.role;
-            if (!currentUser.core_member) {
-                return res.status(403).json({ error: 'Live is available for Core Members only.' });
-            }
 
             const lesson = await lessonService.getLessonById(id);
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
@@ -443,8 +440,9 @@ class LessonController {
                 awsIvsEnabled: false,
                 youtubeEnabled: false,
             };
+
             if (!liveSettings.liveClassEnabled && !currentUser.core_member) {
-                return res.status(503).json({ error: 'Live classes are currently disabled by the platform.' });
+                return res.status(403).json({ error: 'Live is available for Core Members only.' });
             }
             const activeSession = await liveSessionService.getActiveByLesson(id);
             const provider = (activeSession?.provider && liveUsageService.PROVIDERS.includes(activeSession.provider))
