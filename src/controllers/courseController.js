@@ -1644,7 +1644,7 @@ class CourseController {
 
             const uddoktapayService = require('../services/uddoktapayService');
             const serverUrl = process.env.BASE_URL || 'http://localhost:5000';
-            const frontendUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+            const frontendUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
 
             const redirectUrl = `${frontendUrl}/checkout/uddoktapay-redirect`;
             const cancelUrl = `${frontendUrl}/checkout`;
