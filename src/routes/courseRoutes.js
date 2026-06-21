@@ -66,6 +66,12 @@ router.get('/:id/assignments-notes', authMiddleware, requireRole(['student', 'te
 router.post('/:id/purchase', authMiddleware, requireRole(['student', 'teacher']), courseController.purchaseCourse);
 router.post('/:id/payment-request', authMiddleware, requireRole(['student', 'teacher']), courseController.createPaymentRequest);
 
+// UddoktaPay payment gateway endpoints
+router.post('/:id/uddoktapay/initiate', authMiddleware, requireRole(['student', 'teacher']), courseController.initiateUddoktaPay);
+router.post('/uddoktapay/verify', authMiddleware, requireRole(['student', 'teacher']), courseController.verifyUddoktaPay);
+router.post('/uddoktapay/webhook', courseController.handleUddoktaPayWebhook);
+
+
 // Course media streaming from R2 - PUBLIC (no auth) so img/video tags work
 // Thumbnails and intro videos are preview content, R2 keys are not guessable
 // GET /v1/courses/media/teachers/.../thumbnail/image.jpg

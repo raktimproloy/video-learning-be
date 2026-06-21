@@ -1571,6 +1571,257 @@ class CourseController {
             res.status(500).json({ error: error.message || 'Internal server error' });
         }
     }
+
+    async initiateUddoktaPay(req, res) {
+        try {
+            const db = require('../../db');
+            const courseId = req.params.id;
+            const userId = req.user.id;
+            const { coupon_code: couponCode, invite_code: inviteCode } = req.body || {};
+
+            const course = await courseService.getCourseByIdSimple(courseId);
+            if (!course) {
+                return res.status(404).json({ error: 'Course not found' });
+            }
+            if (course.course_type === 'external') {
+                return res.status(400).json({
+                    error: 'Payment requests are not available for external URL courses.',
+                });
+            }
+            if (course.status && course.status !== 'active') {
+                return res.status(400).json({ error: 'This course is not available for purchase' });
+            }
+
+            const alreadyEnrolled = await courseService.isEnrolled(userId, courseId);
+            if (alreadyEnrolled) {
+                return res.status(400).json({ error: 'You are already enrolled in this course' });
+            }
+
+            let finalAmount = course.discount_price != null ? parseFloat(course.discount_price) : parseFloat(course.price) || 0;
+            const finalCurrency = course.currency || 'BDT';
+
+            if (couponCode) {
+                const couponApplyService = require('../services/couponApplyService');
+                try {
+                    const applied = await couponApplyService.applyCoupon(couponCode, userId, courseId);
+                    if (applied.type === 'original') {
+                        finalAmount = 0;
+                    } else if (applied.discountType === 'percentage' && applied.discountAmount != null) {
+                        finalAmount = Math.max(0, finalAmount * (1 - Number(applied.discountAmount) / 100));
+                    } else if (applied.discountType === 'amount' && applied.discountAmount != null) {
+                        finalAmount = Math.max(0, finalAmount - Number(applied.discountAmount));
+                    }
+                } catch (err) {
+                    return res.status(400).json({ error: err.message || 'Invalid coupon' });
+                }
+            }
+
+            // Create the pending payment request
+            const paymentRequestService = require('../services/paymentRequestService');
+            const request = await paymentRequestService.createPaymentRequest({
+                courseId,
+                userId,
+                paymentMethod: 'uddoktapay',
+                senderPhone: '',
+                transactionId: '',
+                amount: finalAmount,
+                currency: finalCurrency,
+                couponCode: couponCode || null,
+                inviteCode: inviteCode || null,
+            });
+
+            // Fetch user info for UddoktaPay
+            const userResult = await db.query(
+                `SELECT u.email, COALESCE(sp.name, u.email) AS name
+                 FROM users u
+                 LEFT JOIN student_profiles sp ON sp.user_id = u.id
+                 WHERE u.id = $1`,
+                [userId]
+            );
+            const userRow = userResult.rows[0] || {};
+            const email = userRow.email || 'student@example.com';
+            const fullName = userRow.name || 'Student';
+
+            const uddoktapayService = require('../services/uddoktapayService');
+            const serverUrl = process.env.BASE_URL || 'http://localhost:5000';
+            const frontendUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+
+            const redirectUrl = `${frontendUrl}/checkout/uddoktapay-redirect`;
+            const cancelUrl = `${frontendUrl}/checkout`;
+            const webhookUrl = `${serverUrl}/v1/courses/uddoktapay/webhook`;
+
+            const initiateResult = await uddoktapayService.initiatePayment({
+                fullName,
+                email,
+                amount: finalAmount,
+                metadata: {
+                    payment_request_id: request.id,
+                    user_id: userId,
+                    course_id: courseId,
+                    coupon_code: couponCode || null,
+                    invite_code: inviteCode || null,
+                },
+                redirectUrl,
+                cancelUrl,
+                webhookUrl,
+            });
+
+            if (!initiateResult.success) {
+                await db.query(`DELETE FROM course_payment_requests WHERE id = $1`, [request.id]);
+                return res.status(500).json({ error: initiateResult.message });
+            }
+
+            res.json({
+                paymentUrl: initiateResult.paymentUrl,
+                requestId: request.id,
+            });
+        } catch (error) {
+            console.error('Initiate UddoktaPay error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async verifyUddoktaPay(req, res) {
+        try {
+            const db = require('../../db');
+            const { invoice_id: invoiceId } = req.body || {};
+            if (!invoiceId) {
+                return res.status(400).json({ error: 'Invoice ID is required' });
+            }
+
+            const uddoktapayService = require('../services/uddoktapayService');
+            const verification = await uddoktapayService.verifyPayment(invoiceId);
+
+            if (!verification.success) {
+                return res.status(400).json({ error: verification.message || 'Verification request failed' });
+            }
+
+            if (verification.status !== 'COMPLETED') {
+                return res.status(200).json({
+                    success: false,
+                    status: verification.status,
+                    message: `Payment is in ${verification.status} state.`,
+                });
+            }
+
+            const metadata = verification.metadata || {};
+            const requestId = metadata.payment_request_id;
+            if (!requestId) {
+                return res.status(400).json({ error: 'Invalid transaction metadata' });
+            }
+
+            // Update transaction info first
+            const mappedMethod = (verification.paymentMethod || 'uddoktapay').toLowerCase();
+            const validMethods = ['bkash', 'nagad', 'rocket', 'uddoktapay'];
+            const finalMethod = validMethods.includes(mappedMethod) ? mappedMethod : 'uddoktapay';
+
+            await db.query(
+                `UPDATE course_payment_requests 
+                 SET payment_method = $1, sender_phone = $2, transaction_id = $3 
+                 WHERE id = $4`,
+                [
+                    finalMethod,
+                    verification.senderNumber || '',
+                    verification.transactionId || invoiceId,
+                    requestId,
+                ]
+            );
+
+            const paymentRequestService = require('../services/paymentRequestService');
+            const acceptResult = await paymentRequestService.acceptPaymentRequest(
+                requestId,
+                null,
+                'UddoktaPay automatic verification'
+            );
+
+            if (acceptResult && acceptResult.error) {
+                return res.status(400).json({ error: acceptResult.error });
+            }
+
+            res.json({
+                success: true,
+                status: 'COMPLETED',
+                courseId: metadata.course_id,
+                message: 'Payment verified and enrollment completed successfully.',
+            });
+        } catch (error) {
+            console.error('Verify UddoktaPay error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async handleUddoktaPayWebhook(req, res) {
+        try {
+            const db = require('../../db');
+            const headerApiKey = req.headers['rt-uddoktapay-api-key'];
+            const uddoktapayService = require('../services/uddoktapayService');
+
+            if (headerApiKey !== uddoktapayService.UDDOKTAPAY_API_KEY) {
+                console.warn('UddoktaPay webhook unauthorized api key attempt');
+                return res.status(401).json({ error: 'Unauthorized key' });
+            }
+
+            const { invoice_id: invoiceId, status } = req.body || {};
+            if (!invoiceId) {
+                return res.status(400).json({ error: 'Invoice ID is required' });
+            }
+
+            console.log(`UddoktaPay webhook received for invoice ${invoiceId}, status ${status}`);
+
+            // Double check verification directly from UddoktaPay API
+            const verification = await uddoktapayService.verifyPayment(invoiceId);
+            if (!verification.success || verification.status !== 'COMPLETED') {
+                return res.status(200).json({ received: true, status: verification.status });
+            }
+
+            const metadata = verification.metadata || {};
+            const requestId = metadata.payment_request_id;
+            if (!requestId) {
+                return res.status(400).json({ error: 'Invalid transaction metadata' });
+            }
+
+            const checkResult = await db.query(
+                `SELECT status FROM course_payment_requests WHERE id = $1`,
+                [requestId]
+            );
+            if (checkResult.rows[0] && checkResult.rows[0].status === 'accepted') {
+                return res.status(200).json({ success: true, message: 'Already processed' });
+            }
+
+            const mappedMethod = (verification.paymentMethod || 'uddoktapay').toLowerCase();
+            const validMethods = ['bkash', 'nagad', 'rocket', 'uddoktapay'];
+            const finalMethod = validMethods.includes(mappedMethod) ? mappedMethod : 'uddoktapay';
+
+            await db.query(
+                `UPDATE course_payment_requests 
+                 SET payment_method = $1, sender_phone = $2, transaction_id = $3 
+                 WHERE id = $4`,
+                [
+                    finalMethod,
+                    verification.senderNumber || '',
+                    verification.transactionId || invoiceId,
+                    requestId,
+                ]
+            );
+
+            const paymentRequestService = require('../services/paymentRequestService');
+            const acceptResult = await paymentRequestService.acceptPaymentRequest(
+                requestId,
+                null,
+                'UddoktaPay webhook auto-verification'
+            );
+
+            if (acceptResult && acceptResult.error) {
+                return res.status(400).json({ error: acceptResult.error });
+            }
+
+            return res.status(200).json({ success: true });
+        } catch (error) {
+            console.error('UddoktaPay webhook error:', error);
+            return res.status(500).json({ error: 'Internal server error' });
+        }
+    }
 }
+
 
 module.exports = new CourseController();
