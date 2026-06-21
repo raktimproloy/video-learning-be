@@ -38,6 +38,8 @@ const meRoutes = require('./routes/meRoutes');
 const teacherDiscoveryRoutes = require('./routes/teacherDiscoveryRoutes');
 const fcmRoutes = require('./routes/fcmRoutes');
 const recordingDraftRoutes = require('./routes/recordingDraftRoutes');
+const analyticsRoutes = require('./routes/analyticsRoutes');
+const adminAnalyticsRoutes = require('./routes/adminAnalyticsRoutes');
 
 const app = express();
 
@@ -82,6 +84,7 @@ app.use('/v1/auth', authRoutes);
 app.use('/v1/video', videoRoutes);
 app.use('/v1/admin/auth', adminAuthRoutes);   // Public - must be before /v1/admin
 app.use('/v1/admin/dashboard', adminDashboardRoutes);
+app.use('/v1/admin/analytics', adminAnalyticsRoutes);
 app.use('/v1/admin/users', adminUserRoutes);
 app.use('/v1/admin/teachers', adminTeachersRoutes);
 app.use('/v1/admin/students', adminStudentsRoutes);
@@ -110,6 +113,7 @@ app.use('/v1/me', meRoutes);
 app.use('/v1/teachers', teacherDiscoveryRoutes);
 app.use('/v1/fcm', fcmRoutes);
 app.use('/v1/recordings', recordingDraftRoutes);
+app.use('/v1/analytics', analyticsRoutes);
 
 // Health Check
 app.get('/health', (req, res) => {
