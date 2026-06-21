@@ -1,7 +1,8 @@
 const axios = require('axios');
 
 const UDDOKTAPAY_API_KEY = process.env.UDDOKTAPAY_API_KEY || '982d381360a69d419689740d9f2e26ce36fb7a50';
-const UDDOKTAPAY_BASE_URL = process.env.UDDOKTAPAY_BASE_URL || 'https://sandbox.uddoktapay.com';
+const rawBaseUrl = process.env.UDDOKTAPAY_BASE_URL || 'https://sandbox.uddoktapay.com';
+const UDDOKTAPAY_BASE_URL = rawBaseUrl.replace(/\/$/, '').replace(/\/api$/, '');
 
 /**
  * Initiate a payment checkout session with UddoktaPay.
