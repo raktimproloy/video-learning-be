@@ -317,6 +317,7 @@ class AdminController {
         try {
             const userId = req.user.id;
             const { video_id, codec_preference, resolutions, crf, compress } = req.body;
+            await adminService.updateVideoStatus(video_id, 'processing');
             const task = await adminService.createProcessingTask(userId, video_id, codec_preference, resolutions, crf, compress);
             res.status(201).json(task);
         } catch (error) {

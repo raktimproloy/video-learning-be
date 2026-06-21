@@ -58,8 +58,8 @@ class RecordingDraftController {
                 sourceObjectKey: source_object_key,
                 sourcePrefix: source_prefix,
                 mimeType: mime_type,
-                sizeBytes: size_bytes ? Number(size_bytes) : null,
-                durationSeconds: duration_seconds ? Number(duration_seconds) : null,
+                sizeBytes: size_bytes != null ? Math.round(Number(size_bytes)) : null,
+                durationSeconds: duration_seconds != null ? Math.round(Number(duration_seconds)) : null,
             });
             return res.status(201).json(row);
         } catch (error) {
@@ -85,8 +85,8 @@ class RecordingDraftController {
                 trimEndSeconds: req.body.trim_end_seconds != null ? Number(req.body.trim_end_seconds) : undefined,
                 sourceObjectKey: req.body.source_object_key,
                 sourcePrefix: req.body.source_prefix,
-                sizeBytes: req.body.size_bytes != null ? Number(req.body.size_bytes) : undefined,
-                durationSeconds: req.body.duration_seconds != null ? Number(req.body.duration_seconds) : undefined,
+                sizeBytes: req.body.size_bytes != null ? Math.round(Number(req.body.size_bytes)) : undefined,
+                durationSeconds: req.body.duration_seconds != null ? Math.round(Number(req.body.duration_seconds)) : undefined,
             };
             const row = await recordingDraftService.update(id, teacherId, patch);
             if (!row) return res.status(404).json({ error: 'Recording draft not found' });
