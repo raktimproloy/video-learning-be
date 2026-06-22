@@ -1713,7 +1713,8 @@ class CourseController {
 
             if (!initiateResult.success) {
                 await db.query(`DELETE FROM course_payment_requests WHERE id = $1`, [request.id]);
-                return res.status(500).json({ error: initiateResult.message });
+                const detailedError = `UddoktaPay Error: ${initiateResult.message} | redirectUrl: ${redirectUrl} | cancelUrl: ${cancelUrl} | webhookUrl: ${webhookUrl}`;
+                return res.status(500).json({ error: detailedError });
             }
 
             res.json({
@@ -1722,7 +1723,7 @@ class CourseController {
             });
         } catch (error) {
             console.error('Initiate UddoktaPay error:', error);
-            res.status(500).json({ error: 'Internal server error' });
+            res.status(500).json({ error: `Internal server error: ${error.message}` });
         }
     }
 
