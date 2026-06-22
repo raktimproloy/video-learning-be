@@ -1643,12 +1643,57 @@ class CourseController {
             const fullName = userRow.name || 'Student';
 
             const uddoktapayService = require('../services/uddoktapayService');
-            const serverUrl = process.env.BASE_URL || 'http://localhost:5000';
-            const frontendUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+            
+            // Helper to ensure absolute URL with proper protocol and no trailing/double slashes
+            const sanitizeUrl = (base, path) => {
+                let cleanBase = (base || '').trim();
+                if (!cleanBase) return '';
+                
+                // Ensure it has a protocol
+                if (!/^https?:\/\//i.test(cleanBase)) {
+                    const protocol = (cleanBase.includes('localhost') || cleanBase.includes('127.0.0.1')) ? 'http' : 'https';
+                    cleanBase = `${protocol}://${cleanBase}`;
+                }
+                
+                cleanBase = cleanBase.replace(/\/+$/, '');
+                const cleanPath = path.trim().replace(/^\/+/, '');
+                return `${cleanBase}/${cleanPath}`;
+            };
 
-            const redirectUrl = `${frontendUrl}/checkout/uddoktapay-redirect`;
-            const cancelUrl = `${frontendUrl}/checkout`;
-            const webhookUrl = `${serverUrl}/v1/courses/uddoktapay/webhook`;
+            // Smart fallbacks for production if env variables are missing or generic localhost
+            const requestProto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+            const requestHost = req.get('host');
+            const fallbackServerUrl = requestHost ? `${requestProto}://${requestHost}` : 'http://localhost:5000';
+            
+            let fallbackFrontendUrl = req.get('origin');
+            if (!fallbackFrontendUrl && req.get('referer')) {
+                try {
+                    fallbackFrontendUrl = new URL(req.get('referer')).origin;
+                } catch (e) {
+                    // ignore
+                }
+            }
+            if (!fallbackFrontendUrl) {
+                fallbackFrontendUrl = 'http://localhost:3000';
+            }
+
+            const serverUrl = process.env.BASE_URL || fallbackServerUrl;
+            const frontendUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_SITE_URL || fallbackFrontendUrl;
+
+            const redirectUrl = sanitizeUrl(frontendUrl, 'checkout/uddoktapay-redirect');
+            const cancelUrl = sanitizeUrl(frontendUrl, 'checkout');
+            const webhookUrl = sanitizeUrl(serverUrl, 'v1/courses/uddoktapay/webhook');
+
+            console.log('Initiating UddoktaPay checkout session:', {
+                requestId: request.id,
+                serverUrl,
+                frontendUrl,
+                redirectUrl,
+                cancelUrl,
+                webhookUrl,
+                amount: finalAmount,
+                currency: finalCurrency
+            });
 
             const initiateResult = await uddoktapayService.initiatePayment({
                 fullName,

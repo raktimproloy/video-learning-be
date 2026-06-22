@@ -46,6 +46,7 @@ async function initiatePayment({ fullName, email, amount, metadata, redirectUrl,
                 message: data.message || 'Payment initiated'
             };
         } else {
+            console.warn('UddoktaPay initiate payment returned failure response:', data);
             return {
                 success: false,
                 message: data.message || 'Payment initiation failed'
