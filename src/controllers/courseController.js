@@ -1714,7 +1714,8 @@ class CourseController {
             if (!initiateResult.success) {
                 await db.query(`DELETE FROM course_payment_requests WHERE id = $1`, [request.id]);
                 const detailedError = `UddoktaPay Error: ${initiateResult.message} | redirectUrl: ${redirectUrl} | cancelUrl: ${cancelUrl} | webhookUrl: ${webhookUrl}`;
-                return res.status(500).json({ error: detailedError });
+                console.error(detailedError);
+                return res.status(500).json({ error: initiateResult.message || 'UddoktaPay payment initiation failed.' });
             }
 
             res.json({
@@ -1746,7 +1747,8 @@ class CourseController {
                 return res.status(200).json({
                     success: false,
                     status: verification.status,
-                    message: `Payment is in ${verification.status} state.`,
+                    paymentMethod: verification.paymentMethod,
+                    message: verification.message || `Payment is in ${verification.status} state.`,
                 });
             }
 

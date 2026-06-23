@@ -93,6 +93,7 @@ async function verifyPayment(invoiceId) {
             senderNumber: data.sender_number,
             transactionId: data.transaction_id,
             date: data.date,
+            message: data.message,
             raw: data
         };
     } catch (error) {

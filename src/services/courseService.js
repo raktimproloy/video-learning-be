@@ -1593,6 +1593,9 @@ class CourseService {
         const hasAmount = amountPaid != null && !Number.isNaN(parseFloat(amountPaid));
         const amount = hasAmount ? parseFloat(amountPaid) : null;
         const curr = (currency && String(currency).trim()) || null;
+
+        const alreadyEnrolled = await this.isEnrolled(userId, courseId);
+
         const result = await db.query(
             `INSERT INTO course_enrollments (user_id, course_id, is_invited, amount_paid, currency)
              VALUES ($1, $2, $3, $4, $5)
@@ -1603,7 +1606,58 @@ class CourseService {
              RETURNING *`,
             [userId, courseId, isInvited, amount, curr]
         );
+
+        if (!alreadyEnrolled) {
+            this.sendCoursePurchaseAlertEmail(userId, courseId, amount, curr).catch((err) => {
+                console.error('Failed to send purchase alert email to teacher:', err.message);
+            });
+        }
+
         return result.rows[0];
+    }
+
+    async sendCoursePurchaseAlertEmail(userId, courseId, amountPaid, currency) {
+        try {
+            // Fetch student info
+            const studentResult = await db.query(
+                `SELECT u.email, COALESCE(sp.name, u.email) as name 
+                 FROM users u
+                 LEFT JOIN student_profiles sp ON sp.user_id = u.id
+                 WHERE u.id = $1`,
+                [userId]
+            );
+            const student = studentResult.rows[0];
+            if (!student) return;
+
+            // Fetch course and teacher info
+            const courseResult = await db.query(
+                `SELECT c.title, c.price, c.discount_price, c.currency as course_currency,
+                        u.email as teacher_email, COALESCE(tp.name, u.email) as teacher_name
+                 FROM courses c
+                 JOIN users u ON c.teacher_id = u.id
+                 LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
+                 WHERE c.id = $1`,
+                [courseId]
+            );
+            const course = courseResult.rows[0];
+            if (!course || !course.teacher_email) return;
+
+            const finalAmount = amountPaid != null ? amountPaid : (course.discount_price ?? course.price ?? 0);
+            const finalCurrency = currency || course.course_currency || 'BDT';
+
+            const emailService = require('./emailService');
+            await emailService.sendCoursePurchasedEmail({
+                teacherEmail: course.teacher_email,
+                teacherName: course.teacher_name,
+                courseTitle: course.title,
+                amount: finalAmount,
+                currency: finalCurrency,
+                studentName: student.name,
+                studentEmail: student.email
+            });
+        } catch (err) {
+            console.error('Failed to send course purchase alert email to teacher:', err.message);
+        }
     }
 
     /**
