@@ -1683,16 +1683,10 @@ class CourseController {
             const redirectUrl = sanitizeUrl(frontendUrl, 'checkout/uddoktapay-redirect');
             const cancelUrl = sanitizeUrl(frontendUrl, 'checkout');
             
-            let webhookUrl = sanitizeUrl(serverUrl, 'v1/courses/uddoktapay/webhook');
-            try {
-                const frontHost = new URL(frontendUrl).hostname;
-                const serverHost = new URL(serverUrl).hostname;
-                if (frontHost !== serverHost) {
-                    webhookUrl = sanitizeUrl(frontendUrl, 'api-backend/courses/uddoktapay/webhook');
-                }
-            } catch (e) {
-                // Fallback to default
-            }
+            // Always use the frontend domain for webhook URL to stay on the
+            // authorized domain in UddoktaPay/Paymently dashboard.
+            // The Next.js API route at /api/uddoktapay/webhook proxies to the backend.
+            const webhookUrl = sanitizeUrl(frontendUrl, 'api/uddoktapay/webhook');
 
             console.log('Initiating UddoktaPay checkout session:', {
                 requestId: request.id,

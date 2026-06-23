@@ -22,7 +22,7 @@ async function initiatePayment({ fullName, email, amount, metadata, redirectUrl,
     const payload = {
         full_name: fullName,
         email: email,
-        amount: parseFloat(amount),
+        amount: String(parseFloat(amount)),
         metadata: metadata || {},
         redirect_url: redirectUrl,
         cancel_url: cancelUrl,
@@ -37,8 +37,10 @@ async function initiatePayment({ fullName, email, amount, metadata, redirectUrl,
     };
 
     try {
+        console.log('UddoktaPay checkout-v2 request:', { url, payload: { ...payload, metadata: '...' } });
         const response = await axios.post(url, payload, { headers, timeout: 15000 });
         const data = response.data || {};
+        console.log('UddoktaPay checkout-v2 response:', { status: response.status, data });
         if (data.status === true && data.payment_url) {
             return {
                 success: true,
@@ -53,8 +55,18 @@ async function initiatePayment({ fullName, email, amount, metadata, redirectUrl,
             };
         }
     } catch (error) {
-        console.error('UddoktaPay initiate payment error:', error.response?.data || error.message);
-        const errMsg = error.response?.data?.message || error.message || 'UddoktaPay checkout API request failed';
+        const errData = error.response?.data;
+        const errStatus = error.response?.status;
+        console.error('UddoktaPay initiate payment error:', {
+            status: errStatus,
+            data: errData,
+            message: error.message,
+            url,
+            redirectUrl: payload.redirect_url,
+            cancelUrl: payload.cancel_url,
+            webhookUrl: payload.webhook_url,
+        });
+        const errMsg = errData?.message || error.message || 'UddoktaPay checkout API request failed';
         return {
             success: false,
             message: errMsg
