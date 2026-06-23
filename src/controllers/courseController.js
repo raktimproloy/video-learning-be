@@ -1758,6 +1758,7 @@ class CourseController {
 
             const metadata = verification.metadata || {};
             const requestId = metadata.payment_request_id;
+            const courseId = metadata.course_id;
             if (!requestId) {
                 return res.status(400).json({ error: 'Invalid transaction metadata' });
             }
@@ -1790,10 +1791,38 @@ class CourseController {
                 return res.status(400).json({ error: acceptResult.error });
             }
 
+            // Fetch course title for invoice display
+            let courseTitle = null;
+            let amount = verification.amount;
+            let currency = 'BDT';
+            if (courseId) {
+                try {
+                    const courseRow = await db.query(
+                        `SELECT title, price, discount_price, currency FROM courses WHERE id = $1`,
+                        [courseId]
+                    );
+                    if (courseRow.rows[0]) {
+                        courseTitle = courseRow.rows[0].title;
+                        currency = courseRow.rows[0].currency || 'BDT';
+                        if (!amount) {
+                            amount = courseRow.rows[0].discount_price ?? courseRow.rows[0].price;
+                        }
+                    }
+                } catch (e) {
+                    // non-fatal
+                }
+            }
+
             res.json({
                 success: true,
                 status: 'COMPLETED',
-                courseId: metadata.course_id,
+                courseId,
+                courseTitle,
+                amount,
+                currency,
+                transactionId: verification.transactionId || invoiceId,
+                senderNumber: verification.senderNumber || null,
+                paymentMethod: finalMethod,
                 message: 'Payment verified and enrollment completed successfully.',
             });
         } catch (error) {
