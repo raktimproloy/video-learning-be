@@ -193,7 +193,6 @@ async function acceptPaymentRequest(requestId, adminUserId, accessReason = null)
         return { error: 'Access reason is required to re-approve a rejected payment request.' };
     }
 
-    await db.query('BEGIN');
     try {
         const courseService = require('./courseService');
 
@@ -228,7 +227,6 @@ async function acceptPaymentRequest(requestId, adminUserId, accessReason = null)
              WHERE id = $3`,
             [adminUserId, accessReason || null, requestId]
         );
-        await db.query('COMMIT');
 
         // Create notification for student
         const userNotificationService = require('./userNotificationService');
@@ -249,7 +247,7 @@ async function acceptPaymentRequest(requestId, adminUserId, accessReason = null)
 
         return { accepted: true, requestId };
     } catch (err) {
-        await db.query('ROLLBACK');
+        console.error('Error in acceptPaymentRequest:', err);
         throw err;
     }
 }

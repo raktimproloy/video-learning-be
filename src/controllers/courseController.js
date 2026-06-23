@@ -1756,39 +1756,100 @@ class CourseController {
                 });
             }
 
-            const metadata = verification.metadata || {};
-            const requestId = metadata.payment_request_id;
-            const courseId = metadata.course_id;
-            if (!requestId) {
-                return res.status(400).json({ error: 'Invalid transaction metadata' });
+            // UddoktaPay may return metadata as a JSON string — parse it if needed
+            let metadata = verification.metadata || {};
+            if (typeof metadata === 'string') {
+                try { metadata = JSON.parse(metadata); } catch (e) { metadata = {}; }
             }
 
-            // Update transaction info first
+            const requestId = metadata.payment_request_id;
+            const courseId = metadata.course_id;
+            const userId = metadata.user_id;
+
+            console.log('UddoktaPay verify metadata:', { requestId, courseId, userId, metadata });
+
+            if (!requestId && !courseId) {
+                return res.status(400).json({ error: 'Invalid transaction metadata — missing payment_request_id and course_id' });
+            }
+
+            // Update transaction info on the payment request
             const mappedMethod = (verification.paymentMethod || 'uddoktapay').toLowerCase();
             const validMethods = ['bkash', 'nagad', 'rocket', 'uddoktapay'];
             const finalMethod = validMethods.includes(mappedMethod) ? mappedMethod : 'uddoktapay';
 
-            await db.query(
-                `UPDATE course_payment_requests 
-                 SET payment_method = $1, sender_phone = $2, transaction_id = $3 
-                 WHERE id = $4`,
-                [
-                    finalMethod,
-                    verification.senderNumber || '',
-                    verification.transactionId || invoiceId,
-                    requestId,
-                ]
-            );
+            if (requestId) {
+                await db.query(
+                    `UPDATE course_payment_requests 
+                     SET payment_method = $1, sender_phone = $2, transaction_id = $3 
+                     WHERE id = $4`,
+                    [
+                        finalMethod,
+                        verification.senderNumber || '',
+                        verification.transactionId || invoiceId,
+                        requestId,
+                    ]
+                );
+            }
 
+            // Try to accept via the payment request service (handles enrollment + status update)
             const paymentRequestService = require('../services/paymentRequestService');
-            const acceptResult = await paymentRequestService.acceptPaymentRequest(
-                requestId,
-                null,
-                'UddoktaPay automatic verification'
-            );
+            let enrollmentDone = false;
 
-            if (acceptResult && acceptResult.error) {
-                return res.status(400).json({ error: acceptResult.error });
+            if (requestId) {
+                const acceptResult = await paymentRequestService.acceptPaymentRequest(
+                    requestId,
+                    null,
+                    'UddoktaPay automatic verification'
+                );
+
+                if (acceptResult && acceptResult.error) {
+                    console.error('UddoktaPay acceptPaymentRequest error:', acceptResult.error);
+                    return res.status(400).json({ error: acceptResult.error });
+                }
+
+                if (acceptResult && acceptResult.accepted) {
+                    enrollmentDone = true;
+                    console.log('UddoktaPay: enrollment completed via acceptPaymentRequest');
+                } else {
+                    console.warn('UddoktaPay: acceptPaymentRequest returned null — will fallback to direct enrollment. requestId:', requestId);
+                }
+            }
+
+            // Fallback: if payment service didn't enroll (e.g. request not found or already accepted),
+            // directly enroll the user to guarantee access
+            if (!enrollmentDone && courseId && userId) {
+                try {
+                    const amountPaid = verification.amount ? parseFloat(String(verification.amount)) : undefined;
+                    const courseService = require('../services/courseService');
+                    const alreadyEnrolled = await courseService.isEnrolled(userId, courseId);
+                    if (!alreadyEnrolled) {
+                        await courseService.enrollUser(userId, courseId, {
+                            amountPaid: !isNaN(amountPaid) ? amountPaid : undefined,
+                            currency: 'BDT',
+                        });
+                        console.log('UddoktaPay: fallback direct enrollment done for user', userId, 'course', courseId);
+                        enrollmentDone = true;
+                    } else {
+                        console.log('UddoktaPay: user already enrolled, marking as done');
+                        enrollmentDone = true;
+                    }
+
+                    // Mark payment request as accepted if we have a requestId
+                    if (requestId) {
+                        await db.query(
+                            `UPDATE course_payment_requests
+                             SET status = 'accepted', reviewed_at = NOW(), acceptance_reason = $1, updated_at = NOW()
+                             WHERE id = $2 AND status != 'accepted'`,
+                            ['UddoktaPay automatic verification (fallback)', requestId]
+                        );
+                    }
+                } catch (enrollErr) {
+                    console.error('UddoktaPay direct enrollment fallback failed:', enrollErr);
+                }
+            }
+
+            if (!enrollmentDone) {
+                return res.status(500).json({ error: 'Payment verified but enrollment could not be completed. Please contact support.' });
             }
 
             // Fetch course title for invoice display
@@ -1831,6 +1892,7 @@ class CourseController {
         }
     }
 
+
     async handleUddoktaPayWebhook(req, res) {
         try {
             const db = require('../../db');
@@ -1855,54 +1917,108 @@ class CourseController {
                 return res.status(200).json({ received: true, status: verification.status });
             }
 
-            const metadata = verification.metadata || {};
+            // Parse metadata (may be a JSON string)
+            let metadata = verification.metadata || {};
+            if (typeof metadata === 'string') {
+                try { metadata = JSON.parse(metadata); } catch (e) { metadata = {}; }
+            }
+
             const requestId = metadata.payment_request_id;
-            if (!requestId) {
+            const courseId = metadata.course_id;
+            const userId = metadata.user_id;
+
+            console.log('UddoktaPay webhook metadata:', { requestId, courseId, userId });
+
+            if (!requestId && !courseId) {
                 return res.status(400).json({ error: 'Invalid transaction metadata' });
             }
 
-            const checkResult = await db.query(
-                `SELECT status FROM course_payment_requests WHERE id = $1`,
-                [requestId]
-            );
-            if (checkResult.rows[0] && checkResult.rows[0].status === 'accepted') {
-                return res.status(200).json({ success: true, message: 'Already processed' });
+            // Skip if already processed
+            if (requestId) {
+                const checkResult = await db.query(
+                    `SELECT status FROM course_payment_requests WHERE id = $1`,
+                    [requestId]
+                );
+                if (checkResult.rows[0] && checkResult.rows[0].status === 'accepted') {
+                    return res.status(200).json({ success: true, message: 'Already processed' });
+                }
             }
 
             const mappedMethod = (verification.paymentMethod || 'uddoktapay').toLowerCase();
             const validMethods = ['bkash', 'nagad', 'rocket', 'uddoktapay'];
             const finalMethod = validMethods.includes(mappedMethod) ? mappedMethod : 'uddoktapay';
 
-            await db.query(
-                `UPDATE course_payment_requests 
-                 SET payment_method = $1, sender_phone = $2, transaction_id = $3 
-                 WHERE id = $4`,
-                [
-                    finalMethod,
-                    verification.senderNumber || '',
-                    verification.transactionId || invoiceId,
-                    requestId,
-                ]
-            );
-
-            const paymentRequestService = require('../services/paymentRequestService');
-            const acceptResult = await paymentRequestService.acceptPaymentRequest(
-                requestId,
-                null,
-                'UddoktaPay webhook auto-verification'
-            );
-
-            if (acceptResult && acceptResult.error) {
-                return res.status(400).json({ error: acceptResult.error });
+            if (requestId) {
+                await db.query(
+                    `UPDATE course_payment_requests 
+                     SET payment_method = $1, sender_phone = $2, transaction_id = $3 
+                     WHERE id = $4`,
+                    [
+                        finalMethod,
+                        verification.senderNumber || '',
+                        verification.transactionId || invoiceId,
+                        requestId,
+                    ]
+                );
             }
 
-            return res.status(200).json({ success: true });
+            const paymentRequestService = require('../services/paymentRequestService');
+            let enrollmentDone = false;
+
+            if (requestId) {
+                const acceptResult = await paymentRequestService.acceptPaymentRequest(
+                    requestId,
+                    null,
+                    'UddoktaPay webhook auto-verification'
+                );
+
+                if (acceptResult && acceptResult.error) {
+                    return res.status(400).json({ error: acceptResult.error });
+                }
+
+                if (acceptResult && acceptResult.accepted) {
+                    enrollmentDone = true;
+                    console.log('UddoktaPay webhook: enrollment done via acceptPaymentRequest');
+                } else {
+                    console.warn('UddoktaPay webhook: acceptPaymentRequest returned null, trying direct enrollment. requestId:', requestId);
+                }
+            }
+
+            // Fallback: direct enrollment
+            if (!enrollmentDone && courseId && userId) {
+                try {
+                    const courseService = require('../services/courseService');
+                    const alreadyEnrolled = await courseService.isEnrolled(userId, courseId);
+                    if (!alreadyEnrolled) {
+                        const amountPaid = verification.amount ? parseFloat(String(verification.amount)) : undefined;
+                        await courseService.enrollUser(userId, courseId, {
+                            amountPaid: !isNaN(amountPaid) ? amountPaid : undefined,
+                            currency: 'BDT',
+                        });
+                        console.log('UddoktaPay webhook: fallback direct enrollment done');
+                    }
+                    if (requestId) {
+                        await db.query(
+                            `UPDATE course_payment_requests
+                             SET status = 'accepted', reviewed_at = NOW(), acceptance_reason = $1, updated_at = NOW()
+                             WHERE id = $2 AND status != 'accepted'`,
+                            ['UddoktaPay webhook auto-verification (fallback)', requestId]
+                        );
+                    }
+                    enrollmentDone = true;
+                } catch (enrollErr) {
+                    console.error('UddoktaPay webhook direct enrollment fallback failed:', enrollErr);
+                }
+            }
+
+            return res.status(200).json({ success: true, enrolled: enrollmentDone });
         } catch (error) {
             console.error('UddoktaPay webhook error:', error);
             return res.status(500).json({ error: 'Internal server error' });
         }
     }
 }
+
 
 
 module.exports = new CourseController();
