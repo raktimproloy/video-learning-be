@@ -1682,7 +1682,17 @@ class CourseController {
 
             const redirectUrl = sanitizeUrl(frontendUrl, 'checkout/uddoktapay-redirect');
             const cancelUrl = sanitizeUrl(frontendUrl, 'checkout');
-            const webhookUrl = sanitizeUrl(serverUrl, 'v1/courses/uddoktapay/webhook');
+            
+            let webhookUrl = sanitizeUrl(serverUrl, 'v1/courses/uddoktapay/webhook');
+            try {
+                const frontHost = new URL(frontendUrl).hostname;
+                const serverHost = new URL(serverUrl).hostname;
+                if (frontHost !== serverHost) {
+                    webhookUrl = sanitizeUrl(frontendUrl, 'api-backend/courses/uddoktapay/webhook');
+                }
+            } catch (e) {
+                // Fallback to default
+            }
 
             console.log('Initiating UddoktaPay checkout session:', {
                 requestId: request.id,
