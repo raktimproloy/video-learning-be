@@ -47,7 +47,7 @@ class UserService {
         return result.rows[0];
     }
 
-    /** Link a Google account to an existing user (same email). Used when joining as teacher. */
+    /** Link a Google account to an existing user (same email). Optional convenience for Google sign-in. */
     async linkGoogle(userId, googleId) {
         await db.query('UPDATE users SET google_id = $1 WHERE id = $2', [googleId, userId]);
         return this.findById(userId);

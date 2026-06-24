@@ -108,13 +108,6 @@ class AuthController {
             if (user.role === 'teacher') {
                 return res.status(400).json({ error: 'You are already a teacher' });
             }
-            // Teachers must have a linked Gmail account (verification)
-            if (!user.google_id) {
-                return res.status(403).json({
-                    error: 'Please link your Gmail account to become a teacher.',
-                    code: 'GMAIL_LINK_REQUIRED'
-                });
-            }
 
             // Update role to teacher
             const updatedUser = await userService.updateRole(userId, 'teacher');
@@ -155,12 +148,6 @@ class AuthController {
             
             // Check if user is trying to switch to teacher
             if (role === 'teacher') {
-                if (!user.google_id) {
-                    return res.status(403).json({
-                        error: 'Please link your Gmail account first.',
-                        code: 'GMAIL_LINK_REQUIRED'
-                    });
-                }
                 const teacherProfile = await userService.getTeacherProfile(userId);
                 if (!teacherProfile) {
                     return res.status(403).json({ error: 'You must join as a teacher first' });
