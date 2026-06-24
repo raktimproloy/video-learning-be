@@ -151,13 +151,13 @@ class StudentProfileService {
             throw new Error('Phone number is required');
         }
         const otp = emailService.generateOtp();
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+        const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
         await db.query(
             `UPDATE student_profiles SET phone_otp = $1, phone_otp_expires_at = $2, phone = $3 WHERE user_id = $4`,
             [otp, expiresAt, phone, userId]
         );
         await smsService.sendOtpSms(phone, otp);
-        return { message: 'OTP sent', expiresIn: 600 };
+        return { message: 'OTP sent', expiresIn: 300 };
     }
 
     /**

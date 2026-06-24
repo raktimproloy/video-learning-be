@@ -66,11 +66,11 @@ async function sendOtpEmail(to, otp, purpose = 'verification') {
             <h2 style="color: #1a1a1a;">Verification code</h2>
             <p>Use this code to verify your ${purpose}:</p>
             <p style="font-size: 28px; font-weight: bold; letter-spacing: 4px; margin: 16px 0;">${otp}</p>
-            <p style="color: #666;">This code expires in 10 minutes. Do not share it with anyone.</p>
+            <p style="color: #666;">This code expires in 5 minutes. Do not share it with anyone.</p>
             <p style="color: #999; font-size: 12px;">If you didn't request this code, you can ignore this email.</p>
         </div>
     `;
-    const text = `Your ${SITE_NAME} verification code is: ${otp}. It expires in 10 minutes.`;
+    const text = `Your ${SITE_NAME} verification code is: ${otp}. It expires in 5 minutes.`;
 
     if (!transporter) {
         console.log(`[Email OTP] To: ${to} | Code: ${otp} (Set SMTP_HOST, SMTP_USER, SMTP_PASS to send real emails)`);

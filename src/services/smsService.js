@@ -15,7 +15,7 @@ const isConfigured = !!(process.env.BULKSMS_API_KEY && process.env.BULKSMS_SENDE
  * @returns {Promise<{ sent: boolean }>}
  */
 async function sendOtpSms(to, otp) {
-    const message = `Your verification code is: ${otp}. Valid for 10 minutes. Do not share.`;
+    const message = `Your verification code is: ${otp}. Valid for 5 minutes. Do not share.`;
 
     const result = await bulkSms.sendSms(to, message);
 

@@ -299,7 +299,7 @@ class TeacherProfileService {
      * @param {object} [payload] - Optional { original_phone, support_phone } from request body (used when profile not saved yet).
      */
     async requestOTP(userId, type, payload = {}) {
-        const OTP_EXPIRY_MINUTES = 10;
+        const OTP_EXPIRY_MINUTES = 5;
         const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
         const otp = emailService.generateOtp();
 
