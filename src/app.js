@@ -40,6 +40,7 @@ const fcmRoutes = require('./routes/fcmRoutes');
 const recordingDraftRoutes = require('./routes/recordingDraftRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const adminAnalyticsRoutes = require('./routes/adminAnalyticsRoutes');
+const certificateRoutes = require('./routes/certificateRoutes');
 
 const app = express();
 
@@ -108,6 +109,7 @@ app.use('/v1/announcements', announcementRoutes);
 app.use('/v1/notifications', notificationRoutes);
 app.use('/v1/bundles', bundleRoutes);
 app.use('/v1/progress', progressRoutes);
+app.use('/v1/certificates', certificateRoutes);
 app.use('/v1/coupons', couponRoutes);
 app.use('/v1/me', meRoutes);
 app.use('/v1/teachers', teacherDiscoveryRoutes);

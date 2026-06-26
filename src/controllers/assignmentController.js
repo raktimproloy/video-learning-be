@@ -146,9 +146,17 @@ async function getWatchContext(req, res) {
     let nextLessonFullyPreview = false;
     let nextLessonRequiresPurchase = false;
     let nextLessonFirstVideoId = null;
+    let lessonNotes = [];
+    let lessonAssignments = [];
+    let lessonSubmissionStatus = {};
 
     if (lessonId) {
       const lesson = await lessonService.getLessonById(lessonId);
+      lessonNotes = Array.isArray(lesson?.notes) ? lesson.notes : [];
+      lessonAssignments = Array.isArray(lesson?.assignments) ? lesson.assignments : [];
+      if (!isPreviewOnly) {
+        lessonSubmissionStatus = await assignmentService.getLessonSubmissionStatus(userId, lessonId);
+      }
       const videosResult = await db.query(
         'SELECT id, is_preview FROM videos WHERE lesson_id = $1 ORDER BY "order" ASC',
         [lessonId]
@@ -197,6 +205,9 @@ async function getWatchContext(req, res) {
     res.json({
       isPreviewOnly,
       submissionStatus,
+      lessonNotes,
+      lessonAssignments,
+      lessonSubmissionStatus,
       nextVideoLocked,
       nextLessonLocked,
       nextVideoId,
