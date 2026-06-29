@@ -55,6 +55,7 @@ router.post('/:id/reviews', adminCoursesController.addReview);
 router.get('/:id/content', adminCoursesController.getContent);
 router.get('/:id', adminCoursesController.getById);
 router.put('/:id', adminCoursesController.update);
+router.post('/:id/suspend', adminCoursesController.toggleSuspendCourse);
 router.delete('/:id', adminCoursesController.delete);
 
 module.exports = router;

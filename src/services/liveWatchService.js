@@ -1,4 +1,5 @@
 const db = require('../../db');
+const { recordLiveHeartbeat } = require('./liveWatchBatchService');
 
 class LiveWatchService {
     async join(lessonId, studentId, liveSessionId = null) {
@@ -30,14 +31,7 @@ class LiveWatchService {
     }
 
     async heartbeat(lessonId, studentId) {
-        const r = await db.query(
-            `UPDATE live_watch_records
-             SET watch_seconds = GREATEST(0, EXTRACT(EPOCH FROM (NOW() - joined_at))::INTEGER)
-             WHERE lesson_id = $1 AND student_id = $2 AND left_at IS NULL
-             RETURNING *`,
-            [lessonId, studentId]
-        );
-        return r.rows[0];
+        return recordLiveHeartbeat(lessonId, studentId);
     }
 
     /**

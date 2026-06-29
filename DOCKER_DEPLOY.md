@@ -1,5 +1,8 @@
 # Backend Docker Deployment Guide
 
+> **VPS production (Shikkhabhumi):** use the full stack guide → **[docs/VPS-DOCKER.md](docs/VPS-DOCKER.md)**  
+> Quick start: `cp .env.docker.example .env` → `./scripts/vps-deploy.sh`
+
 This guide explains how to build and deploy the EncLearn backend using Docker.
 
 ---
@@ -132,13 +135,17 @@ Point your frontend to the deployed backend:
 ## Quick Reference: Build & Run Commands
 
 ```bash
-# Build
-docker build -t enclearn-backend .
+# VPS production (api + worker + redis + nginx)
+cp .env.docker.example .env
+./scripts/vps-deploy.sh
 
-# Run (replace values)
-docker run -p 3000:3000 --env-file .env enclearn-backend
+# Or npm scripts
+npm run docker:deploy
+npm run docker:logs
 
-# Or with individual -e flags (see Step 1.3)
+# Single image only (legacy / Render)
+docker build -t shikkhabhumi-api .
+docker run -p 3000:3000 --env-file .env shikkhabhumi-api
 ```
 
 ---

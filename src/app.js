@@ -41,6 +41,7 @@ const recordingDraftRoutes = require('./routes/recordingDraftRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const adminAnalyticsRoutes = require('./routes/adminAnalyticsRoutes');
 const certificateRoutes = require('./routes/certificateRoutes');
+const referenceRoutes = require('./routes/referenceRoutes');
 
 const app = express();
 
@@ -82,6 +83,7 @@ app.use('/images', express.static(path.join(__dirname, '../public/images')));
 // Routes
 app.use('/v1/settings', settingsRoutes);
 app.use('/v1/auth', authRoutes);
+app.use('/v1/reference', referenceRoutes);
 app.use('/v1/video', videoRoutes);
 app.use('/v1/admin/auth', adminAuthRoutes);   // Public - must be before /v1/admin
 app.use('/v1/admin/dashboard', adminDashboardRoutes);
@@ -117,9 +119,27 @@ app.use('/v1/fcm', fcmRoutes);
 app.use('/v1/recordings', recordingDraftRoutes);
 app.use('/v1/analytics', analyticsRoutes);
 
-// Health Check
-app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok' });
+// Health Check — ?detail=1 adds DB ping + pool stats (for load-test monitoring)
+app.get('/health', async (req, res) => {
+    const payload = { status: 'ok' };
+    if (req.query.detail === '1' || req.query.detail === 'true') {
+        try {
+            const db = require('../db');
+            await db.query('SELECT 1');
+            const pool = db.pool;
+            payload.db = 'ok';
+            payload.pool = {
+                total: pool.totalCount,
+                idle: pool.idleCount,
+                waiting: pool.waitingCount,
+            };
+        } catch (err) {
+            payload.db = 'error';
+            payload.dbError = err.message;
+            return res.status(503).json(payload);
+        }
+    }
+    res.status(200).json(payload);
 });
 
 // Error Handling Middleware (multer, unhandled errors)

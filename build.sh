@@ -1,3 +1,4 @@
 #!/bin/sh
 set -e
-docker build -t shikkhabhumi-api .
+docker compose build
+echo "Built — run: docker compose up -d"

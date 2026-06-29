@@ -3,9 +3,11 @@ const router = express.Router();
 const { check } = require('express-validator');
 const authController = require('../controllers/authController');
 const verifyToken = require('../middleware/authMiddleware');
+const { authLimiter } = require('../middleware/rateLimit');
 
 router.post(
     '/register',
+    authLimiter,
     [
         check('email', 'Please include a valid email').isEmail().normalizeEmail(),
         check('password', 'Password must be at least 6 characters').isLength({ min: 6 })
@@ -15,6 +17,7 @@ router.post(
 
 router.post(
     '/login',
+    authLimiter,
     [
         check('email', 'Please include a valid email').isEmail().normalizeEmail(),
         check('password', 'Password is required').exists().notEmpty().withMessage('Password is required')
@@ -44,7 +47,7 @@ router.get(
     authController.getCurrentUser
 );
 
-router.post('/google', authController.postGoogleAuth);
+router.post('/google', authLimiter, authController.postGoogleAuth);
 
 router.post(
     '/link-google',

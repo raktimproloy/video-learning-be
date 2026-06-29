@@ -103,17 +103,37 @@ class AuthController {
     async joinTeacher(req, res) {
         try {
             const userId = req.user.id;
+            const { referral_code } = req.body || {};
 
             const user = await userService.findById(userId);
+            if (!user) {
+                return res.status(404).json({ error: 'User not found. You might be logged in as a different type of account.' });
+            }
             if (user.role === 'teacher') {
                 return res.status(400).json({ error: 'You are already a teacher' });
+            }
+
+            // Check if referral_code is valid
+            let referredBy = null;
+            if (referral_code) {
+                const db = require('../../db');
+                const marketerRes = await db.query('SELECT id FROM marketers WHERE referral_code = $1', [referral_code]);
+                if (marketerRes.rows.length > 0) {
+                    referredBy = marketerRes.rows[0].id;
+                }
             }
 
             // Update role to teacher
             const updatedUser = await userService.updateRole(userId, 'teacher');
 
-            // Create teacher profile with default avatar (profile_image_path = /images/default-teacher.png)
+            // Create teacher profile with default avatar
             await teacherProfileService.createProfile(userId);
+
+            // If referred, update the referred_by field
+            if (referredBy) {
+                const db = require('../../db');
+                await db.query('UPDATE teacher_profiles SET referred_by = $1 WHERE user_id = $2', [referredBy, userId]);
+            }
 
             // Generate new token with updated role
             const token = jwt.sign(

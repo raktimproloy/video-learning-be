@@ -1607,6 +1607,52 @@ class CourseService {
             [userId, courseId, isInvited, amount, curr]
         );
 
+        if (!alreadyEnrolled && amount > 0) {
+            try {
+                // Get course teacher
+                const courseRes = await db.query('SELECT teacher_id FROM courses WHERE id = $1', [courseId]);
+                const teacherId = courseRes.rows[0]?.teacher_id;
+                
+                if (teacherId) {
+                    // Get teacher referred_by
+                    const teacherRes = await db.query('SELECT referred_by FROM teacher_profiles WHERE user_id = $1', [teacherId]);
+                    const marketerId = teacherRes.rows[0]?.referred_by;
+                    
+                    // Get share settings
+                    const settingsRes = await db.query('SELECT teacher_student_percent, reference_percent, reference_teacher_percent FROM admin_share_settings LIMIT 1');
+                    const settings = settingsRes.rows[0] || { teacher_student_percent: 50, reference_percent: 10, reference_teacher_percent: 40 };
+                    
+                    let siteCommission = 0;
+                    let teacherCommission = 0;
+                    let marketerCommission = 0;
+                    
+                    if (marketerId) {
+                        // Marketer referred teacher
+                        marketerCommission = (amount * parseFloat(settings.reference_percent)) / 100;
+                        teacherCommission = (amount * parseFloat(settings.reference_teacher_percent)) / 100;
+                        siteCommission = amount - marketerCommission - teacherCommission;
+                        
+                        // Update marketer earnings
+                        await db.query('UPDATE marketers SET total_earnings = total_earnings + $1 WHERE id = $2', [marketerCommission, marketerId]);
+                    } else {
+                        // Normal split
+                        teacherCommission = (amount * parseFloat(settings.teacher_student_percent)) / 100;
+                        siteCommission = amount - teacherCommission;
+                    }
+                    
+                    // Insert into course_commissions
+                    await db.query(
+                        `INSERT INTO course_commissions 
+                        (course_id, student_id, teacher_id, marketer_id, amount_paid, site_commission, teacher_commission, marketer_commission)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                        [courseId, userId, teacherId, marketerId || null, amount, siteCommission, teacherCommission, marketerCommission]
+                    );
+                }
+            } catch (err) {
+                console.error('Failed to process commission split:', err);
+            }
+        }
+
         if (!alreadyEnrolled) {
             this.sendCoursePurchaseAlertEmail(userId, courseId, amount, curr).catch((err) => {
                 console.error('Failed to send purchase alert email to teacher:', err.message);

@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const db = require('../../db');
 const parseUserAgent = require('../utils/uaParser');
 const { getCountry } = require('../utils/geoIp');
+const { recordHeartbeat } = require('../services/analyticsBatchService');
 
 class AnalyticsController {
     /**
@@ -79,12 +80,7 @@ class AnalyticsController {
 
             const durationSec = parseInt(duration || '15', 10);
 
-            await db.query(
-                `UPDATE page_views 
-                 SET duration_seconds = duration_seconds + $2, updated_at = NOW() 
-                 WHERE id = $1`,
-                [viewId, durationSec]
-            );
+            await recordHeartbeat(viewId, durationSec);
 
             res.status(200).json({ success: true });
         } catch (error) {

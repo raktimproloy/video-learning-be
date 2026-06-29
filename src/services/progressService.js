@@ -2,18 +2,21 @@ const db = require('../../db');
 const videoService = require('./videoService');
 const lessonService = require('./lessonService');
 const assignmentService = require('./assignmentService');
+const WriteBatcher = require('../utils/writeBatcher');
 
 const COMPLETION_THRESHOLD = 0.95; // 95% watched = completed
 const NINETY_PERCENT = 0.9;       // 90% for "video completed" stats
+const PROGRESS_BATCH_MS = parseInt(process.env.PROGRESS_BATCH_MS || '15000', 10);
+
+/** @type {Map<string, object>} */
+const progressResultCache = new Map();
+/** @type {WriteBatcher | null} */
+let progressBatcher = null;
 
 /**
- * Upsert video watch progress.
- * - last_position_seconds = where user left off (for resume next time).
- * - max_watched_seconds = furthest point ever reached (for progress %).
- * - total_watch_seconds = actual time spent watching (anti-cheat: progress uses min(max, total)).
- * - completed_at set when max >= 95% of duration.
+ * Upsert video watch progress (direct DB write).
  */
-async function upsertVideoProgress(userId, payload) {
+async function upsertVideoProgressDirect(userId, payload) {
   const { videoId, lessonId, courseId, currentTimeSeconds, watchDeltaSeconds = 0 } = payload;
   if (!userId || !videoId) {
     throw new Error('userId and videoId are required');
@@ -69,6 +72,77 @@ async function upsertVideoProgress(userId, payload) {
     completedAt: row.completed_at ? row.completed_at.toISOString() : null,
     maxWatchedSeconds: parseFloat(row.max_watched_seconds) || 0,
   };
+}
+
+function mergeProgressPayload(existing, incoming) {
+  return {
+    videoId: incoming.videoId,
+    lessonId: incoming.lessonId || existing.lessonId,
+    courseId: incoming.courseId || existing.courseId,
+    currentTimeSeconds: Math.max(
+      Number(existing.currentTimeSeconds) || 0,
+      Number(incoming.currentTimeSeconds) || 0,
+    ),
+    watchDeltaSeconds: (Number(existing.watchDeltaSeconds) || 0) + (Number(incoming.watchDeltaSeconds) || 0),
+  };
+}
+
+function getProgressBatcher() {
+  if (PROGRESS_BATCH_MS <= 0) return null;
+  if (!progressBatcher) {
+    progressBatcher = new WriteBatcher(async (batch) => {
+      for (const [key, entry] of batch) {
+        const result = await upsertVideoProgressDirect(entry.userId, entry.payload);
+        progressResultCache.set(key, result);
+      }
+    }, PROGRESS_BATCH_MS);
+  }
+  return progressBatcher;
+}
+
+/**
+ * Upsert video watch progress — batched when PROGRESS_BATCH_MS > 0 (default 15s).
+ */
+async function upsertVideoProgress(userId, payload) {
+  const batcher = getProgressBatcher();
+  if (!batcher) {
+    return upsertVideoProgressDirect(userId, payload);
+  }
+
+  const key = `${userId}:${payload.videoId}`;
+  batcher.enqueue(
+    key,
+    { userId, payload: { ...payload, watchDeltaSeconds: 0 } },
+    (existing, incoming) => ({
+      userId: incoming.userId,
+      payload: mergeProgressPayload(existing.payload, incoming.payload),
+    }),
+    { userId, payload },
+  );
+
+  const cached = progressResultCache.get(key);
+  if (cached) {
+    return {
+      ...cached,
+      lastPositionSeconds: Math.max(
+        cached.lastPositionSeconds,
+        Number(payload.currentTimeSeconds) || 0,
+      ),
+    };
+  }
+
+  return {
+    lastPositionSeconds: Number(payload.currentTimeSeconds) || 0,
+    completedAt: null,
+    maxWatchedSeconds: Number(payload.currentTimeSeconds) || 0,
+  };
+}
+
+async function shutdownProgressBatch() {
+  if (progressBatcher) {
+    await progressBatcher.flush().catch(() => {});
+    progressBatcher.shutdown();
+  }
 }
 
 /**
@@ -509,4 +583,5 @@ module.exports = {
   getActivityByDay,
   getResumePosition,
   getDashboardStats,
+  shutdownProgressBatch,
 };

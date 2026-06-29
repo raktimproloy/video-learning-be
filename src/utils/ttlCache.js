@@ -1,10 +1,8 @@
 /**
- * Tiny in-memory TTL cache with in-flight de-duplication.
- *
- * Notes:
- * - Great for single-instance deployments.
- * - If you run multiple Node instances, prefer Redis so caches are shared.
+ * TTL cache with optional Redis backing (REDIS_URL).
+ * Same API as before — single-instance uses memory; multi-instance uses Redis when configured.
  */
+const { getRedisClient } = require('./redisClient');
 
 class TtlCache {
     constructor() {
@@ -12,13 +10,17 @@ class TtlCache {
         this.store = new Map();
         /** @type {Map<string, Promise<any>>} */
         this.inflight = new Map();
+        this._redisReady = null;
     }
 
-    /**
-     * @param {string} key
-     * @returns {any | undefined}
-     */
-    get(key) {
+    async _redis() {
+        if (this._redisReady === null) {
+            this._redisReady = getRedisClient();
+        }
+        return this._redisReady;
+    }
+
+    _memGet(key) {
         const hit = this.store.get(key);
         if (!hit) return undefined;
         if (hit.expiresAt <= Date.now()) {
@@ -30,12 +32,25 @@ class TtlCache {
 
     /**
      * @param {string} key
+     * @returns {any | undefined}
+     */
+    get(key) {
+        return this._memGet(key);
+    }
+
+    /**
+     * @param {string} key
      * @param {any} value
      * @param {number} ttlMs
      */
     set(key, value, ttlMs) {
         const ttl = Math.max(0, Number(ttlMs) || 0);
         this.store.set(key, { value, expiresAt: Date.now() + ttl });
+        this._redis().then((redis) => {
+            if (!redis) return;
+            const sec = Math.max(1, Math.ceil(ttl / 1000));
+            redis.set(`cache:${key}`, JSON.stringify(value), { EX: sec }).catch(() => {});
+        });
     }
 
     /**
@@ -44,6 +59,9 @@ class TtlCache {
     delete(key) {
         this.store.delete(key);
         this.inflight.delete(key);
+        this._redis().then((redis) => {
+            if (redis) redis.del(`cache:${key}`).catch(() => {});
+        });
     }
 
     /**
@@ -52,8 +70,22 @@ class TtlCache {
      * @param {() => Promise<any>} loader
      */
     async getOrSet(key, ttlMs, loader) {
-        const cached = this.get(key);
+        const cached = this._memGet(key);
         if (cached !== undefined) return cached;
+
+        const redis = await this._redis();
+        if (redis) {
+            try {
+                const raw = await redis.get(`cache:${key}`);
+                if (raw) {
+                    const value = JSON.parse(raw);
+                    this.set(key, value, ttlMs);
+                    return value;
+                }
+            } catch {
+                /* fall through to loader */
+            }
+        }
 
         const existing = this.inflight.get(key);
         if (existing) return existing;
@@ -73,4 +105,3 @@ class TtlCache {
 }
 
 module.exports = new TtlCache();
-
