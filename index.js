@@ -6,7 +6,7 @@ const { shutdownAnalyticsBatch } = require('./src/services/analyticsBatchService
 const { shutdownLiveHeartbeatBatch } = require('./src/services/liveWatchBatchService');
 const { shutdownProgressBatch } = require('./src/services/progressService');
 
-const port = process.env.PORT || 5000;
+const port = parseInt(process.env.PORT || '5000', 10);
 const server = http.createServer(app);
 const serverTimeoutMs = Math.max(60_000, parseInt(process.env.SERVER_TIMEOUT_MS || '900000', 10));
 
@@ -15,7 +15,7 @@ server.headersTimeout = serverTimeoutMs + 5_000;
 server.keepAliveTimeout = 65_000;
 
 async function start() {
-    await initSocket(server);
+    initSocket(server);
 
     if (process.env.RUN_WORKER !== '0') {
         require('./src/worker/index');
@@ -27,8 +27,14 @@ async function start() {
     const liveSessionForceEndJob = require('./src/jobs/liveSessionForceEndJob');
     liveSessionForceEndJob.start();
 
-    server.listen(port, () => {
-        console.log(`Server running on port ${port}`);
+    await new Promise((resolve, reject) => {
+        server.listen(port, '0.0.0.0', (err) => {
+            if (err) reject(err);
+            else {
+                console.log(`Server running on 0.0.0.0:${port}`);
+                resolve();
+            }
+        });
     });
 }
 
