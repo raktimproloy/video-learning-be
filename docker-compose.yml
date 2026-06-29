@@ -79,7 +79,7 @@ services:
     container_name: shikkhabhumi-nginx
     restart: unless-stopped
     ports:
-      - "${HTTP_PORT:-80}:80"
+      - "${HTTP_PORT:-8080}:80"
     volumes:
       - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:

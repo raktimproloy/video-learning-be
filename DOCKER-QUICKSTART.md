@@ -11,7 +11,9 @@ chmod +x scripts/*.sh
 ./scripts/vps-deploy.sh
 ```
 
-Stack: **nginx** (80) → **api** (Node+Socket) + **worker** (FFmpeg) + **redis**
+Stack: **nginx** (host port **8080** by default) → **api** + **worker** + **redis**
+
+If port 80 is free and you want Docker on 80: set `HTTP_PORT=80` in `.env`.
 
 Frontend:
 ```

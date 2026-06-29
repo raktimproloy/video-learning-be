@@ -81,8 +81,8 @@ This will:
 ### 2.4 Verify
 
 ```bash
-curl http://127.0.0.1/health
-curl "http://127.0.0.1/health?detail=1"
+curl http://127.0.0.1:8080/health
+curl "http://127.0.0.1:8080/health?detail=1"
 docker compose ps
 docker compose logs -f api
 ```
@@ -212,6 +212,7 @@ Update `docker/nginx.conf` upstream to list multiple `api` instances (Docker DNS
 
 | Problem | Fix |
 |---------|-----|
+| **Port 80 already in use** | Set `HTTP_PORT=8080` in `.env`, then `docker compose up -d`. Point host nginx to `127.0.0.1:8080` (see §4) |
 | `api` unhealthy | `docker compose logs api` — check DB_* env |
 | DB connection refused | Use Supabase **pooler** host + port 6543, `DB_SSL=true` |
 | Worker not processing | `docker compose logs worker` — check R2 credentials |
@@ -232,7 +233,7 @@ docker compose build
 docker compose run --rm api node run_migrations.js
 docker compose up -d
 
-curl http://localhost/health
+curl http://localhost:8080/health
 ```
 
 ---
