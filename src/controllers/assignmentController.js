@@ -126,12 +126,12 @@ async function getWatchContext(req, res) {
     const video = await videoService.getVideoById(videoId);
     if (!video) return res.status(404).json({ error: 'Video not found' });
 
-    const isOwner = video.owner_id === userId;
+    const isOwnerOrManager = await videoService.isOwnerOrManager(userId, videoId);
     const enrolled = await videoService.checkPermission(userId, videoId);
-    const hasAccess = isOwner || enrolled || (video.is_preview === true);
+    const hasAccess = isOwnerOrManager || enrolled || (video.is_preview === true);
     if (!hasAccess) return res.status(403).json({ error: 'Access denied' });
 
-    const isPreviewOnly = hasAccess && !isOwner && !enrolled;
+    const isPreviewOnly = hasAccess && !isOwnerOrManager && !enrolled;
 
     const submissionStatus = isPreviewOnly ? {} : await assignmentService.getVideoSubmissionStatus(userId, videoId);
 

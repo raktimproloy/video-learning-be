@@ -372,6 +372,33 @@ class VideoProcessor {
                 logStep('R2', 'Uploading encrypted HLS to R2 (prefix: %s)...', video.r2_key);
                 await uploadDirToR2(outputDir, video.r2_key);
                 logStep('R2', 'Upload complete.');
+
+                // 8b. Generate thumbnail BEFORE cleanup (sourcePath still valid)
+                if (sourcePath && fs.existsSync(sourcePath) && r2Storage.isConfigured) {
+                    try {
+                        logStep('Thumbnail', 'Generating thumbnail from first frame...');
+                        const thumbPath = path.join(outputDir, 'thumbnail.jpg');
+                        await new Promise((resolve, reject) => {
+                            ffmpeg(sourcePath)
+                                .seekInput(1)
+                                .frames(1)
+                                .output(thumbPath)
+                                .outputOptions(['-vf', 'scale=iw*min(1\\,1280/iw):-2', '-q:v', '3'])
+                                .on('end', resolve)
+                                .on('error', reject)
+                                .run();
+                        });
+                        if (fs.existsSync(thumbPath)) {
+                            const thumbR2Key = `${video.r2_key}/thumbnail.jpg`;
+                            await r2Storage.uploadFromPath(thumbPath, thumbR2Key, 'image/jpeg');
+                            await db.query('UPDATE videos SET thumbnail_r2_key = $1 WHERE id = $2', [thumbR2Key, task.video_id]);
+                            logStep('Thumbnail', 'Thumbnail uploaded: %s', thumbR2Key);
+                        }
+                    } catch (thumbErr) {
+                        console.warn('[VideoProcessor] [Task %s] Thumbnail generation failed (non-fatal):', task.id, thumbErr.message);
+                    }
+                }
+
                 if (workDir && fs.existsSync(workDir)) {
                     fs.rmSync(workDir, { recursive: true, force: true });
                     logStep('Cleanup', 'Removed work dir: %s', workDir);

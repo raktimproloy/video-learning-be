@@ -123,4 +123,30 @@ router.put(
     adminController.updateVideo
 );
 
+router.get(
+    '/videos/:id/versions',
+    [
+        check('id', 'Video ID is required').isUUID()
+    ],
+    adminController.getVideoVersions
+);
+
+router.post(
+    '/videos/:id/restore-version/:versionId',
+    [
+        check('id', 'Video ID is required').isUUID(),
+        check('versionId', 'Version ID is required').isUUID()
+    ],
+    adminController.restoreVideoVersion
+);
+
+router.delete(
+    '/videos/:id/versions/:versionId',
+    [
+        check('id', 'Video ID is required').isUUID(),
+        check('versionId', 'Version ID is required').isUUID()
+    ],
+    adminController.deleteVideoVersion
+);
+
 module.exports = router;

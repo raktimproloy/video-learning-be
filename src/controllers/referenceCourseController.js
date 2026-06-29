@@ -77,8 +77,8 @@ class ReferenceCourseController {
             try { parsedAssignments = assignments ? (typeof assignments === 'string' ? JSON.parse(assignments) : assignments) : []; } catch (e) {}
 
             const result = await db.query(
-                `INSERT INTO videos (lesson_id, owner_id, title, description, "order", is_preview, notes, assignments, status, source_type)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+                `INSERT INTO videos (lesson_id, owner_id, title, description, "order", is_preview, notes, assignments, status, source_type, storage_path, signing_secret)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
                 [
                     lessonId,
                     teacherId,
@@ -89,7 +89,9 @@ class ReferenceCourseController {
                     JSON.stringify(parsedNotes),
                     JSON.stringify(parsedAssignments),
                     status || 'active',
-                    'upload'
+                    'upload',
+                    'pending', // storage_path (dummy value since marketer doesn't upload video)
+                    'pending'  // signing_secret (dummy value)
                 ]
             );
 

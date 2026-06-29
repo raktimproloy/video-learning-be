@@ -1242,7 +1242,7 @@ class CourseService {
         };
     }
 
-    async getCourseById(id, userId = null) {
+    async getCourseById(id, userId = null, role = null) {
         // Check if reviews table exists
         const reviewsTableCheck = await db.query(`
             SELECT EXISTS (
@@ -1307,8 +1307,19 @@ class CourseService {
         const course = result.rows[0];
         // Students cannot see non-active courses; owners (teachers) can always see their own (including draft)
         const isOwner = userId && String(course.teacher_id) === String(userId);
+        
+        let hasAccess = isOwner;
+        if (!hasAccess && role === 'admin') {
+            hasAccess = true;
+        } else if (!hasAccess && role === 'marketer' && userId) {
+            const tpRes = await db.query('SELECT referred_by FROM teacher_profiles WHERE user_id = $1', [course.teacher_id]);
+            if (tpRes.rows.length > 0 && String(tpRes.rows[0].referred_by) === String(userId)) {
+                hasAccess = true;
+            }
+        }
+        
         const isActive = !course.status || course.status === 'active';
-        if (!isOwner && !isActive) return null;
+        if (!hasAccess && !isActive) return null;
 
         // If student is logged in, check for pending payment request (for "Payment pending" link)
         let pendingPaymentRequestId = null;

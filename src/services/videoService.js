@@ -32,6 +32,27 @@ class VideoService {
     }
 
     /**
+     * Checks if user is owner of the video OR a marketer managing the course.
+     */
+    async isOwnerOrManager(userId, videoId) {
+        const video = await this.getVideoById(videoId);
+        if (!video) return false;
+        if (video.owner_id === userId) return true;
+
+        // Check if user is the marketer who referred the teacher
+        const marketerPermission = await db.query(
+            `SELECT 1 
+             FROM courses c
+             JOIN teacher_profiles tp ON c.teacher_id = tp.user_id
+             JOIN lessons l ON c.id = l.course_id
+             JOIN videos v ON l.id = v.lesson_id
+             WHERE tp.referred_by = $1 AND v.id = $2`,
+            [userId, videoId]
+        );
+        return marketerPermission.rows.length > 0;
+    }
+
+    /**
      * Retrieves video details by ID.
      */
     async getVideoById(videoId) {
@@ -221,15 +242,17 @@ class VideoService {
     /**
      * Generates a signed URL for the video manifest (.m3u8).
      */
-    async getSignedVideoUrl(userId, videoId) {
+    async getSignedVideoUrl(userId, videoId, customBaseUrl) {
         const video = await this.getVideoById(videoId);
         if (!video) {
             throw new Error('Video not found');
         }
 
-        // Check access: User must be owner OR have permission
+        const isOwnerOrManager = await this.isOwnerOrManager(userId, videoId);
+
+        // Check access: User must be owner/manager OR have permission
         let hasAccess = false;
-        if (video.owner_id === userId) {
+        if (isOwnerOrManager) {
             hasAccess = true;
         } else {
             hasAccess = await this.checkPermission(userId, videoId);
@@ -244,12 +267,12 @@ class VideoService {
         }
 
         // Non-owners cannot access inactive videos
-        if (video.owner_id !== userId && video.status === 'inactive') {
+        if (!isOwnerOrManager && video.status === 'inactive') {
             throw new Error('Access denied');
         }
 
         // Non-owners: course and lesson must be active (draft/inactive hidden from students)
-        if (video.owner_id !== userId && video.lesson_id) {
+        if (!isOwnerOrManager && video.lesson_id) {
             const courseLessonCheck = await db.query(
                 `SELECT 1 FROM lessons l
                  JOIN courses c ON l.course_id = c.id
@@ -278,7 +301,7 @@ class VideoService {
             }
         }
 
-        const baseUrl = process.env.BASE_URL || 'http://localhost:5000';
+        const baseUrl = customBaseUrl || process.env.BASE_URL || 'http://localhost:5000';
         if (video.storage_provider === 'r2' && video.r2_key && r2Storage.isConfigured) {
             return `${baseUrl}/v1/video/${video.id}/stream/master.m3u8`;
         }
@@ -295,8 +318,10 @@ class VideoService {
              throw new Error('Video not found');
         }
 
+        const isOwnerOrManager = await this.isOwnerOrManager(userId, videoId);
+
         let hasAccess = false;
-        if (video.owner_id === userId) {
+        if (isOwnerOrManager) {
             hasAccess = true;
         } else {
             hasAccess = await this.checkPermission(userId, videoId);
@@ -309,12 +334,12 @@ class VideoService {
         }
 
         // Non-owners cannot access inactive videos
-        if (video.owner_id !== userId && video.status === 'inactive') {
+        if (!isOwnerOrManager && video.status === 'inactive') {
             throw new Error('Access denied');
         }
 
         // Non-owners: course and lesson must be active (draft/inactive hidden from students)
-        if (video.owner_id !== userId && video.lesson_id) {
+        if (!isOwnerOrManager && video.lesson_id) {
             const courseLessonCheck = await db.query(
                 `SELECT 1 FROM lessons l
                  JOIN courses c ON l.course_id = c.id
@@ -327,6 +352,93 @@ class VideoService {
         }
 
         return keyStorage.getKey(videoId);
+    }
+
+    /**
+     * Saves the current video file details as a new version in video_versions.
+     */
+    async saveVideoVersion(videoId, userId, userRole) {
+        const video = await this.getVideoById(videoId);
+        if (!video) throw new Error('Video not found');
+        
+        await db.query(`
+            INSERT INTO video_versions 
+            (video_id, storage_path, signing_secret, r2_key, duration_seconds, size_bytes, version_number, created_by_user_id, created_by_role)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `, [
+            video.id, 
+            video.storage_path, 
+            video.signing_secret, 
+            video.r2_key, 
+            video.duration_seconds, 
+            video.size_bytes, 
+            video.version_number,
+            userId,
+            userRole
+        ]);
+    }
+
+    /**
+     * Fetches the version history for a given video.
+     */
+    async getVideoVersions(videoId) {
+        const result = await db.query(`
+            SELECT vv.*, u.name as created_by_name
+            FROM video_versions vv
+            LEFT JOIN users u ON vv.created_by_user_id = u.id
+            WHERE vv.video_id = $1
+            ORDER BY vv.version_number DESC
+        `, [videoId]);
+        return result.rows;
+    }
+
+    /**
+     * Restores a video to a previous version.
+     */
+    async restoreVideoVersion(videoId, versionId, userId, userRole) {
+        // Find the version
+        const versionRes = await db.query('SELECT * FROM video_versions WHERE id = $1 AND video_id = $2', [versionId, videoId]);
+        if (versionRes.rows.length === 0) throw new Error('Version not found');
+        const version = versionRes.rows[0];
+
+        // Save current state as a new version just in case (if we want to preserve the current state before replacing)
+        await this.saveVideoVersion(videoId, userId, userRole);
+
+        // Update the main video row with the version's data and increment version_number
+        const newVersionNumber = (await this.getVideoById(videoId)).version_number + 1;
+        
+        await db.query(`
+            UPDATE videos
+            SET storage_path = $1, signing_secret = $2, r2_key = $3, duration_seconds = $4, size_bytes = $5, 
+                version_number = $6, last_updated_by_user_id = $7, last_updated_by_role = $8, status = 'active'
+            WHERE id = $9
+        `, [
+            version.storage_path, version.signing_secret, version.r2_key, version.duration_seconds, version.size_bytes,
+            newVersionNumber, userId, userRole, videoId
+        ]);
+
+        // Save the restored state as the new current version in the history table
+        await db.query(`
+            INSERT INTO video_versions 
+            (video_id, storage_path, signing_secret, r2_key, duration_seconds, size_bytes, version_number, created_by_user_id, created_by_role)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `, [
+            videoId, version.storage_path, version.signing_secret, version.r2_key, version.duration_seconds, version.size_bytes,
+            newVersionNumber, userId, userRole
+        ]);
+
+        return newVersionNumber;
+    }
+
+    /**
+     * Deletes a video version from the history.
+     */
+    async deleteVideoVersion(versionId, videoId) {
+        // Optional: delete from storage provider? 
+        // The problem is version shares the r2_key or storage_path with other versions or current video,
+        // so we shouldn't delete the actual file unless we do reference counting. 
+        // Just deleting the history record is safer for now.
+        await db.query('DELETE FROM video_versions WHERE id = $1 AND video_id = $2', [versionId, videoId]);
     }
 }
 

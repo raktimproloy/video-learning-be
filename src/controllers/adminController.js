@@ -6,6 +6,7 @@ const r2Storage = require('../services/r2StorageService');
 const { validationResult } = require('express-validator');
 const fs = require('fs');
 const path = require('path');
+const db = require('../../db');
 
 const STAGING_DIR = path.resolve(__dirname, '../../staging');
 const UPLOADS_LESSONS = path.resolve(__dirname, '../../uploads/lessons');
@@ -83,16 +84,52 @@ async function processVideoFiles(req, notes, assignments, videoId, lessonId, cou
     return { notes: outNotes, assignments: outAssignments };
 }
 
+async function getEffectiveOwnerId(req, lessonId, courseId = null) {
+    let ownerId = req.user.id;
+    if (req.user.role === 'marketer') {
+        const db = require('../../db');
+        let cid = courseId;
+        if (!cid && lessonId) {
+            const lessonRes = await db.query('SELECT course_id FROM lessons WHERE id = $1', [lessonId]);
+            if (lessonRes.rows.length > 0) cid = lessonRes.rows[0].course_id;
+        }
+        if (cid) {
+            const query = `
+                SELECT c.teacher_id 
+                FROM courses c
+                JOIN teacher_profiles tp ON c.teacher_id = tp.user_id
+                WHERE c.id = $1 AND tp.referred_by = $2
+            `;
+            const res = await db.query(query, [cid, req.user.id]);
+            if (res.rows.length > 0) {
+                ownerId = res.rows[0].teacher_id;
+            } else {
+                throw new Error("Forbidden: You don't have permission to upload for this course");
+            }
+        } else {
+            throw new Error("Cannot determine course for marketer validation");
+        }
+    }
+    return ownerId;
+}
+
 class AdminController {
+
     async initVideoMultipartUpload(req, res) {
         try {
             if (!r2Storage.isConfigured) {
                 return res.status(400).json({ error: 'R2 is not configured on server.' });
             }
-            const ownerId = req.user.id;
             const { lesson_id, file_name, file_type, file_size } = req.body || {};
             if (!lesson_id || !file_name) {
                 return res.status(400).json({ error: 'lesson_id and file_name are required.' });
+            }
+            
+            let ownerId;
+            try {
+                ownerId = await getEffectiveOwnerId(req, lesson_id);
+            } catch (err) {
+                return res.status(403).json({ error: err.message });
             }
 
             const lesson = await lessonService.getLessonById(lesson_id);
@@ -185,12 +222,18 @@ class AdminController {
             return res.status(400).json({ error: 'No video upload data found. Upload a video file first.' });
         }
 
-        const ownerId = req.user.id;
         const { title, description, order, isPreview } = req.body;
         const { notes, assignments } = parseNotesAndAssignments(req.body);
         const useR2 = r2Storage.isConfigured;
 
         try {
+            let ownerId;
+            try {
+                ownerId = await getEffectiveOwnerId(req, lesson_id);
+            } catch (err) {
+                return res.status(403).json({ error: err.message });
+            }
+
             let courseId = null;
             if (lesson_id) {
                 const lesson = await lessonService.getLessonById(lesson_id);
@@ -228,6 +271,10 @@ class AdminController {
                 const r2Prefix = r2Storage.getVideoKeyPrefix(ownerId, effectiveCourseId, effectiveLessonId, video.id);
                 if (videoR2StagingKey && videoR2Prefix) {
                     // Move finalized multipart object from temp prefix to final video prefix.
+                    const stagingExists = await r2Storage.objectExists(videoR2StagingKey);
+                    if (!stagingExists) {
+                        return res.status(400).json({ error: 'Staged video file not found in R2. The upload may have failed or expired. Please try uploading again.' });
+                    }
                     const tempStream = await r2Storage.getObjectStream(videoR2StagingKey);
                     const ext = path.extname(videoR2StagingKey) || '.mp4';
                     const finalStagingKey = `${r2Prefix}/staging/input${ext}`;
@@ -253,6 +300,9 @@ class AdminController {
                 const codecPreference = 'h264';
                 const resolutions = ['360p', '720p', '1080p'];
                 await adminService.createProcessingTask(ownerId, video.id, codecPreference, resolutions, 28, false);
+                await db.query('UPDATE videos SET last_updated_by_user_id = $1, last_updated_by_role = $2 WHERE id = $3', [req.user.id, req.user.role, video.id]);
+                const videoService = require('../services/videoService');
+                await videoService.saveVideoVersion(video.id, req.user.id, req.user.role);
                 const updated = await videoService.getVideoById(video.id);
                 return res.status(201).json(updated);
             }
@@ -277,7 +327,11 @@ class AdminController {
             const codecPreference = 'h264';
             const resolutions = ['360p', '720p', '1080p'];
             await adminService.createProcessingTask(ownerId, video.id, codecPreference, resolutions, 28, false);
-            res.status(201).json(updatedVideo);
+            await db.query('UPDATE videos SET last_updated_by_user_id = $1, last_updated_by_role = $2 WHERE id = $3', [req.user.id, req.user.role, video.id]);
+            const videoService = require('../services/videoService');
+            await videoService.saveVideoVersion(video.id, req.user.id, req.user.role);
+            const finalUpdatedVideo = await videoService.getVideoById(video.id);
+            res.status(201).json(finalUpdatedVideo);
         } catch (error) {
             console.error('Add Video Error:', error);
             const cleanupPaths = (req.files || []).map((f) => f.path && (path.isAbsolute(f.path) ? f.path : path.resolve(process.cwd(), f.path)));
@@ -329,8 +383,17 @@ class AdminController {
     async deleteVideo(req, res) {
         try {
             const videoId = req.params.id;
-            const ownerId = req.user.id;
             
+            const video = await videoService.getVideoById(videoId);
+            if (!video) return res.status(404).json({ error: 'Video not found' });
+            
+            let ownerId;
+            try { ownerId = await getEffectiveOwnerId(req, video.lesson_id, null); } catch (e) { return res.status(403).json({ error: e.message }); }
+            
+            if (video.owner_id !== ownerId) {
+                return res.status(404).json({ error: 'Video not found or access denied' });
+            }
+
             const result = await adminService.deleteVideo(videoId, ownerId);
             res.status(200).json(result);
         } catch (error) {
@@ -345,11 +408,22 @@ class AdminController {
     async getVideo(req, res) {
         try {
             const videoId = req.params.id;
-            const ownerId = req.user.id;
             
             const video = await videoService.getVideoById(videoId);
-            if (!video || video.owner_id !== ownerId) {
-                return res.status(404).json({ error: 'Video not found or access denied' });
+            if (!video) return res.status(404).json({ error: 'Video not found' });
+            
+            let ownerId;
+            try { 
+                ownerId = await getEffectiveOwnerId(req, video.lesson_id, null); 
+            } catch (e) { 
+                require('fs').appendFileSync('error-log.txt', `\n[getVideo] EffectiveOwner Error: ${e.message}\n`);
+                return res.status(403).json({ error: e.message }); 
+            }
+
+            require('fs').appendFileSync('error-log.txt', `\n[getVideo] req.user.id=${req.user.id}, req.user.role=${req.user.role}, video.owner_id=${video.owner_id}, ownerId=${ownerId}\n`);
+
+            if (video.owner_id !== ownerId) {
+                return res.status(404).json({ error: `Video not found or access denied (vid.owner=${video.owner_id}, eff.owner=${ownerId})` });
             }
 
             const result = { ...video };
@@ -363,6 +437,7 @@ class AdminController {
             res.status(200).json(result);
         } catch (error) {
             console.error('Get Video Error:', error);
+            require('fs').appendFileSync('error-log.txt', `\n[getVideo] Internal Server Error: ${error.message}\n`);
             res.status(500).json({ error: 'Internal Server Error' });
         }
     }
@@ -370,7 +445,16 @@ class AdminController {
     async getProcessingStatus(req, res) {
         try {
             const videoId = req.params.id;
-            const ownerId = req.user.id;
+            
+            const video = await videoService.getVideoById(videoId);
+            if (!video) return res.status(404).json({ error: 'Video not found' });
+            
+            let ownerId;
+            try { ownerId = await getEffectiveOwnerId(req, video.lesson_id, null); } catch (e) { return res.status(403).json({ error: e.message }); }
+
+            if (video.owner_id !== ownerId) {
+                return res.status(404).json({ error: 'Video not found or access denied' });
+            }
             
             const status = await adminService.getProcessingStatus(videoId, ownerId);
             res.status(200).json(status);
@@ -391,15 +475,23 @@ class AdminController {
 
         try {
             const videoId = req.params.id;
-            const ownerId = req.user.id;
-            
-            // Check ownership
             const video = await videoService.getVideoById(videoId);
-            if (!video || video.owner_id !== ownerId) {
+            if (!video) {
+                return res.status(404).json({ error: 'Video not found' });
+            }
+
+            let ownerId;
+            try {
+                ownerId = await getEffectiveOwnerId(req, video.lesson_id, null);
+            } catch (err) {
+                return res.status(403).json({ error: err.message });
+            }
+
+            if (video.owner_id !== ownerId) {
                 return res.status(404).json({ error: 'Video not found or access denied' });
             }
 
-            const { title, description, order, isPreview, status } = req.body;
+            const { title, description, order, isPreview, status, video_r2_staging_key, video_r2_prefix } = req.body;
             const { notes, assignments } = parseNotesAndAssignments(req.body);
             
             const metadata = {};
@@ -419,17 +511,17 @@ class AdminController {
                 }
             }
 
+            let courseId = null;
+            if (video.lesson_id) {
+                const lesson = await lessonService.getLessonById(video.lesson_id);
+                if (lesson) courseId = lesson.course_id;
+            }
+            const effectiveCourseId = courseId || 'unknown';
+            const effectiveLessonId = video.lesson_id || 'unknown';
+
             // Handle file uploads for notes and assignments if provided
             const files = req.files || [];
             if (files.length > 0 && (notes.length > 0 || assignments.length > 0)) {
-                let courseId = null;
-                if (video.lesson_id) {
-                    const lesson = await lessonService.getLessonById(video.lesson_id);
-                    if (lesson) courseId = lesson.course_id;
-                }
-                const effectiveCourseId = courseId || 'unknown';
-                const effectiveLessonId = video.lesson_id || 'unknown';
-                
                 const { notes: finalNotes, assignments: finalAssignments } = await processVideoFiles(
                     req, notes, assignments, videoId, effectiveLessonId, effectiveCourseId, ownerId
                 );
@@ -437,10 +529,122 @@ class AdminController {
                 metadata.assignments = finalAssignments;
             }
 
+            // Handle Video Replacement
+            const videoFile = files.find((f) => f.fieldname === 'video');
+            if (videoFile || video_r2_staging_key) {
+                // Save current state to version history before replacing
+                await videoService.saveVideoVersion(video.id, req.user.id, req.user.role);
+
+                if (video_r2_staging_key) {
+                    const r2Prefix = r2Storage.getVideoKeyPrefix(ownerId, effectiveCourseId, effectiveLessonId, video.id);
+                    if (video_r2_prefix) {
+                        // Verify the temp staging object exists before attempting to stream it
+                        const stagingExists = await r2Storage.objectExists(video_r2_staging_key);
+                        if (!stagingExists) {
+                            return res.status(400).json({ error: 'Staged video file not found in R2. The upload may have failed or expired. Please try uploading again.' });
+                        }
+                        const tempStream = await r2Storage.getObjectStream(video_r2_staging_key);
+                        const ext = path.extname(video_r2_staging_key) || '.mp4';
+                        const finalStagingKey = `${r2Prefix}/staging/input${ext}`;
+                        await r2Storage.uploadStream(finalStagingKey, tempStream, 'application/octet-stream');
+                        try { await r2Storage.deletePrefix(video_r2_prefix); } catch (e) {}
+                    } else {
+                        // video_r2_prefix not provided: staging key exists but no temp prefix to clean up
+                        const stagingExists = await r2Storage.objectExists(video_r2_staging_key);
+                        if (!stagingExists) {
+                            return res.status(400).json({ error: 'Staged video file not found in R2. The upload may have failed or expired. Please try uploading again.' });
+                        }
+                        const tempStream = await r2Storage.getObjectStream(video_r2_staging_key);
+                        const ext = path.extname(video_r2_staging_key) || '.mp4';
+                        const finalStagingKey = `${r2Prefix}/staging/input${ext}`;
+                        await r2Storage.uploadStream(finalStagingKey, tempStream, 'application/octet-stream');
+                    }
+                    await adminService.updateVideoR2(video.id, r2Prefix);
+                } else if (videoFile) {
+                    const r2Prefix = r2Storage.getVideoKeyPrefix(ownerId, effectiveCourseId, effectiveLessonId, video.id);
+                    const r2StagingKey = `${r2Prefix}/staging/input.mp4`;
+                    const uploadedPath = path.isAbsolute(videoFile.path) ? videoFile.path : path.resolve(process.cwd(), videoFile.path);
+                    if (!fs.existsSync(uploadedPath)) throw new Error(`Uploaded file not found at ${uploadedPath}.`);
+                    const fileBuffer = fs.readFileSync(uploadedPath);
+                    await r2Storage.uploadFile(r2StagingKey, fileBuffer, 'video/mp4');
+                    try { fs.unlinkSync(uploadedPath); } catch (e) {}
+                    await adminService.updateVideoR2(video.id, r2Prefix);
+                }
+                
+                const codecPreference = 'h264';
+                const resolutions = ['360p', '720p', '1080p'];
+                await adminService.createProcessingTask(ownerId, video.id, codecPreference, resolutions, 28, false);
+                metadata.status = 'processing';
+                
+                // Increment version number directly in metadata update below
+                const newVersionNumber = video.version_number + 1;
+                await db.query('UPDATE videos SET version_number = $1 WHERE id = $2', [newVersionNumber, video.id]);
+            }
+
+            // Always update last updated info
+            await db.query('UPDATE videos SET last_updated_by_user_id = $1, last_updated_by_role = $2 WHERE id = $3', [req.user.id, req.user.role, video.id]);
+
             const updated = await adminService.updateVideoMetadata(videoId, metadata);
             res.status(200).json(updated);
         } catch (error) {
             console.error('Update Video Error:', error);
+            res.status(500).json({ error: 'Internal Server Error' });
+        }
+    }
+
+    async getVideoVersions(req, res) {
+        try {
+            const videoId = req.params.id;
+            const video = await videoService.getVideoById(videoId);
+            if (!video) return res.status(404).json({ error: 'Video not found' });
+            
+            let ownerId;
+            try { ownerId = await getEffectiveOwnerId(req, video.lesson_id, null); } catch (e) { return res.status(403).json({ error: e.message }); }
+            if (video.owner_id !== ownerId) return res.status(404).json({ error: 'Access denied' });
+
+            const versions = await videoService.getVideoVersions(videoId);
+            res.status(200).json(versions);
+        } catch (error) {
+            console.error('Get versions error:', error);
+            res.status(500).json({ error: 'Internal Server Error' });
+        }
+    }
+
+    async restoreVideoVersion(req, res) {
+        try {
+            const videoId = req.params.id;
+            const versionId = req.params.versionId;
+            const video = await videoService.getVideoById(videoId);
+            if (!video) return res.status(404).json({ error: 'Video not found' });
+
+            let ownerId;
+            try { ownerId = await getEffectiveOwnerId(req, video.lesson_id, null); } catch (e) { return res.status(403).json({ error: e.message }); }
+            if (video.owner_id !== ownerId) return res.status(404).json({ error: 'Access denied' });
+
+            const newVersionNumber = await videoService.restoreVideoVersion(videoId, versionId, req.user.id, req.user.role);
+            res.status(200).json({ ok: true, version_number: newVersionNumber });
+        } catch (error) {
+            console.error('Restore version error:', error);
+            if (error.message === 'Version not found') return res.status(404).json({ error: error.message });
+            res.status(500).json({ error: 'Internal Server Error' });
+        }
+    }
+
+    async deleteVideoVersion(req, res) {
+        try {
+            const videoId = req.params.id;
+            const versionId = req.params.versionId;
+            const video = await videoService.getVideoById(videoId);
+            if (!video) return res.status(404).json({ error: 'Video not found' });
+
+            let ownerId;
+            try { ownerId = await getEffectiveOwnerId(req, video.lesson_id, null); } catch (e) { return res.status(403).json({ error: e.message }); }
+            if (video.owner_id !== ownerId) return res.status(404).json({ error: 'Access denied' });
+
+            await videoService.deleteVideoVersion(versionId, videoId);
+            res.status(200).json({ ok: true });
+        } catch (error) {
+            console.error('Delete version error:', error);
             res.status(500).json({ error: 'Internal Server Error' });
         }
     }

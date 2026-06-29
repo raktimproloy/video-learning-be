@@ -887,7 +887,8 @@ class CourseController {
     async getCourseById(req, res) {
         try {
             const userId = req.user?.id || null;
-            const course = await courseService.getCourseById(req.params.id, userId);
+            const role = req.user?.role || null;
+            const course = await courseService.getCourseById(req.params.id, userId, role);
             if (!course) {
                 return res.status(404).json({ error: 'Course not found' });
             }

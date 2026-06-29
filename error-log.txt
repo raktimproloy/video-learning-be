@@ -1,0 +1,48 @@
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, req.user.role=teacher, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, req.user.role=teacher, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, req.user.role=teacher, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291
+
+[getVideo] req.user.id=a1d09f46-08bb-4690-bb3a-e17473fee0a7, req.user.role=marketer, video.owner_id=cf1a0795-64f6-4f5c-9462-41c2a7db0291, ownerId=cf1a0795-64f6-4f5c-9462-41c2a7db0291

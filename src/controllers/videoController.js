@@ -22,8 +22,8 @@ class VideoController {
                 return res.status(404).json({ error: 'Video not found' });
             }
 
-            const isOwner = video.owner_id === userId;
-            let hasPermission = isOwner || await videoService.checkPermission(userId, videoId);
+            const isOwnerOrManager = await videoService.isOwnerOrManager(userId, videoId);
+            let hasPermission = isOwnerOrManager || await videoService.checkPermission(userId, videoId);
             if (!hasPermission && video.is_preview) {
                 hasPermission = true;
             }
@@ -43,11 +43,21 @@ class VideoController {
             // For students, check if video is locked
             if (role === 'student') {
                 const enrolled = await videoService.checkPermission(userId, videoId);
-                if (video.is_preview && !isOwner && !enrolled) {
+                if (video.is_preview && !isOwnerOrManager && !enrolled) {
                     result.isLocked = false;
                 } else {
                     result.isLocked = await videoService.isVideoLockedForStudent(userId, videoId);
                 }
+            }
+
+            // Build thumbnail URL
+            const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+            const host = req.headers['x-forwarded-host'] || req.get('host');
+            const baseUrl = `${protocol}://${host}`;
+            if (video.thumbnail_r2_key) {
+                result.thumbnail_url = `${baseUrl}/v1/video/${videoId}/thumbnail`;
+            } else {
+                result.thumbnail_url = null;
             }
 
             res.json(result);
@@ -66,7 +76,8 @@ class VideoController {
             if (!video) return res.status(404).json({ error: 'Video not found' });
             if (video.source_type !== 'live') return res.status(400).json({ error: 'This video is not from a live session' });
 
-            let hasAccess = video.owner_id === userId || await videoService.checkPermission(userId, videoId);
+            const isOwnerOrManager = await videoService.isOwnerOrManager(userId, videoId);
+            let hasAccess = isOwnerOrManager || await videoService.checkPermission(userId, videoId);
             if (!hasAccess && video.is_preview) hasAccess = true;
             if (!hasAccess) return res.status(403).json({ error: 'Access denied' });
 
@@ -135,7 +146,10 @@ class VideoController {
             const { videoId } = req.params;
             const userId = req.user.id; // From authMiddleware
 
-            const signedUrl = await videoService.getSignedVideoUrl(userId, videoId);
+            const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+            const host = req.headers['x-forwarded-host'] || req.get('host');
+            const baseUrl = `${protocol}://${host}`;
+            const signedUrl = await videoService.getSignedVideoUrl(userId, videoId, baseUrl);
             res.json({ url: signedUrl });
         } catch (error) {
             console.error('Error getting signed URL:', error);
@@ -191,10 +205,11 @@ class VideoController {
                 return res.status(404).send('Video not in R2');
             }
 
-            let hasAccess = video.owner_id === userId || await videoService.checkPermission(userId, videoId);
+            const isOwnerOrManager = await videoService.isOwnerOrManager(userId, videoId);
+            let hasAccess = isOwnerOrManager || await videoService.checkPermission(userId, videoId);
             if (!hasAccess && video.is_preview) hasAccess = true;
             if (!hasAccess) return res.status(403).send('Access denied');
-            if (video.owner_id !== userId && video.status === 'inactive') return res.status(403).send('Access denied');
+            if (!isOwnerOrManager && video.status === 'inactive') return res.status(403).send('Access denied');
 
             // For students, check if video is locked
             if (role === 'student') {
@@ -213,6 +228,32 @@ class VideoController {
             if (error.name === 'NoSuchKey' || error.$metadata?.httpStatusCode === 404) {
                 return res.status(404).send('Not found');
             }
+            res.status(500).send('Internal server error');
+        }
+    }
+    async getThumbnail(req, res) {
+        try {
+            const { videoId } = req.params;
+            const userId = req.user.id;
+
+            const video = await videoService.getVideoById(videoId);
+            if (!video) return res.status(404).send('Not found');
+            if (!video.thumbnail_r2_key) return res.status(404).send('No thumbnail');
+
+            const isOwnerOrManager = await videoService.isOwnerOrManager(userId, videoId);
+            let hasAccess = isOwnerOrManager || await videoService.checkPermission(userId, videoId);
+            if (!hasAccess && video.is_preview) hasAccess = true;
+            if (!hasAccess) return res.status(403).send('Access denied');
+
+            const stream = await r2Storage.getObjectStream(video.thumbnail_r2_key);
+            res.set('Content-Type', 'image/jpeg');
+            res.set('Cache-Control', 'public, max-age=86400');
+            stream.pipe(res);
+        } catch (error) {
+            if (error.name === 'NoSuchKey' || error.$metadata?.httpStatusCode === 404) {
+                return res.status(404).send('Not found');
+            }
+            console.error('Get thumbnail error:', error);
             res.status(500).send('Internal server error');
         }
     }
