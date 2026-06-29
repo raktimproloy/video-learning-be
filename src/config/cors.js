@@ -1,16 +1,16 @@
 /**
- * Strict CORS allowlist. Only these origins are allowed for API and media.
- * Include both with and without trailing slash; browser Origin is usually without slash.
+ * CORS allowlist for REST API, media streams, and Socket.io.
+ *
+ * Env:
+ *   FRONTEND_URL          — primary site (e.g. https://shikkhabhumi.com)
+ *   CORS_EXTRA_ORIGINS    — comma-separated extra origins (Vercel preview URL, etc.)
  */
-const CORS_ALLOWED_ORIGINS = [
+
+const DEFAULT_ORIGINS = [
     'https://shikkhabhumi.com',
-    'https://shikkhabhumi.com/',
-    'http://shikkhabhumi.com',
-    'http://shikkhabhumi.com/',
     'https://www.shikkhabhumi.com',
-    'https://www.shikkhabhumi.com/',
+    'http://shikkhabhumi.com',
     'http://www.shikkhabhumi.com',
-    'http://www.shikkhabhumi.com/',
     'https://principal.shikkhabhumi.com',
     'http://principal.shikkhabhumi.com',
     'http://localhost:3000',
@@ -21,13 +21,75 @@ const CORS_ALLOWED_ORIGINS = [
     'http://127.0.0.1:3002',
 ];
 
-/**
- * Returns the request Origin if it is in the allowlist; otherwise null.
- * Use when setting Access-Control-Allow-Origin on specific responses (e.g. media streams).
- */
-function getAllowedOrigin(origin) {
-    if (!origin) return null;
-    return CORS_ALLOWED_ORIGINS.includes(origin) ? origin : null;
+/** Subdomain / preview patterns (HTTPS only for wildcards) */
+const WILDCARD_PATTERNS = [
+    /^https:\/\/[\w-]+\.vercel\.app$/i,
+    /^https:\/\/[\w-]+\.shikkhabhumi\.com$/i,
+];
+
+function normalizeOrigin(origin) {
+    if (!origin || typeof origin !== 'string') return null;
+    return origin.trim().replace(/\/$/, '');
 }
 
-module.exports = { CORS_ALLOWED_ORIGINS, getAllowedOrigin };
+function parseEnvOrigins() {
+    const list = [];
+    if (process.env.FRONTEND_URL) {
+        list.push(process.env.FRONTEND_URL);
+    }
+    if (process.env.CORS_EXTRA_ORIGINS) {
+        list.push(
+            ...process.env.CORS_EXTRA_ORIGINS.split(',')
+                .map((s) => s.trim())
+                .filter(Boolean),
+        );
+    }
+    return list.map(normalizeOrigin).filter(Boolean);
+}
+
+function buildAllowlistSet() {
+    const set = new Set();
+    for (const o of DEFAULT_ORIGINS) {
+        const n = normalizeOrigin(o);
+        if (n) set.add(n);
+    }
+    for (const o of parseEnvOrigins()) {
+        set.add(o);
+    }
+    return set;
+}
+
+let allowlistSet = buildAllowlistSet();
+
+function refreshAllowlist() {
+    allowlistSet = buildAllowlistSet();
+}
+
+function isOriginAllowed(origin) {
+    const normalized = normalizeOrigin(origin);
+    if (!normalized) return false;
+    if (allowlistSet.has(normalized)) return true;
+    return WILDCARD_PATTERNS.some((rx) => rx.test(normalized));
+}
+
+/**
+ * Returns normalized Origin if allowed, else null.
+ */
+function getAllowedOrigin(origin) {
+    const normalized = normalizeOrigin(origin);
+    if (!normalized || !isOriginAllowed(normalized)) return null;
+    return normalized;
+}
+
+/** For logging / debugging */
+function getAllowlistSnapshot() {
+    return [...allowlistSet];
+}
+
+module.exports = {
+    CORS_ALLOWED_ORIGINS: [...allowlistSet],
+    isOriginAllowed,
+    getAllowedOrigin,
+    getAllowlistSnapshot,
+    refreshAllowlist,
+};

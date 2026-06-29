@@ -45,23 +45,37 @@ const referenceRoutes = require('./routes/referenceRoutes');
 
 const app = express();
 
+// Behind nginx / Docker proxy
+app.set('trust proxy', 1);
+
 // Security Middleware - Configure Helmet to allow cross-origin images
 app.use(helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },
     crossOriginEmbedderPolicy: false,
 }));
 
-// CORS Middleware - Strict allowlist (see config/cors.js); only these origins for all API methods
-const { CORS_ALLOWED_ORIGINS } = require('./config/cors');
+// CORS — allowlist + Vercel/*.shikkhabhumi.com patterns (see config/cors.js)
+const { isOriginAllowed } = require('./config/cors');
 app.use(cors({
-    origin: (origin, cb) => {
-        if (!origin) return cb(null, true); // same-origin or server requests
-        if (CORS_ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    origin(origin, cb) {
+        // Server-to-server, curl, same-origin
+        if (!origin) return cb(null, true);
+        if (isOriginAllowed(origin)) return cb(null, origin);
+        console.warn('[CORS] Blocked origin:', origin);
         return cb(null, false);
     },
     credentials: false,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'Accept',
+        'Origin',
+        'X-Requested-With',
+    ],
+    exposedHeaders: ['Content-Length', 'Content-Type'],
+    maxAge: 86400,
+    optionsSuccessStatus: 204,
 }));
 
 // Logging Middleware

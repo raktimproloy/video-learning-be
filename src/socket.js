@@ -5,6 +5,7 @@ const lessonService = require('./services/lessonService');
 const courseService = require('./services/courseService');
 const liveWatchService = require('./services/liveWatchService');
 const liveSessionService = require('./services/liveSessionService');
+const { isOriginAllowed } = require('./config/cors');
 
 let io;
 const roomNotes = {}; // legacy in-memory notes (LiveNote)
@@ -33,7 +34,14 @@ async function attachRedisAdapter(socketServer) {
 const initSocket = (server) => {
     io = socketIo(server, {
         cors: {
-            origin: '*',
+            origin(origin, cb) {
+                if (!origin || isOriginAllowed(origin)) {
+                    cb(null, true);
+                } else {
+                    console.warn('[Socket.io CORS] Blocked origin:', origin);
+                    cb(new Error('CORS not allowed'), false);
+                }
+            },
             methods: ['GET', 'POST'],
         },
     });

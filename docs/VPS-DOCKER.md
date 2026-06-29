@@ -218,6 +218,7 @@ Update `docker/nginx.conf` upstream to list multiple `api` instances (Docker DNS
 | Worker not processing | `docker compose logs worker` — check R2 credentials |
 | 502 from nginx | Wait for api healthcheck; `docker compose ps` |
 | Socket.io fails | Ensure `NEXT_PUBLIC_SOCKET_URL` has no `/v1` suffix |
+| **CORS error in browser** | Set `FRONTEND_URL` + `CORS_EXTRA_ORIGINS` in API `.env`; redeploy API. Vercel `*.vercel.app` allowed by default |
 | Migrations fail | Run manually: `docker compose run --rm api node run_migrations.js` |
 
 ---
