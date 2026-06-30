@@ -248,56 +248,64 @@ class VideoService {
             throw new Error('Video not found');
         }
 
-        const isOwnerOrManager = await this.isOwnerOrManager(userId, videoId);
-
-        // Check access: User must be owner/manager OR have permission
-        let hasAccess = false;
-        if (isOwnerOrManager) {
-            hasAccess = true;
-        } else {
-            hasAccess = await this.checkPermission(userId, videoId);
-        }
-
-        // Allow any logged-in user to watch preview videos (no enrollment required)
-        if (!hasAccess && video.is_preview) {
-            hasAccess = true;
-        }
-        if (!hasAccess) {
-            throw new Error('Access denied');
-        }
-
-        // Non-owners cannot access inactive videos
-        if (!isOwnerOrManager && video.status === 'inactive') {
-            throw new Error('Access denied');
-        }
-
-        // Non-owners: course and lesson must be active (draft/inactive hidden from students)
-        if (!isOwnerOrManager && video.lesson_id) {
-            const courseLessonCheck = await db.query(
-                `SELECT 1 FROM lessons l
-                 JOIN courses c ON l.course_id = c.id
-                 WHERE l.id = $1 AND (COALESCE(c.status, 'active') = 'active') AND (COALESCE(l.status, 'active') = 'active')`,
-                [video.lesson_id]
-            );
-            if (courseLessonCheck.rows.length === 0) {
+        // Guest (not logged in): only preview videos allowed
+        if (!userId) {
+            if (!video.is_preview) {
                 throw new Error('Access denied');
             }
-        }
+            // Skip all user-specific checks for guests
+        } else {
+            const isOwnerOrManager = await this.isOwnerOrManager(userId, videoId);
 
-        // Increment view count when a non-owner (e.g. student) requests playback
-        if (video.owner_id !== userId) {
-            await db.query(
-                'UPDATE videos SET view_count = COALESCE(view_count, 0) + 1 WHERE id = $1',
-                [videoId]
-            ).catch(() => { /* ignore if column missing */ });
-        }
+            // Check access: User must be owner/manager OR have permission
+            let hasAccess = false;
+            if (isOwnerOrManager) {
+                hasAccess = true;
+            } else {
+                hasAccess = await this.checkPermission(userId, videoId);
+            }
 
-        // For students, check if video is locked
-        const userRole = await db.query('SELECT role FROM users WHERE id = $1', [userId]);
-        if (userRole.rows.length > 0 && userRole.rows[0].role === 'student') {
-            const isLocked = await this.isVideoLockedForStudent(userId, videoId);
-            if (isLocked) {
-                throw new Error('Video is locked. Complete the required assignment from the previous video/lesson to unlock.');
+            // Allow any logged-in user to watch preview videos (no enrollment required)
+            if (!hasAccess && video.is_preview) {
+                hasAccess = true;
+            }
+            if (!hasAccess) {
+                throw new Error('Access denied');
+            }
+
+            // Non-owners cannot access inactive videos
+            if (!isOwnerOrManager && video.status === 'inactive') {
+                throw new Error('Access denied');
+            }
+
+            // Non-owners: course and lesson must be active (draft/inactive hidden from students)
+            if (!isOwnerOrManager && video.lesson_id) {
+                const courseLessonCheck = await db.query(
+                    `SELECT 1 FROM lessons l
+                     JOIN courses c ON l.course_id = c.id
+                     WHERE l.id = $1 AND (COALESCE(c.status, 'active') = 'active') AND (COALESCE(l.status, 'active') = 'active')`,
+                    [video.lesson_id]
+                );
+                if (courseLessonCheck.rows.length === 0) {
+                    throw new Error('Access denied');
+                }
+            }
+
+            // Increment view count when a non-owner (e.g. student) requests playback
+            if (video.owner_id !== userId) {
+                await db.query(
+                    'UPDATE videos SET view_count = COALESCE(view_count, 0) + 1 WHERE id = $1',
+                    [videoId]
+                ).catch(() => { /* ignore if column missing */ });
+            }
+
+            // For students, check if video is locked
+            const userRole = await db.query('SELECT role FROM users WHERE id = $1', [userId]);
+            if (userRole.rows.length > 0 && userRole.rows[0].role === 'student') {
+                const isLocked = await this.isVideoLockedForStudent(userId, videoId);
+                if (isLocked) {
+                    throw new Error('Video is locked. Complete the required assignment from the previous video/lesson to unlock.');
+                }
             }
         }
 
@@ -316,6 +324,15 @@ class VideoService {
         const video = await this.getVideoById(videoId);
         if (!video) {
              throw new Error('Video not found');
+        }
+
+        // Guest (no token): only preview videos allowed
+        if (!userId) {
+            if (!video.is_preview) {
+                throw new Error('Access denied');
+            }
+            // Skip permission checks — go straight to key retrieval
+            return keyStorage.getKey(videoId);
         }
 
         const isOwnerOrManager = await this.isOwnerOrManager(userId, videoId);

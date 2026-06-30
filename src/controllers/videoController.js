@@ -14,12 +14,35 @@ class VideoController {
     async getVideoDetails(req, res) {
         try {
             const { videoId } = req.params;
-            const userId = req.user.id;
-            const role = req.user.role;
+            const userId = req.user?.id ?? null;
+            const role = req.user?.role ?? 'guest';
 
             const video = await videoService.getVideoById(videoId);
             if (!video) {
                 return res.status(404).json({ error: 'Video not found' });
+            }
+
+            // Guest (no token): only preview videos are accessible
+            if (!userId) {
+                if (!video.is_preview) {
+                    return res.status(401).json({ error: 'Authentication required' });
+                }
+                // Return safe minimal info for guests
+                const guestResult = {
+                    id: video.id,
+                    title: video.title,
+                    description: video.description,
+                    duration_seconds: video.duration_seconds,
+                    order: video.order,
+                    lesson_id: video.lesson_id,
+                    source_type: video.source_type,
+                    notes: [],
+                    assignments: [],
+                    isPreview: true,
+                    isLocked: false,
+                    thumbnail_url: null,
+                };
+                return res.json(guestResult);
             }
 
             const isOwnerOrManager = await videoService.isOwnerOrManager(userId, videoId);
@@ -152,7 +175,14 @@ class VideoController {
     async getSignedUrl(req, res) {
         try {
             const { videoId } = req.params;
-            const userId = req.user.id; // From authMiddleware
+            const userId = req.user?.id ?? null;
+
+            // Guests can only get signed URL for preview videos
+            if (!userId) {
+                const video = await videoService.getVideoById(videoId);
+                if (!video) return res.status(404).json({ error: 'Video not found' });
+                if (!video.is_preview) return res.status(401).json({ error: 'Authentication required' });
+            }
 
             let baseUrl = process.env.BASE_URL || process.env.API_URL;
             if (baseUrl) {
@@ -185,10 +215,21 @@ class VideoController {
     async getKey(req, res) {
         try {
             const vid = req.query.vid || req.query.id;
-            const userId = req.user.id;
-            const role = req.user.role;
+            const userId = req.user?.id ?? null;
+            const role = req.user?.role ?? 'guest';
             if (!vid) return res.status(400).json({ error: 'Missing video ID (vid or id)' });
-            
+
+            // For guests: only allow key for preview videos
+            if (!userId) {
+                const video = await videoService.getVideoById(vid);
+                if (!video) return res.status(404).send('Video not found');
+                if (!video.is_preview) return res.status(401).send('Authentication required');
+                // Guest can get the key — skip straight to key retrieval
+                const key = await videoService.getVideoKey(null, vid);
+                res.set('Content-Type', 'application/octet-stream');
+                return res.send(key);
+            }
+
             // For students, check if video is locked before providing key
             if (role === 'student') {
                 const isLocked = await videoService.isVideoLockedForStudent(userId, vid);
@@ -196,7 +237,7 @@ class VideoController {
                     return res.status(403).send('Video is locked. Complete the required assignment from the previous video/lesson to unlock.');
                 }
             }
-            
+
             const key = await videoService.getVideoKey(userId, vid);
             res.set('Content-Type', 'application/octet-stream');
             res.send(key);
@@ -212,8 +253,8 @@ class VideoController {
         try {
             const videoId = req.params.videoId;
             const subpath = req.params.path || req.params[0] || 'master.m3u8';
-            const userId = req.user.id;
-            const role = req.user.role;
+            const userId = req.user?.id ?? null;
+            const role = req.user?.role ?? 'guest';
 
             const video = await videoService.getVideoById(videoId);
             if (!video) return res.status(404).send('Video not found');
@@ -221,17 +262,22 @@ class VideoController {
                 return res.status(404).send('Video not in R2');
             }
 
-            const isOwnerOrManager = await videoService.isOwnerOrManager(userId, videoId);
-            let hasAccess = isOwnerOrManager || await videoService.checkPermission(userId, videoId);
-            if (!hasAccess && video.is_preview) hasAccess = true;
-            if (!hasAccess) return res.status(403).send('Access denied');
-            if (!isOwnerOrManager && video.status === 'inactive') return res.status(403).send('Access denied');
+            // Guest: only preview videos allowed
+            if (!userId) {
+                if (!video.is_preview) return res.status(401).send('Authentication required');
+            } else {
+                const isOwnerOrManager = await videoService.isOwnerOrManager(userId, videoId);
+                let hasAccess = isOwnerOrManager || await videoService.checkPermission(userId, videoId);
+                if (!hasAccess && video.is_preview) hasAccess = true;
+                if (!hasAccess) return res.status(403).send('Access denied');
+                if (!isOwnerOrManager && video.status === 'inactive') return res.status(403).send('Access denied');
 
-            // For students, check if video is locked
-            if (role === 'student') {
-                const isLocked = await videoService.isVideoLockedForStudent(userId, videoId);
-                if (isLocked) {
-                    return res.status(403).send('Video is locked. Complete the required assignment from the previous video/lesson to unlock.');
+                // For students, check if video is locked
+                if (role === 'student') {
+                    const isLocked = await videoService.isVideoLockedForStudent(userId, videoId);
+                    if (isLocked) {
+                        return res.status(403).send('Video is locked. Complete the required assignment from the previous video/lesson to unlock.');
+                    }
                 }
             }
 
