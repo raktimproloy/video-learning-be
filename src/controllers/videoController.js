@@ -51,9 +51,17 @@ class VideoController {
             }
 
             // Build thumbnail URL
-            const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-            const host = req.headers['x-forwarded-host'] || req.get('host');
-            const baseUrl = `${protocol}://${host}`;
+            let baseUrl = process.env.BASE_URL || process.env.API_URL;
+            if (baseUrl) {
+                baseUrl = baseUrl.replace(/\/v1\/?$/, '');
+            } else {
+                let protocol = req.headers['x-forwarded-proto'] || req.protocol;
+                if (typeof protocol === 'string' && protocol.includes(',')) protocol = protocol.split(',')[0].trim();
+                let host = req.headers['x-forwarded-host'] || req.get('host');
+                if (typeof host === 'string' && host.includes(',')) host = host.split(',')[0].trim();
+                if (process.env.NODE_ENV === 'production' && !host.includes('localhost')) protocol = 'https';
+                baseUrl = `${protocol}://${host}`;
+            }
             if (video.thumbnail_r2_key) {
                 result.thumbnail_url = `${baseUrl}/v1/video/${videoId}/thumbnail`;
             } else {
@@ -146,9 +154,17 @@ class VideoController {
             const { videoId } = req.params;
             const userId = req.user.id; // From authMiddleware
 
-            const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-            const host = req.headers['x-forwarded-host'] || req.get('host');
-            const baseUrl = `${protocol}://${host}`;
+            let baseUrl = process.env.BASE_URL || process.env.API_URL;
+            if (baseUrl) {
+                baseUrl = baseUrl.replace(/\/v1\/?$/, '');
+            } else {
+                let protocol = req.headers['x-forwarded-proto'] || req.protocol;
+                if (typeof protocol === 'string' && protocol.includes(',')) protocol = protocol.split(',')[0].trim();
+                let host = req.headers['x-forwarded-host'] || req.get('host');
+                if (typeof host === 'string' && host.includes(',')) host = host.split(',')[0].trim();
+                if (process.env.NODE_ENV === 'production' && !host.includes('localhost')) protocol = 'https';
+                baseUrl = `${protocol}://${host}`;
+            }
             const signedUrl = await videoService.getSignedVideoUrl(userId, videoId, baseUrl);
             res.json({ url: signedUrl });
         } catch (error) {
