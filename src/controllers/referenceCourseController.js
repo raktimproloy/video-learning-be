@@ -25,7 +25,7 @@ class ReferenceCourseController {
             }
 
             const { title, description, order, isPreview, status: reqStatus, notes, assignments } = req.body;
-            const status = reqStatus === 'active' ? 'active' : 'draft';
+            const status = reqStatus || 'draft';
 
             let parsedNotes = [];
             let parsedAssignments = [];
@@ -88,7 +88,7 @@ class ReferenceCourseController {
                     isPreview === 'true' || isPreview === true,
                     JSON.stringify(parsedNotes),
                     JSON.stringify(parsedAssignments),
-                    status || 'active',
+                    status || 'draft',
                     'upload',
                     'pending', // storage_path (dummy value since marketer doesn't upload video)
                     'pending'  // signing_secret (dummy value)

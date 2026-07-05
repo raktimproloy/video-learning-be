@@ -19,25 +19,31 @@ class AdminSettingsService {
             ourStudentPercent: parseFloat(row.our_student_percent) || 0,
             teacherStudentPercent: parseFloat(row.teacher_student_percent) || 0,
             liveCoursesPercent: parseFloat(row.live_courses_percent) || 0,
+            referencePercent: parseFloat(row.reference_percent) || 0,
+            referenceTeacherPercent: parseFloat(row.reference_teacher_percent) || 0,
         };
     }
 
     /** Update share percentages. Admin ID saved for audit. */
     async updateShareSettings(adminId, data) {
-        const { ourStudentPercent, teacherStudentPercent, liveCoursesPercent } = data;
+        const { ourStudentPercent, teacherStudentPercent, liveCoursesPercent, referencePercent, referenceTeacherPercent } = data;
         const result = await db.query(
             `UPDATE admin_share_settings SET
                 our_student_percent = COALESCE($1, our_student_percent),
                 teacher_student_percent = COALESCE($2, teacher_student_percent),
                 live_courses_percent = COALESCE($3, live_courses_percent),
-                updated_by_admin_id = $4,
+                reference_percent = COALESCE($4, reference_percent),
+                reference_teacher_percent = COALESCE($5, reference_teacher_percent),
+                updated_by_admin_id = $6,
                 updated_at = NOW()
-             WHERE id = $5
+             WHERE id = $7
              RETURNING *`,
             [
                 ourStudentPercent != null ? parseFloat(ourStudentPercent) : null,
                 teacherStudentPercent != null ? parseFloat(teacherStudentPercent) : null,
                 liveCoursesPercent != null ? parseFloat(liveCoursesPercent) : null,
+                referencePercent != null ? parseFloat(referencePercent) : null,
+                referenceTeacherPercent != null ? parseFloat(referenceTeacherPercent) : null,
                 adminId,
                 ROW_ID,
             ]
@@ -47,6 +53,8 @@ class AdminSettingsService {
             ourStudentPercent: parseFloat(row.our_student_percent) || 0,
             teacherStudentPercent: parseFloat(row.teacher_student_percent) || 0,
             liveCoursesPercent: parseFloat(row.live_courses_percent) || 0,
+            referencePercent: parseFloat(row.reference_percent) || 0,
+            referenceTeacherPercent: parseFloat(row.reference_teacher_percent) || 0,
         } : null;
     }
 
@@ -364,7 +372,7 @@ class AdminSettingsService {
             this.getLiveSettings(),
         ]);
         return {
-            share: shareRes || { ourStudentPercent: 0, teacherStudentPercent: 0, liveCoursesPercent: 0 },
+            share: shareRes || { ourStudentPercent: 0, teacherStudentPercent: 0, liveCoursesPercent: 0, referencePercent: 10, referenceTeacherPercent: 40 },
             coupons: couponRes.rows.map(this.mapCouponRow),
             discounts: discountRes.rows.map(this.mapDiscountRow),
             live: liveRes || { liveClassEnabled: true, agoraEnabled: true, streamEnabled: false, hundredMsEnabled: true, awsIvsEnabled: false, youtubeEnabled: true },

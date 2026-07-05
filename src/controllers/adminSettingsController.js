@@ -9,7 +9,7 @@ module.exports = {
     async getShareSettings(req, res) {
         try {
             const settings = await adminSettingsService.getShareSettings();
-            res.json(settings || { ourStudentPercent: 0, teacherStudentPercent: 0, liveCoursesPercent: 0 });
+            res.json(settings || { ourStudentPercent: 0, teacherStudentPercent: 0, liveCoursesPercent: 0, referencePercent: 10, referenceTeacherPercent: 40 });
         } catch (error) {
             console.error('Get share settings error:', error);
             res.status(500).json({ error: 'Internal server error' });
@@ -19,11 +19,13 @@ module.exports = {
     async updateShareSettings(req, res) {
         try {
             const adminId = getAdminId(req);
-            const { ourStudentPercent, teacherStudentPercent, liveCoursesPercent } = req.body || {};
+            const { ourStudentPercent, teacherStudentPercent, liveCoursesPercent, referencePercent, referenceTeacherPercent } = req.body || {};
             const settings = await adminSettingsService.updateShareSettings(adminId, {
                 ourStudentPercent,
                 teacherStudentPercent,
                 liveCoursesPercent,
+                referencePercent,
+                referenceTeacherPercent,
             });
             res.json(settings);
         } catch (error) {

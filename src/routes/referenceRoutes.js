@@ -3,6 +3,7 @@ const { body } = require('express-validator');
 const referenceAuthController = require('../controllers/referenceAuthController');
 const referenceDashboardController = require('../controllers/referenceDashboardController');
 const referenceCourseController = require('../controllers/referenceCourseController');
+const referencePaymentController = require('../controllers/referencePaymentController');
 const verifyToken = require('../middleware/authMiddleware');
 
 const restrictTo = (role) => {
@@ -37,6 +38,16 @@ router.get('/dashboard/teachers', referenceDashboardController.getTeachers);
 router.get('/dashboard/courses', referenceDashboardController.getCourses);
 router.get('/dashboard/students', referenceDashboardController.getStudents);
 router.get('/dashboard/earnings', referenceDashboardController.getEarnings);
+
+// --- Payment & Withdraw Routes ---
+router.get('/dashboard/payment-methods', referencePaymentController.listPaymentMethods);
+router.post('/dashboard/payment-methods', referencePaymentController.addPaymentMethod);
+router.patch('/dashboard/payment-methods/:id', referencePaymentController.updatePaymentMethod);
+router.delete('/dashboard/payment-methods/:id', referencePaymentController.deletePaymentMethod);
+
+router.get('/dashboard/withdraw-requests', referencePaymentController.listWithdrawRequests);
+router.post('/dashboard/withdraw-requests', referencePaymentController.createWithdrawRequest);
+router.get('/dashboard/withdraw-requests/:id', referencePaymentController.getWithdrawRequest);
 
 // --- Course Editing Routes ---
 router.post('/dashboard/courses', referenceCourseController.createCourse);
