@@ -18,8 +18,10 @@ class AdminMarketersService {
                 m.referral_code,
                 m.total_earnings,
                 m.withdrawn_amount,
-                m.created_at
+                m.created_at,
+                c.custom_percent
              FROM marketers m
+             LEFT JOIN custom_user_percentages c ON c.user_id = m.id AND c.user_type = 'marketer'
              ${whereClause}
              ORDER BY m.created_at DESC
              LIMIT $1 OFFSET $2`,
@@ -43,6 +45,7 @@ class AdminMarketersService {
             totalEarnings: parseFloat(row.total_earnings) || 0,
             withdrawnAmount: parseFloat(row.withdrawn_amount) || 0,
             joinedAt: row.created_at,
+            customPercent: row.custom_percent !== null ? parseFloat(row.custom_percent) : null,
         }));
 
         return { marketers, total };
@@ -59,8 +62,10 @@ class AdminMarketersService {
                 m.total_earnings,
                 m.withdrawn_amount,
                 m.payment_methods,
-                m.created_at
+                m.created_at,
+                c.custom_percent
              FROM marketers m
+             LEFT JOIN custom_user_percentages c ON c.user_id = m.id AND c.user_type = 'marketer'
              WHERE m.id = $1`,
             [id]
         );
@@ -77,6 +82,7 @@ class AdminMarketersService {
             withdrawnAmount: parseFloat(row.withdrawn_amount) || 0,
             paymentMethods: row.payment_methods || [],
             joinedAt: row.created_at,
+            customPercent: row.custom_percent !== null ? parseFloat(row.custom_percent) : null,
         };
     }
 
@@ -112,6 +118,28 @@ class AdminMarketersService {
         }
         
         return { message: 'Marketer profile deleted successfully' };
+    }
+
+    async updatePercentage(id, customPercent, adminId) {
+        if (customPercent === null || customPercent === undefined) {
+            // Remove custom percentage
+            await db.query(
+                `DELETE FROM custom_user_percentages WHERE user_id = $1 AND user_type = 'marketer'`,
+                [id]
+            );
+        } else {
+            // Set or update custom percentage
+            await db.query(
+                `INSERT INTO custom_user_percentages (user_type, user_id, custom_percent, set_by_admin_id, updated_at)
+                 VALUES ('marketer', $1, $2, $3, NOW())
+                 ON CONFLICT (user_type, user_id) DO UPDATE SET 
+                    custom_percent = EXCLUDED.custom_percent,
+                    set_by_admin_id = EXCLUDED.set_by_admin_id,
+                    updated_at = EXCLUDED.updated_at`,
+                [id, customPercent, adminId]
+            );
+        }
+        return this.getById(id);
     }
 }
 

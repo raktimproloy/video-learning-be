@@ -39,4 +39,13 @@ router.delete(
     adminMarketersController.deleteMarketer
 );
 
+router.put(
+    '/:id/percentage',
+    [
+        check('id', 'Marketer User ID is required').isUUID(),
+        check('customPercent', 'Must be a valid percentage or null').optional({ nullable: true }).isFloat({ min: 0, max: 100 })
+    ],
+    adminMarketersController.updatePercentage
+);
+
 module.exports = router;

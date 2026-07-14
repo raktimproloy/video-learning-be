@@ -58,3 +58,19 @@ exports.deleteMarketer = async (req, res, next) => {
         next(err);
     }
 };
+
+exports.updatePercentage = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const { customPercent } = req.body; // can be null/undefined to clear
+        const adminId = req.user?.id || req.admin?.id;
+        
+        const updated = await adminMarketersService.updatePercentage(id, customPercent, adminId);
+        res.json(updated);
+    } catch (err) {
+        if (err.message === 'Marketer profile not found') {
+            return res.status(404).json({ error: err.message });
+        }
+        next(err);
+    }
+};

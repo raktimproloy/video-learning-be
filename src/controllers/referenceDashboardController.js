@@ -10,15 +10,22 @@ class ReferenceDashboardController {
             const profile = profileRes.rows[0];
             if (!profile) return res.status(404).json({ error: 'Profile not found' });
 
-            // Total teachers referred
-            const teacherRes = await db.query('SELECT COUNT(*) as count FROM teacher_profiles WHERE referred_by = $1', [marketerId]);
+            // Total teachers referred or connected
+            const teacherRes = await db.query(`
+                SELECT COUNT(DISTINCT u.id) as count 
+                FROM users u
+                JOIN teacher_profiles tp ON u.id = tp.user_id
+                LEFT JOIN teacher_reference_connections trc ON trc.teacher_id = u.id AND trc.marketer_id = $1
+                WHERE tp.referred_by = $1 OR trc.id IS NOT NULL
+            `, [marketerId]);
             const totalTeachers = parseInt(teacherRes.rows[0].count) || 0;
 
             // Total courses by these teachers
             const courseRes = await db.query(
-                `SELECT COUNT(*) as count FROM courses c
+                `SELECT COUNT(DISTINCT c.id) as count FROM courses c
                  JOIN teacher_profiles tp ON c.teacher_id = tp.user_id
-                 WHERE tp.referred_by = $1`, [marketerId]
+                 LEFT JOIN teacher_reference_connections trc ON trc.teacher_id = tp.user_id AND trc.marketer_id = $1
+                 WHERE tp.referred_by = $1 OR trc.id IS NOT NULL`, [marketerId]
             );
             const totalCourses = parseInt(courseRes.rows[0].count) || 0;
 
@@ -27,7 +34,8 @@ class ReferenceDashboardController {
                 `SELECT COUNT(DISTINCT ce.user_id) as count FROM course_enrollments ce
                  JOIN courses c ON ce.course_id = c.id
                  JOIN teacher_profiles tp ON c.teacher_id = tp.user_id
-                 WHERE tp.referred_by = $1`, [marketerId]
+                 LEFT JOIN teacher_reference_connections trc ON trc.teacher_id = tp.user_id AND trc.marketer_id = $1
+                 WHERE tp.referred_by = $1 OR trc.id IS NOT NULL`, [marketerId]
             );
             const totalStudents = parseInt(studentRes.rows[0].count) || 0;
 
@@ -68,19 +76,23 @@ class ReferenceDashboardController {
             }
 
             const countQuery = `
-                 SELECT COUNT(*) FROM users u
+                 SELECT COUNT(DISTINCT u.id) FROM users u
                  JOIN teacher_profiles tp ON u.id = tp.user_id
-                 WHERE tp.referred_by = $1 ${searchCondition}`;
+                 LEFT JOIN teacher_reference_connections trc ON trc.teacher_id = u.id AND trc.marketer_id = $1
+                 WHERE (tp.referred_by = $1 OR trc.id IS NOT NULL) ${searchCondition}`;
             
             const totalRes = await db.query(countQuery, queryParams);
             const total = parseInt(totalRes.rows[0].count);
 
             let dataQuery = `
-                 SELECT u.id, u.email, tp.name, tp.original_phone as phone, tp.created_at,
+                 SELECT DISTINCT u.id, u.email, tp.name, tp.original_phone as phone, tp.created_at,
+                 COALESCE(trc.shared_percent, 0) as shared_percent,
+                 (tp.referred_by = $1) as is_referred,
                  (SELECT COUNT(*) FROM courses c WHERE c.teacher_id = u.id) as course_count
                  FROM users u
                  JOIN teacher_profiles tp ON u.id = tp.user_id
-                 WHERE tp.referred_by = $1 ${searchCondition}
+                 LEFT JOIN teacher_reference_connections trc ON trc.teacher_id = u.id AND trc.marketer_id = $1
+                 WHERE (tp.referred_by = $1 OR trc.id IS NOT NULL) ${searchCondition}
                  ORDER BY tp.created_at DESC
                  LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
             
@@ -108,7 +120,7 @@ class ReferenceDashboardController {
             const offset = (page - 1) * limit;
 
             let queryParams = [marketerId];
-            let conditions = 'tp.referred_by = $1';
+            let conditions = '(tp.referred_by = $1 OR trc.id IS NOT NULL)';
             
             if (search) {
                 queryParams.push(`%${search}%`);
@@ -120,18 +132,20 @@ class ReferenceDashboardController {
             }
 
             const countQuery = `
-                 SELECT COUNT(*) FROM courses c
+                 SELECT COUNT(DISTINCT c.id) FROM courses c
                  JOIN teacher_profiles tp ON c.teacher_id = tp.user_id
+                 LEFT JOIN teacher_reference_connections trc ON trc.teacher_id = tp.user_id AND trc.marketer_id = $1
                  WHERE ${conditions}`;
             
             const totalRes = await db.query(countQuery, queryParams);
             const total = parseInt(totalRes.rows[0].count);
 
             const dataQuery = `
-                 SELECT c.id, c.title, c.price, c.discount_price, c.status, c.created_at, tp.name as teacher_name,
+                 SELECT DISTINCT c.id, c.title, c.price, c.discount_price, c.status, c.created_at, tp.name as teacher_name,
                  (SELECT COUNT(*) FROM course_enrollments ce WHERE ce.course_id = c.id) as enrollments
                  FROM courses c
                  JOIN teacher_profiles tp ON c.teacher_id = tp.user_id
+                 LEFT JOIN teacher_reference_connections trc ON trc.teacher_id = tp.user_id AND trc.marketer_id = $1
                  WHERE ${conditions}
                  ORDER BY c.created_at DESC
                  LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
@@ -161,7 +175,7 @@ class ReferenceDashboardController {
             const offset = (page - 1) * limit;
 
             let queryParams = [marketerId];
-            let conditions = 'tp.referred_by = $1';
+            let conditions = '(tp.referred_by = $1 OR trc.id IS NOT NULL)';
             
             if (search) {
                 queryParams.push(`%${search}%`);
@@ -182,6 +196,7 @@ class ReferenceDashboardController {
                  JOIN courses c ON ce.course_id = c.id
                  LEFT JOIN student_profiles sp ON u.id = sp.user_id
                  JOIN teacher_profiles tp ON c.teacher_id = tp.user_id
+                 LEFT JOIN teacher_reference_connections trc ON trc.teacher_id = tp.user_id AND trc.marketer_id = $1
                  WHERE ${conditions}`;
             
             const totalRes = await db.query(countQuery, queryParams);
@@ -195,6 +210,7 @@ class ReferenceDashboardController {
                  LEFT JOIN student_profiles sp ON u.id = sp.user_id
                  LEFT JOIN course_commissions cc ON cc.course_id = c.id AND cc.student_id = u.id
                  JOIN teacher_profiles tp ON c.teacher_id = tp.user_id
+                 LEFT JOIN teacher_reference_connections trc ON trc.teacher_id = tp.user_id AND trc.marketer_id = $1
                  WHERE ${conditions}
                  ORDER BY ce.enrolled_at DESC
                  LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;

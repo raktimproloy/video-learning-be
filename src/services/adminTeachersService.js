@@ -85,9 +85,11 @@ class AdminTeachersService {
                 tp.linkedin_url,
                 (SELECT COUNT(*)::int FROM courses c WHERE c.teacher_id = u.id) as course_count,
                 (SELECT COUNT(DISTINCT ce.user_id)::int FROM course_enrollments ce
-                 JOIN courses c ON ce.course_id = c.id WHERE c.teacher_id = u.id) as student_count
+                 JOIN courses c ON ce.course_id = c.id WHERE c.teacher_id = u.id) as student_count,
+                c.custom_percent
              FROM users u
              LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
+             LEFT JOIN custom_user_percentages c ON c.user_id = u.id AND c.user_type = 'teacher'
              WHERE u.id = $1 AND (u.role = 'teacher' OR tp.user_id IS NOT NULL)`,
             [id]
         );
@@ -117,6 +119,7 @@ class AdminTeachersService {
             students: parseInt(row.student_count, 10) || 0,
             rating: avgRating,
             reviewCount,
+            customPercent: row.custom_percent !== null ? parseFloat(row.custom_percent) : null,
             joinedAt: row.created_at,
         };
     }

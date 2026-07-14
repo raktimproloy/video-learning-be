@@ -1625,30 +1625,71 @@ class CourseService {
                 const teacherId = courseRes.rows[0]?.teacher_id;
                 
                 if (teacherId) {
-                    // Get teacher referred_by
-                    const teacherRes = await db.query('SELECT referred_by FROM teacher_profiles WHERE user_id = $1', [teacherId]);
-                    const marketerId = teacherRes.rows[0]?.referred_by;
+                    // 1. Get teacher referred_by and custom percent
+                    const teacherRes = await db.query(`
+                        SELECT 
+                            tp.referred_by,
+                            c.custom_percent as teacher_custom_percent
+                        FROM teacher_profiles tp
+                        LEFT JOIN custom_user_percentages c ON c.user_id = tp.user_id AND c.user_type = 'teacher'
+                        WHERE tp.user_id = $1
+                    `, [teacherId]);
                     
-                    // Get share settings
+                    let marketerId = teacherRes.rows[0]?.referred_by;
+                    let teacherPercent = teacherRes.rows[0]?.teacher_custom_percent !== null ? parseFloat(teacherRes.rows[0].teacher_custom_percent) : null;
+                    
+                    // 2. Check for manual connection in teacher_reference_connections
+                    const connRes = await db.query(`
+                        SELECT marketer_id, shared_percent 
+                        FROM teacher_reference_connections 
+                        WHERE teacher_id = $1
+                        ORDER BY connected_at DESC LIMIT 1
+                    `, [teacherId]);
+                    
+                    let sharedPercent = 0;
+                    if (connRes.rows[0]) {
+                        marketerId = connRes.rows[0].marketer_id; // overriding referred_by if a manual connection exists
+                        sharedPercent = parseFloat(connRes.rows[0].shared_percent) || 0;
+                    }
+
+                    // 3. Get marketer custom percent if marketer exists
+                    let marketerPercent = null;
+                    if (marketerId) {
+                        const mRes = await db.query(`
+                            SELECT custom_percent 
+                            FROM custom_user_percentages 
+                            WHERE user_id = $1 AND user_type = 'marketer'
+                        `, [marketerId]);
+                        if (mRes.rows[0] && mRes.rows[0].custom_percent !== null) {
+                            marketerPercent = parseFloat(mRes.rows[0].custom_percent);
+                        }
+                    }
+
+                    // 4. Get global share settings
                     const settingsRes = await db.query('SELECT teacher_student_percent, reference_percent, reference_teacher_percent FROM admin_share_settings LIMIT 1');
                     const settings = settingsRes.rows[0] || { teacher_student_percent: 50, reference_percent: 10, reference_teacher_percent: 40 };
                     
                     let siteCommission = 0;
                     let teacherCommission = 0;
                     let marketerCommission = 0;
-                    
+
                     if (marketerId) {
-                        // Marketer referred teacher
-                        marketerCommission = (amount * parseFloat(settings.reference_percent)) / 100;
-                        teacherCommission = (amount * parseFloat(settings.reference_teacher_percent)) / 100;
-                        siteCommission = amount - marketerCommission - teacherCommission;
+                        const finalMarketerPercent = marketerPercent !== null ? marketerPercent : parseFloat(settings.reference_percent);
+                        let finalTeacherPercent = teacherPercent !== null ? teacherPercent : parseFloat(settings.reference_teacher_percent);
                         
-                        // Update marketer earnings
+                        // Apply shared percent
+                        finalTeacherPercent = Math.max(0, finalTeacherPercent - sharedPercent);
+                        const effectiveMarketerPercent = finalMarketerPercent + sharedPercent;
+                        
+                        marketerCommission = (amount * effectiveMarketerPercent) / 100;
+                        teacherCommission = (amount * finalTeacherPercent) / 100;
+                        siteCommission = Math.max(0, amount - marketerCommission - teacherCommission);
+
                         await db.query('UPDATE marketers SET total_earnings = total_earnings + $1 WHERE id = $2', [marketerCommission, marketerId]);
                     } else {
-                        // Normal split
-                        teacherCommission = (amount * parseFloat(settings.teacher_student_percent)) / 100;
-                        siteCommission = amount - teacherCommission;
+                        const finalTeacherPercent = teacherPercent !== null ? teacherPercent : parseFloat(settings.teacher_student_percent);
+                        teacherCommission = (amount * finalTeacherPercent) / 100;
+                        siteCommission = Math.max(0, amount - teacherCommission);
                     }
                     
                     // Insert into course_commissions
