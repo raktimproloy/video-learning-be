@@ -23,6 +23,25 @@ const upload = multer({
 });
 
 class TeacherProfileController {
+    constructor() {
+        this.getPublicProfile = this.getPublicProfile.bind(this);
+        this.getProfile = this.getProfile.bind(this);
+        this.updateProfile = this.updateProfile.bind(this);
+        this.requestOTP = this.requestOTP.bind(this);
+        this.verifyOTP = this.verifyOTP.bind(this);
+        this.getProfileCompletion = this.getProfileCompletion.bind(this);
+        this.changePassword = this.changePassword.bind(this);
+        this.streamProfileImage = this.streamProfileImage.bind(this);
+    }
+
+    _workspaceTeacherId(req) {
+        return req.effectiveTeacherId || req.user.id;
+    }
+
+    _isTeacherActor(req) {
+        return req.user.role === 'teacher' || req.user.role === 'teacher_staff';
+    }
+
     /**
      * Get public teacher profile (no auth required)
      */
@@ -101,11 +120,11 @@ class TeacherProfileController {
      */
     async getProfile(req, res) {
         try {
-            if (req.user.role !== 'teacher') {
+            if (!this._isTeacherActor(req)) {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
 
-            const profile = await teacherProfileService.getProfile(req.user.id);
+            const profile = await teacherProfileService.getProfile(this._workspaceTeacherId(req));
 
             // Enrich profile image URL if exists
             if (profile.profile_image_path) {
@@ -143,7 +162,7 @@ class TeacherProfileController {
             }
 
             // Get completion percentage
-            const completion = await teacherProfileService.getProfileCompletion(req.user.id);
+            const completion = await teacherProfileService.getProfileCompletion(this._workspaceTeacherId(req));
             profile.completion = completion;
 
             res.json(profile);
@@ -158,7 +177,7 @@ class TeacherProfileController {
      */
     async updateProfile(req, res) {
         try {
-            if (req.user.role !== 'teacher') {
+            if (!this._isTeacherActor(req)) {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
 
@@ -208,7 +227,7 @@ class TeacherProfileController {
                     const file = req.files.profileImage[0];
                     const fileExtension = path.extname(file.originalname);
                     const fileName = `profile-${Date.now()}${fileExtension}`;
-                    const r2Key = `teachers/${req.user.id}/profile/${fileName}`;
+                    const r2Key = `teachers/${this._workspaceTeacherId(req)}/profile/${fileName}`;
                     
                     await r2Storage.uploadFile(r2Key, file.buffer, file.mimetype);
                     profileData.profile_image_path = r2Key;
@@ -218,7 +237,7 @@ class TeacherProfileController {
                 }
             }
 
-            const updatedProfile = await teacherProfileService.updateProfile(req.user.id, profileData);
+            const updatedProfile = await teacherProfileService.updateProfile(this._workspaceTeacherId(req), profileData);
 
             // Enrich profile image URL
             if (updatedProfile.profile_image_path) {
@@ -265,7 +284,7 @@ class TeacherProfileController {
                 else if (hasSkill) onboardingCategory = 'skill-based';
             }
             try {
-                await teacherProfileService.markOnboardingIfNeeded(req.user.id, {
+                await teacherProfileService.markOnboardingIfNeeded(this._workspaceTeacherId(req), {
                     role: 'teacher',
                     category: onboardingCategory,
                 });
@@ -285,7 +304,7 @@ class TeacherProfileController {
      */
     async requestOTP(req, res) {
         try {
-            if (req.user.role !== 'teacher') {
+            if (!this._isTeacherActor(req)) {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
 
@@ -301,7 +320,7 @@ class TeacherProfileController {
                 original_phone: original_phone?.trim?.(),
                 support_phone: support_phone?.trim?.(),
             };
-            const result = await teacherProfileService.requestOTP(req.user.id, type, payload);
+            const result = await teacherProfileService.requestOTP(this._workspaceTeacherId(req), type, payload);
             res.json(result);
         } catch (error) {
             console.error('Request OTP error:', error);
@@ -318,7 +337,7 @@ class TeacherProfileController {
      */
     async verifyOTP(req, res) {
         try {
-            if (req.user.role !== 'teacher') {
+            if (!this._isTeacherActor(req)) {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
 
@@ -332,7 +351,7 @@ class TeacherProfileController {
                 return res.status(400).json({ error: 'OTP is required' });
             }
 
-            const profile = await teacherProfileService.verifyOTP(req.user.id, type, otp);
+            const profile = await teacherProfileService.verifyOTP(this._workspaceTeacherId(req), type, otp);
             
             // Enrich profile image URL
             if (profile.profile_image_path) {
@@ -356,11 +375,11 @@ class TeacherProfileController {
      */
     async getProfileCompletion(req, res) {
         try {
-            if (req.user.role !== 'teacher') {
+            if (!this._isTeacherActor(req)) {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
 
-            const completion = await teacherProfileService.getProfileCompletion(req.user.id);
+            const completion = await teacherProfileService.getProfileCompletion(this._workspaceTeacherId(req));
             res.json(completion);
         } catch (error) {
             console.error('Get profile completion error:', error);
@@ -373,7 +392,7 @@ class TeacherProfileController {
      */
     async changePassword(req, res) {
         try {
-            if (req.user.role !== 'teacher') {
+            if (!this._isTeacherActor(req)) {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
 

@@ -1,5 +1,12 @@
 const userService = require('../services/userService');
 
+function roleAllowed(userRole, allowedRoles) {
+    if (allowedRoles.includes(userRole)) return true;
+    // Staff accounts operate in the teacher workspace
+    if (userRole === 'teacher_staff' && allowedRoles.includes('teacher')) return true;
+    return false;
+}
+
 const requireRole = (allowedRoles) => {
     return async (req, res, next) => {
         try {
@@ -11,7 +18,7 @@ const requireRole = (allowedRoles) => {
             }
 
             // Check if user's role is in allowed roles
-            if (!allowedRoles.includes(user.role)) {
+            if (!roleAllowed(user.role, allowedRoles)) {
                 return res.status(403).json({ 
                     error: `Access denied. This route requires one of these roles: ${allowedRoles.join(', ')}` 
                 });
@@ -27,4 +34,4 @@ const requireRole = (allowedRoles) => {
     };
 };
 
-module.exports = { requireRole };
+module.exports = { requireRole, roleAllowed };

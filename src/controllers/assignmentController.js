@@ -232,10 +232,7 @@ async function getWatchContext(req, res) {
  */
 async function listTeacherSubmissions(req, res) {
   try {
-    const teacherId = req.user.id;
-    if (req.user.role !== 'teacher') {
-      return res.status(403).json({ error: 'Teacher access required' });
-    }
+    const teacherId = req.effectiveTeacherId || req.user.id;
     const { courseId, status } = req.query;
     const list = await assignmentService.listTeacherSubmissions(teacherId, { courseId: courseId || undefined, status: status || undefined });
     res.json(list);
@@ -251,10 +248,7 @@ async function listTeacherSubmissions(req, res) {
  */
 async function getTeacherSubmissionById(req, res) {
   try {
-    const teacherId = req.user.id;
-    if (req.user.role !== 'teacher') {
-      return res.status(403).json({ error: 'Teacher access required' });
-    }
+    const teacherId = req.effectiveTeacherId || req.user.id;
     const { id } = req.params;
     const sub = await assignmentService.getSubmissionById(id, teacherId);
     if (!sub) return res.status(404).json({ error: 'Submission not found' });
@@ -272,10 +266,7 @@ async function getTeacherSubmissionById(req, res) {
  */
 async function grantSubmission(req, res) {
   try {
-    const teacherId = req.user.id;
-    if (req.user.role !== 'teacher') {
-      return res.status(403).json({ error: 'Teacher access required' });
-    }
+    const teacherId = req.effectiveTeacherId || req.user.id;
     const { id } = req.params;
     const { marks } = req.body || {};
     const sub = await assignmentService.grantSubmission(id, teacherId, marks || null);
@@ -293,10 +284,7 @@ async function grantSubmission(req, res) {
  */
 async function declineSubmission(req, res) {
   try {
-    const teacherId = req.user.id;
-    if (req.user.role !== 'teacher') {
-      return res.status(403).json({ error: 'Teacher access required' });
-    }
+    const teacherId = req.effectiveTeacherId || req.user.id;
     const { id } = req.params;
     const sub = await assignmentService.declineSubmission(id, teacherId);
     if (!sub) return res.status(404).json({ error: 'Submission not found' });
@@ -358,10 +346,7 @@ async function cancelSubmission(req, res) {
  */
 async function streamSubmissionPreview(req, res) {
   try {
-    const teacherId = req.user.id;
-    if (req.user.role !== 'teacher') {
-      return res.status(403).json({ error: 'Teacher access required' });
-    }
+    const teacherId = req.effectiveTeacherId || req.user.id;
     const { id } = req.params;
     const fileIndex = req.query.fileIndex !== undefined ? parseInt(req.query.fileIndex, 10) : null;
     const result = await assignmentService.getSubmissionFileForPreview(id, teacherId, fileIndex);

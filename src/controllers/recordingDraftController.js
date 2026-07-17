@@ -8,7 +8,7 @@ const r2Storage = require('../services/r2StorageService');
 class RecordingDraftController {
     async list(req, res) {
         try {
-            const teacherId = req.user.id;
+            const teacherId = req.effectiveTeacherId || req.user.id;
             const rows = await recordingDraftService.listByTeacher(teacherId);
             return res.json(rows);
         } catch (error) {
@@ -19,7 +19,7 @@ class RecordingDraftController {
 
     async getById(req, res) {
         try {
-            const teacherId = req.user.id;
+            const teacherId = req.effectiveTeacherId || req.user.id;
             const { id } = req.params;
             const row = await recordingDraftService.getById(id, teacherId);
             if (!row) return res.status(404).json({ error: 'Recording draft not found' });
@@ -36,7 +36,7 @@ class RecordingDraftController {
             return res.status(400).json({ error: errors.array()[0]?.msg || 'Validation failed', errors: errors.array() });
         }
         try {
-            const teacherId = req.user.id;
+            const teacherId = req.effectiveTeacherId || req.user.id;
             const {
                 title,
                 description,
@@ -74,7 +74,7 @@ class RecordingDraftController {
             return res.status(400).json({ error: errors.array()[0]?.msg || 'Validation failed', errors: errors.array() });
         }
         try {
-            const teacherId = req.user.id;
+            const teacherId = req.effectiveTeacherId || req.user.id;
             const { id } = req.params;
             const patch = {
                 title: req.body.title,
@@ -102,7 +102,7 @@ class RecordingDraftController {
             if (!r2Storage.isConfigured) {
                 return res.status(400).json({ error: 'R2 is not configured.' });
             }
-            const teacherId = req.user.id;
+            const teacherId = req.effectiveTeacherId || req.user.id;
             const { id } = req.params;
             const draft = await recordingDraftService.getById(id, teacherId);
             if (!draft) return res.status(404).json({ error: 'Recording draft not found' });
@@ -125,7 +125,7 @@ class RecordingDraftController {
                 return res.status(400).json({ error: 'R2 is not configured.' });
             }
 
-            const teacherId = req.user.id;
+            const teacherId = req.effectiveTeacherId || req.user.id;
             const { id } = req.params;
             const draft = await recordingDraftService.getById(id, teacherId);
             if (!draft) return res.status(404).json({ error: 'Recording draft not found' });

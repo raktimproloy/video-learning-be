@@ -1,11 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/authMiddleware');
-const { requireRole } = require('../middleware/roleMiddleware');
+const { requireTeacherPermission } = require('../middleware/teacherPermissionMiddleware');
 const bundleController = require('../controllers/bundleController');
 
 router.use(authMiddleware);
-router.use(requireRole(['teacher']));
+router.use(requireTeacherPermission('courses'));
 
 router.get('/', bundleController.list);
 router.get('/:id', bundleController.getOne);

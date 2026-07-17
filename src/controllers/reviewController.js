@@ -96,10 +96,11 @@ class ReviewController {
      */
     async getMyCourseReviews(req, res) {
         try {
-            if (req.user.role !== 'teacher') {
+            if (req.user.role !== 'teacher' && req.user.role !== 'teacher_staff') {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
-            const reviews = await reviewService.getReviewsByTeacher(req.user.id);
+            const teacherId = req.effectiveTeacherId || req.user.id;
+            const reviews = await reviewService.getReviewsByTeacher(teacherId);
             const apiUrl = process.env.BASE_URL || process.env.API_URL || 'http://localhost:5000';
             const baseUrl = apiUrl.replace(/\/v1\/?$/, '');
             const v1Url = baseUrl + (baseUrl.endsWith('/') ? 'v1' : '/v1');

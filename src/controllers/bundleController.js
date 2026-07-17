@@ -3,7 +3,7 @@ const bundleService = require('../services/bundleService');
 module.exports = {
     async list(req, res) {
         try {
-            const teacherId = req.user.id;
+            const teacherId = req.effectiveTeacherId || req.user.id;
             const bundles = await bundleService.getByTeacher(teacherId);
             res.json(bundles.map(b => ({
                 id: b.id,
@@ -26,7 +26,7 @@ module.exports = {
 
     async getOne(req, res) {
         try {
-            const teacherId = req.user.id;
+            const teacherId = req.effectiveTeacherId || req.user.id;
             const bundle = await bundleService.getById(req.params.id, teacherId);
             if (!bundle) return res.status(404).json({ error: 'Bundle not found' });
             res.json({
@@ -48,7 +48,7 @@ module.exports = {
 
     async create(req, res) {
         try {
-            const teacherId = req.user.id;
+            const teacherId = req.effectiveTeacherId || req.user.id;
             const { title, description, mainPrice, discountPrice, currency, courseIds } = req.body || {};
             const bundle = await bundleService.create(teacherId, {
                 title,
@@ -79,7 +79,7 @@ module.exports = {
 
     async update(req, res) {
         try {
-            const teacherId = req.user.id;
+            const teacherId = req.effectiveTeacherId || req.user.id;
             const { title, description, mainPrice, discountPrice, currency } = req.body || {};
             const bundle = await bundleService.update(teacherId, req.params.id, {
                 title,
@@ -107,7 +107,7 @@ module.exports = {
 
     async delete(req, res) {
         try {
-            const teacherId = req.user.id;
+            const teacherId = req.effectiveTeacherId || req.user.id;
             const deleted = await bundleService.delete(teacherId, req.params.id);
             if (!deleted) return res.status(404).json({ error: 'Bundle not found' });
             res.json({ message: 'Bundle deleted' });

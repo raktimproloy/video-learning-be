@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const axios = require('axios');
 const { OAuth2Client } = require('google-auth-library');
 const { validationResult } = require('express-validator');
+const { isStaffEmailAddress, staffEmailBlockedMessage } = require('../utils/staffEmail');
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
@@ -23,6 +24,10 @@ class AuthController {
                 return res.status(400).json({ error: 'Valid email is required' });
             }
 
+            if (isStaffEmailAddress(email)) {
+                return res.status(400).json({ error: staffEmailBlockedMessage() });
+            }
+
             // Check if user exists
             const existingUser = await userService.findByEmail(email);
             if (existingUser) {
@@ -38,6 +43,9 @@ class AuthController {
             });
         } catch (error) {
             console.error('Registration error:', error);
+            if (error.status === 400) {
+                return res.status(400).json({ error: error.message });
+            }
             res.status(500).json({ error: 'Internal server error' });
         }
     }
@@ -91,6 +99,7 @@ class AuthController {
                     onboardingCompleted: !!user.onboarding_completed,
                     onboardingRole: user.onboarding_role || null,
                     onboardingCategory: user.onboarding_category || null,
+                    mustChangePassword: !!user.must_change_password,
                 },
                 needsProfileCompletion,
             });
@@ -111,6 +120,9 @@ class AuthController {
             }
             if (user.role === 'teacher') {
                 return res.status(400).json({ error: 'You are already a teacher' });
+            }
+            if (user.role === 'teacher_staff') {
+                return res.status(403).json({ error: 'Staff accounts cannot join as an independent teacher.' });
             }
 
             // Check if referral_code is valid
@@ -158,13 +170,19 @@ class AuthController {
             const userId = req.user.id;
             const { role } = req.body;
 
+            // Get current user to check their actual role in database
+            const user = await userService.findById(userId);
+            if (user?.role === 'teacher_staff') {
+                return res.status(403).json({ error: 'Staff accounts cannot switch roles.' });
+            }
+
             // Validate role
             if (role !== 'student' && role !== 'teacher') {
                 return res.status(400).json({ error: 'Invalid role. Must be "student" or "teacher"' });
             }
 
             // Get current user to check their actual role in database
-            const user = await userService.findById(userId);
+            // (already loaded above)
             
             // Check if user is trying to switch to teacher
             if (role === 'teacher') {
@@ -274,6 +292,10 @@ class AuthController {
                 return res.status(403).json({ error: 'Google email must be verified' });
             }
 
+            if (isStaffEmailAddress(email)) {
+                return res.status(400).json({ error: staffEmailBlockedMessage() });
+            }
+
             // 4. Find or create user and issue app JWT
             const user = await userService.findOrCreateByGoogle(googleId, email, name || null);
 
@@ -303,6 +325,9 @@ class AuthController {
                 needsProfileCompletion,
             });
         } catch (err) {
+            if (err.status === 400 && err.message) {
+                return res.status(400).json({ error: err.message });
+            }
             const status = err.response?.status;
             const data = err.response?.data;
             if (status === 400 && data) {
@@ -415,12 +440,28 @@ class AuthController {
                 onboardingCompleted: !!user.onboarding_completed,
                 onboardingRole: user.onboarding_role || null,
                 onboardingCategory: user.onboarding_category || null,
+                mustChangePassword: !!user.must_change_password,
             };
 
             // Always check if teacher profile exists, regardless of current role
             // This allows users who joined as teacher to see their teacher data
             // even if they're currently in student mode (after switching)
-            const teacherProfile = await userService.getTeacherProfile(userId);
+            let profileUserId = userId;
+            if (user.role === 'teacher_staff') {
+                const teacherStaffService = require('../services/teacherStaffService');
+                const membership = await teacherStaffService.getActiveMembershipByStaffUserId(userId);
+                if (membership) {
+                    profileUserId = membership.teacher_id;
+                    userData.teacherStaff = {
+                        teacherId: membership.teacher_id,
+                        permissions: membership.permissions,
+                        displayName: membership.display_name,
+                        status: membership.status,
+                    };
+                }
+            }
+
+            const teacherProfile = await userService.getTeacherProfile(profileUserId);
             if (teacherProfile) {
                 userData.teacherProfile = {
                     name: teacherProfile.name,
@@ -437,8 +478,6 @@ class AuthController {
                     created_at: teacherProfile.created_at,
                     updated_at: teacherProfile.updated_at
                 };
-                // Don't auto-update role - keep the role as it is in database
-                // User can switch roles via switch-role API
             }
 
             res.json(userData);

@@ -21,10 +21,16 @@ const DEFAULT_ORIGINS = [
     'http://127.0.0.1:3002',
 ];
 
-/** Subdomain / preview patterns (HTTPS only for wildcards) */
+/** Subdomain / preview patterns */
 const WILDCARD_PATTERNS = [
     /^https:\/\/[\w-]+\.vercel\.app$/i,
     /^https:\/\/[\w-]+\.shikkhabhumi\.com$/i,
+];
+
+/** Local institute subdomains (dev only): http://slug.localhost:3000 */
+const LOCAL_SUBDOMAIN_PATTERNS = [
+    /^http:\/\/[\w-]+\.localhost(?::\d+)?$/i,
+    /^http:\/\/[\w-]+\.127\.0\.0\.1(?::\d+)?$/i,
 ];
 
 function normalizeOrigin(origin) {
@@ -69,7 +75,12 @@ function isOriginAllowed(origin) {
     const normalized = normalizeOrigin(origin);
     if (!normalized) return false;
     if (allowlistSet.has(normalized)) return true;
-    return WILDCARD_PATTERNS.some((rx) => rx.test(normalized));
+    if (WILDCARD_PATTERNS.some((rx) => rx.test(normalized))) return true;
+    // Allow local institute subdomains in non-production
+    if (process.env.NODE_ENV !== 'production') {
+        if (LOCAL_SUBDOMAIN_PATTERNS.some((rx) => rx.test(normalized))) return true;
+    }
+    return false;
 }
 
 /**

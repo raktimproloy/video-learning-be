@@ -96,7 +96,40 @@ docker compose logs -f api
    ```env
    NEXT_PUBLIC_API_URL=https://api.shikkhabhumi.com/v1
    NEXT_PUBLIC_SOCKET_URL=https://api.shikkhabhumi.com
+   NEXT_PUBLIC_SITE_URL=https://shikkhabhumi.com
+   NEXT_PUBLIC_ROOT_DOMAIN=shikkhabhumi.com
    ```
+
+### Teacher institute subdomains (`*.shikkhabhumi.com`)
+
+Each teacher can claim a unique storefront subdomain such as `avilash-teach.shikkhabhumi.com`.
+
+**DNS / TLS (frontend host — usually Vercel or CDN):**
+1. Add a wildcard DNS record: `*.shikkhabhumi.com` → same target as the apex frontend.
+2. Add a wildcard (or multi-SAN) TLS certificate covering `*.shikkhabhumi.com`.
+3. Ensure the frontend platform forwards the original `Host` header so Next.js `proxy.ts` can resolve the institute slug.
+4. Reserved labels (`www`, `api`, `admin`, `principal`, …) are ignored and never treated as institutes.
+
+**API CORS:**
+- Production already allows `https://*.shikkhabhumi.com` via `backend/src/config/cors.js`.
+- When proxying through host nginx to Docker, always forward Origin:
+  ```nginx
+  proxy_set_header Origin $http_origin;
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  ```
+- Verify with:
+  ```bash
+  curl -si -X OPTIONS "https://api.shikkhabhumi.com/v1/settings" \
+    -H "Origin: https://demo.shikkhabhumi.com" \
+    -H "Access-Control-Request-Method: GET"
+  ```
+
+**Local development:**
+- Run the frontend on port 3000 and open `http://{slug}.localhost:3000`.
+- Set `NEXT_PUBLIC_ROOT_DOMAIN=localhost` and `NEXT_PUBLIC_SITE_URL=http://localhost:3000`.
+- Non-production API CORS allows `http://*.localhost:3000` automatically.
+- Apply migration `104_teacher_institutes.sql` before testing setup/save flows.
 
 ---
 

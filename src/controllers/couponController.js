@@ -47,7 +47,7 @@ module.exports = {
 
     async list(req, res) {
         try {
-            const teacherId = req.user.id;
+            const teacherId = req.effectiveTeacherId || req.user.id;
             const { page, limit, status } = req.query;
             const result = await couponService.listByTeacher(teacherId, { page, limit, status });
             res.json(result);
@@ -59,7 +59,7 @@ module.exports = {
 
     async getById(req, res) {
         try {
-            const teacherId = req.user.id;
+            const teacherId = req.effectiveTeacherId || req.user.id;
             const coupon = await couponService.getById(req.params.id, teacherId);
             if (!coupon) {
                 return res.status(404).json({ error: 'Coupon not found' });
@@ -73,7 +73,7 @@ module.exports = {
 
     async create(req, res) {
         try {
-            const teacherId = req.user.id;
+            const teacherId = req.effectiveTeacherId || req.user.id;
             const {
                 title,
                 couponCode,
@@ -120,7 +120,7 @@ module.exports = {
 
     async update(req, res) {
         try {
-            const teacherId = req.user.id;
+            const teacherId = req.effectiveTeacherId || req.user.id;
             const {
                 title,
                 couponCode,
@@ -164,7 +164,7 @@ module.exports = {
 
     async updateStatus(req, res) {
         try {
-            const teacherId = req.user.id;
+            const teacherId = req.effectiveTeacherId || req.user.id;
             const { status } = req.body || {};
             const coupon = await couponService.updateStatus(req.params.id, teacherId, status);
             if (!coupon) {
@@ -182,7 +182,7 @@ module.exports = {
 
     async delete(req, res) {
         try {
-            const teacherId = req.user.id;
+            const teacherId = req.effectiveTeacherId || req.user.id;
             const deleted = await couponService.delete(req.params.id, teacherId);
             if (!deleted) {
                 return res.status(404).json({ error: 'Coupon not found' });

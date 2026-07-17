@@ -4,7 +4,7 @@ const fcmService = require('../services/fcmService');
 module.exports = {
     async create(req, res) {
         try {
-            const teacherId = req.user.id;
+            const teacherId = req.effectiveTeacherId || req.user.id;
             const { courseId, title, description } = req.body || {};
             const body = description ?? req.body?.body ?? '';
             if (!courseId || !title || typeof title !== 'string' || !title.trim()) {
@@ -39,7 +39,7 @@ module.exports = {
 
     async getByTeacher(req, res) {
         try {
-            const teacherId = req.user.id;
+            const teacherId = req.effectiveTeacherId || req.user.id;
             const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
             const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
             const list = await announcementService.getByTeacher(teacherId, limit, offset);

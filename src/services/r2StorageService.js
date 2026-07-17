@@ -66,6 +66,42 @@ function getCourseMediaKeyPrefix(teacherId, courseId, type = 'thumbnail') {
 }
 
 /**
+ * R2 key prefix for institute branding media (logo / cover).
+ * Example: teachers/uuid/institutes/logo-123.jpg
+ */
+function getInstituteMediaKeyPrefix(teacherId) {
+  return `teachers/${teacherId}/institutes`;
+}
+
+/**
+ * Upload institute logo or cover image to R2.
+ * @param {string} teacherId
+ * @param {Buffer} fileBuffer
+ * @param {string} originalFilename
+ * @param {'logo'|'cover'} type
+ * @returns {Promise<string>} R2 key
+ */
+async function uploadInstituteMedia(teacherId, fileBuffer, originalFilename, type = 'logo') {
+  if (!r2Config.isConfigured) {
+    throw new Error('R2 is not configured');
+  }
+  const timestamp = Date.now();
+  const ext = require('path').extname(originalFilename) || '.jpg';
+  const filename = `${type}-${timestamp}${ext}`;
+  const key = `${getInstituteMediaKeyPrefix(teacherId)}/${filename}`;
+
+  let contentType = 'image/jpeg';
+  const extLower = ext.toLowerCase();
+  if (extLower === '.png') contentType = 'image/png';
+  else if (extLower === '.gif') contentType = 'image/gif';
+  else if (extLower === '.webp') contentType = 'image/webp';
+  else if (extLower === '.jpg' || extLower === '.jpeg') contentType = 'image/jpeg';
+
+  await uploadFile(key, fileBuffer, contentType);
+  return key;
+}
+
+/**
  * R2 key prefix for lesson notes and assignments.
  */
 function getLessonMediaKeyPrefix(teacherId, courseId, lessonId, type) {
@@ -400,6 +436,7 @@ module.exports = {
   getVideoKeyPrefix,
   getRecordingKeyPrefix,
   getCourseMediaKeyPrefix,
+  getInstituteMediaKeyPrefix,
   getLessonMediaKeyPrefix,
   getVideoMediaKeyPrefix,
   uploadLessonMedia,
@@ -409,6 +446,7 @@ module.exports = {
   uploadFromPath,
   downloadToPath,
   uploadCourseMedia,
+  uploadInstituteMedia,
   getObjectStream,
   objectExists,
   listObjects,

@@ -8,6 +8,7 @@ const teacherPaymentController = require('../controllers/teacherPaymentControlle
 const authMiddleware = require('../middleware/authMiddleware');
 const optionalAuth = require('../middleware/optionalAuthMiddleware');
 const { requireRole } = require('../middleware/roleMiddleware');
+const { requireTeacherPermission } = require('../middleware/teacherPermissionMiddleware');
 
 const COURSE_UPLOAD_MAX_MB = Math.max(1, parseInt(process.env.COURSE_UPLOAD_MAX_MB || '500', 10));
 const COURSE_UPLOAD_MAX_BYTES = COURSE_UPLOAD_MAX_MB * 1024 * 1024;
@@ -94,25 +95,25 @@ router.post(
     optionalAuth,
     courseController.openExternalCourse
 );
-router.get('/:id/teacher/live-report', authMiddleware, requireRole(['teacher']), courseController.getCourseLiveReport);
+router.get('/:id/teacher/live-report', authMiddleware, requireTeacherPermission('courses'), courseController.getCourseLiveReport);
 router.get('/:id', optionalAuth, courseController.getCourseById);
 
-// Teacher only routes
-router.get('/teacher/my-courses', authMiddleware, requireRole(['teacher']), courseController.getMyCourses);
-router.get('/teacher/my-students', authMiddleware, requireRole(['teacher']), courseController.getMyStudents);
-router.get('/teacher/revenue', authMiddleware, requireRole(['teacher']), courseController.getTeacherRevenue);
-router.get('/teacher/purchase-history', authMiddleware, requireRole(['teacher']), courseController.getTeacherPurchaseHistory);
-router.get('/teacher/dashboard-stats', authMiddleware, requireRole(['teacher']), courseController.getTeacherDashboardStats);
-router.get('/teacher/payment-methods', authMiddleware, requireRole(['teacher']), teacherPaymentController.listPaymentMethods);
-router.post('/teacher/payment-methods', authMiddleware, requireRole(['teacher']), teacherPaymentController.addPaymentMethod);
-router.patch('/teacher/payment-methods/:id', authMiddleware, requireRole(['teacher']), teacherPaymentController.updatePaymentMethod);
-router.delete('/teacher/payment-methods/:id', authMiddleware, requireRole(['teacher']), teacherPaymentController.deletePaymentMethod);
-router.get('/teacher/withdraw-requests', authMiddleware, requireRole(['teacher']), teacherPaymentController.listWithdrawRequests);
-router.get('/teacher/withdraw-requests/:id', authMiddleware, requireRole(['teacher']), teacherPaymentController.getWithdrawRequest);
-router.post('/teacher/withdraw', authMiddleware, requireRole(['teacher']), courseController.requestWithdraw);
+// Teacher only routes (owner teacher or staff with permissions)
+router.get('/teacher/my-courses', authMiddleware, requireTeacherPermission('courses'), courseController.getMyCourses);
+router.get('/teacher/my-students', authMiddleware, requireTeacherPermission('students'), courseController.getMyStudents);
+router.get('/teacher/revenue', authMiddleware, requireTeacherPermission('payments'), courseController.getTeacherRevenue);
+router.get('/teacher/purchase-history', authMiddleware, requireTeacherPermission('payments'), courseController.getTeacherPurchaseHistory);
+router.get('/teacher/dashboard-stats', authMiddleware, requireTeacherPermission('dashboard'), courseController.getTeacherDashboardStats);
+router.get('/teacher/payment-methods', authMiddleware, requireTeacherPermission('payments'), teacherPaymentController.listPaymentMethods);
+router.post('/teacher/payment-methods', authMiddleware, requireTeacherPermission('payments'), teacherPaymentController.addPaymentMethod);
+router.patch('/teacher/payment-methods/:id', authMiddleware, requireTeacherPermission('payments'), teacherPaymentController.updatePaymentMethod);
+router.delete('/teacher/payment-methods/:id', authMiddleware, requireTeacherPermission('payments'), teacherPaymentController.deletePaymentMethod);
+router.get('/teacher/withdraw-requests', authMiddleware, requireTeacherPermission('payments'), teacherPaymentController.listWithdrawRequests);
+router.get('/teacher/withdraw-requests/:id', authMiddleware, requireTeacherPermission('payments'), teacherPaymentController.getWithdrawRequest);
+router.post('/teacher/withdraw', authMiddleware, requireTeacherPermission('payments'), courseController.requestWithdraw);
 router.post('/', 
     authMiddleware, 
-    requireRole(['teacher']), 
+    requireTeacherPermission('courses'), 
     upload.fields([
         { name: 'thumbnail', maxCount: 1 },
         { name: 'introVideo', maxCount: 1 }
@@ -121,7 +122,7 @@ router.post('/',
 );
 router.put('/:id', 
     authMiddleware, 
-    requireRole(['teacher']), 
+    requireTeacherPermission('courses'), 
     upload.fields([
         { name: 'thumbnail', maxCount: 1 },
         { name: 'introVideo', maxCount: 1 }
@@ -130,11 +131,11 @@ router.put('/:id',
 );
 router.post('/:id/intro-video',
     authMiddleware,
-    requireRole(['teacher']),
+    requireTeacherPermission('courses'),
     upload.single('introVideo'),
     courseController.uploadIntroVideo
 );
-router.post('/:id/request-live', authMiddleware, requireRole(['teacher']), courseController.requestLive);
-router.delete('/:id', authMiddleware, requireRole(['teacher']), courseController.deleteCourse);
+router.post('/:id/request-live', authMiddleware, requireTeacherPermission('courses'), courseController.requestLive);
+router.delete('/:id', authMiddleware, requireTeacherPermission('courses'), courseController.deleteCourse);
 
 module.exports = router;

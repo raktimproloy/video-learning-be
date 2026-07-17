@@ -299,9 +299,49 @@ async function sendCoursePurchasedEmail({ teacherEmail, teacherName, courseTitle
     }
 }
 
+async function sendStaffCredentialsEmail(to, { displayName, temporaryPassword, loginEmail }) {
+    const subject = `Your ${SITE_NAME} staff account credentials`;
+    const frontend = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto;">
+        <h2>Welcome to ${SITE_NAME}</h2>
+        <p>Hello ${displayName || 'there'},</p>
+        <p>A teacher has created a staff account for you. Use these credentials to sign in:</p>
+        <ul>
+          <li><strong>Email:</strong> ${loginEmail}</li>
+          <li><strong>Temporary password:</strong> <code>${temporaryPassword}</code></li>
+        </ul>
+        <p>Please sign in and change your password immediately.</p>
+        <p><a href="${frontend}/auth">Open login page</a></p>
+        <p>Best regards,<br/>${SITE_NAME} Team</p>
+      </div>
+    `;
+    const text = `Hello ${displayName || 'there'},\n\nYour staff login:\nEmail: ${loginEmail}\nTemporary password: ${temporaryPassword}\n\nSign in at ${frontend}/auth and change your password.\n\n${SITE_NAME} Team`;
+
+    if (!transporter) {
+        console.log(`[Email Staff Credentials] To: ${to} | Login: ${loginEmail} | Temp password: ${temporaryPassword}`);
+        return { sent: false };
+    }
+
+    try {
+        await transporter.sendMail({
+            from: getFromAddress(),
+            to: (to || '').trim().toLowerCase(),
+            subject,
+            text,
+            html,
+        });
+        return { sent: true };
+    } catch (err) {
+        console.error('[Email Staff Credentials] SMTP send failed:', err.message);
+        return { sent: false };
+    }
+}
+
 module.exports = {
     generateOtp,
     sendOtpEmail,
     sendCoursePurchasedEmail,
+    sendStaffCredentialsEmail,
     isConfigured,
 };

@@ -162,6 +162,39 @@ CREATE INDEX IF NOT EXISTS idx_teacher_profiles_user_id ON teacher_profiles(user
 CREATE INDEX IF NOT EXISTS idx_teacher_profiles_account_email ON teacher_profiles(account_email) WHERE account_email IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_teacher_profiles_support_email ON teacher_profiles(support_email) WHERE support_email IS NOT NULL;
 
+-- Teacher institute storefronts (one per teacher, unique public subdomain slug)
+CREATE TABLE IF NOT EXISTS teacher_institutes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    teacher_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    slug TEXT NOT NULL,
+    name TEXT NOT NULL,
+    tagline TEXT,
+    logo_path TEXT,
+    cover_path TEXT,
+    address TEXT,
+    city TEXT,
+    email TEXT,
+    phone TEXT,
+    phone_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    phone_otp TEXT,
+    phone_otp_expires_at TIMESTAMPTZ,
+    helpline TEXT,
+    whatsapp TEXT,
+    social_links JSONB NOT NULL DEFAULT '[]'::jsonb,
+    fiscal_year TEXT,
+    operating_hours JSONB NOT NULL DEFAULT '[]'::jsonb,
+    offered_subjects JSONB NOT NULL DEFAULT '[]'::jsonb,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'draft')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT teacher_institutes_teacher_id_unique UNIQUE (teacher_id),
+    CONSTRAINT teacher_institutes_slug_unique UNIQUE (slug)
+);
+
+CREATE INDEX IF NOT EXISTS idx_teacher_institutes_teacher_id ON teacher_institutes(teacher_id);
+CREATE INDEX IF NOT EXISTS idx_teacher_institutes_slug ON teacher_institutes(slug);
+CREATE INDEX IF NOT EXISTS idx_teacher_institutes_status ON teacher_institutes(status);
+
 -- Student Profiles table
 CREATE TABLE IF NOT EXISTS student_profiles (
     user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

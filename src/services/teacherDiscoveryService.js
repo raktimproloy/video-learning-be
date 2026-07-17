@@ -113,7 +113,11 @@ class TeacherDiscoveryService {
           u.created_at,
           COALESCE(tp.name, u.email) AS name,
           tp.profile_image_path,
-          tp.institute_name,
+          COALESCE(
+            (SELECT ti.name FROM teacher_institutes ti WHERE ti.teacher_id = u.id AND ti.status = 'active' LIMIT 1),
+            tp.institute_name
+          ) AS institute_name,
+          (SELECT ti.slug FROM teacher_institutes ti WHERE ti.teacher_id = u.id AND ti.status = 'active' LIMIT 1) AS institute_slug,
           ${verifiedSelect} AS verified,
           COALESCE(cf.has_academic, false) AS has_academic,
           COALESCE(cf.has_skill, false) AS has_skill,
@@ -136,6 +140,7 @@ class TeacherDiscoveryService {
         email,
         profile_image_path,
         institute_name,
+        institute_slug,
         verified,
         rating,
         review_count,
@@ -172,6 +177,7 @@ class TeacherDiscoveryService {
       id: r.id,
       name: r.name,
       instituteName: r.institute_name || null,
+      instituteSlug: r.institute_slug || null,
       profileImagePath: r.profile_image_path || null,
       verified: !!r.verified,
       rating: Number(r.rating) || 0,

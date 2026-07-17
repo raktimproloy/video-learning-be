@@ -1,18 +1,19 @@
 const express = require('express');
 const { check } = require('express-validator');
 const verifyToken = require('../middleware/authMiddleware');
-const { requireRole } = require('../middleware/roleMiddleware');
+const { requireTeacherPermission } = require('../middleware/teacherPermissionMiddleware');
 const recordingDraftController = require('../controllers/recordingDraftController');
 
 const router = express.Router();
 
-router.use(verifyToken, requireRole(['teacher']));
+router.use(verifyToken);
 
-router.get('/drafts', recordingDraftController.list);
-router.get('/drafts/:id', [check('id').isUUID()], recordingDraftController.getById);
-router.get('/drafts/:id/source-url', [check('id').isUUID()], recordingDraftController.getSignedSourceUrl);
+router.get('/drafts', requireTeacherPermission('recordings'), recordingDraftController.list);
+router.get('/drafts/:id', requireTeacherPermission('recordings'), [check('id').isUUID()], recordingDraftController.getById);
+router.get('/drafts/:id/source-url', requireTeacherPermission('recordings'), [check('id').isUUID()], recordingDraftController.getSignedSourceUrl);
 router.post(
     '/drafts',
+    requireTeacherPermission('recordings'),
     [
         check('title').optional().isString(),
         check('source_object_key', 'source_object_key is required').not().isEmpty(),
@@ -22,6 +23,7 @@ router.post(
 );
 router.put(
     '/drafts/:id',
+    requireTeacherPermission('recordings'),
     [
         check('id').isUUID(),
         check('title').optional().isString(),
@@ -32,6 +34,7 @@ router.put(
 );
 router.post(
     '/drafts/:id/publish',
+    requireTeacherPermission('recordings'),
     [
         check('id').isUUID(),
         check('lesson_id').optional().isUUID(),
@@ -41,4 +44,3 @@ router.post(
 );
 
 module.exports = router;
-

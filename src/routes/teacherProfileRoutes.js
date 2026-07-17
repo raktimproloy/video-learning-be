@@ -2,13 +2,13 @@ const express = require('express');
 const router = express.Router();
 const teacherProfileController = require('../controllers/teacherProfileController');
 const authMiddleware = require('../middleware/authMiddleware');
+const { requireTeacherPermission, attachTeacherContext } = require('../middleware/teacherPermissionMiddleware');
 const multer = require('multer');
 
-// Configure multer for profile image upload
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
-        fileSize: 5 * 1024 * 1024 // 5MB limit
+        fileSize: 5 * 1024 * 1024
     },
     fileFilter: (req, file, cb) => {
         if (file.mimetype.startsWith('image/')) {
@@ -19,37 +19,26 @@ const upload = multer({
     }
 });
 
-// PUBLIC ROUTES (must be before authMiddleware)
-// Stream profile image (PUBLIC endpoint)
+// PUBLIC ROUTES
 router.get(/^\/image\/(.+)$/, (req, res, next) => {
     req.params.key = decodeURIComponent(req.params[0]);
     return teacherProfileController.streamProfileImage(req, res, next);
 });
 
-// Get public teacher profile (PUBLIC endpoint - no auth required)
 router.get('/public/:userId', teacherProfileController.getPublicProfile);
 
-// All other routes require authentication
 router.use(authMiddleware);
 
-// Get teacher profile (authenticated)
-router.get('/', teacherProfileController.getProfile);
+// Password change is always on the logged-in user's own account
+router.post('/change-password', attachTeacherContext, teacherProfileController.changePassword);
 
-// Update teacher profile (with optional profile image upload only)
-router.put('/', upload.fields([
+// Profile/qualification: owner OR crew with settings — always the main teacher's profile via effectiveTeacherId
+router.get('/', requireTeacherPermission('settings'), teacherProfileController.getProfile);
+router.put('/', requireTeacherPermission('settings'), upload.fields([
     { name: 'profileImage', maxCount: 1 }
 ]), teacherProfileController.updateProfile);
-
-// Request OTP for verification
-router.post('/verify/request', teacherProfileController.requestOTP);
-
-// Verify OTP
-router.post('/verify', teacherProfileController.verifyOTP);
-
-// Get profile completion percentage
-router.get('/completion', teacherProfileController.getProfileCompletion);
-
-// Change password
-router.post('/change-password', teacherProfileController.changePassword);
+router.post('/verify/request', requireTeacherPermission('settings'), teacherProfileController.requestOTP);
+router.post('/verify', requireTeacherPermission('settings'), teacherProfileController.verifyOTP);
+router.get('/completion', requireTeacherPermission('settings'), teacherProfileController.getProfileCompletion);
 
 module.exports = router;

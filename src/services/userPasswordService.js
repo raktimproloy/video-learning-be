@@ -31,8 +31,13 @@ class UserPasswordService {
 
         // Update password in users table (affects both student and teacher roles)
         await db.query(
-            `UPDATE users SET password_hash = $1 WHERE id = $2`,
+            `UPDATE users SET password_hash = $1, must_change_password = FALSE WHERE id = $2`,
             [newPasswordHash, userId]
+        );
+        // Clear owner-visible temporary password for staff accounts
+        await db.query(
+            `UPDATE teacher_staff_members SET temporary_password = NULL WHERE staff_user_id = $1`,
+            [userId]
         );
 
         return { success: true, message: 'Password changed successfully' };

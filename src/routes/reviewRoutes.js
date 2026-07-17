@@ -3,6 +3,7 @@ const router = express.Router();
 const reviewController = require('../controllers/reviewController');
 const authMiddleware = require('../middleware/authMiddleware');
 const { requireRole } = require('../middleware/roleMiddleware');
+const { requireTeacherPermission } = require('../middleware/teacherPermissionMiddleware');
 
 // All routes require authentication
 router.use(authMiddleware);
@@ -13,8 +14,8 @@ router.post('/course/:courseId', requireRole(['student', 'teacher']), reviewCont
 // Get my review for a course
 router.get('/course/:courseId/my-review', requireRole(['student', 'teacher']), reviewController.getMyReview);
 
-// Get all reviews for teacher's courses (teacher only)
-router.get('/teacher/my-reviews', requireRole(['teacher']), reviewController.getMyCourseReviews);
+// Get all reviews for teacher's courses (teacher / staff)
+router.get('/teacher/my-reviews', requireTeacherPermission('analytics'), reviewController.getMyCourseReviews);
 
 // Get all reviews for a course (public, but requires auth for now)
 router.get('/course/:courseId', authMiddleware, reviewController.getCourseReviews);

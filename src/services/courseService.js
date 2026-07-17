@@ -20,6 +20,11 @@ function sqlNonExternal(tableAlias = 'courses') {
     return ` AND ${p}course_type IS DISTINCT FROM 'external'`;
 }
 
+/** Active storefront subdomain for the course teacher (null if none). */
+function sqlActiveInstituteSlug(teacherIdExpr = 'courses.teacher_id') {
+    return `(SELECT ti.slug FROM teacher_institutes ti WHERE ti.teacher_id = ${teacherIdExpr} AND ti.status = 'active' LIMIT 1)`;
+}
+
 let homeSectionsCache = null;
 let homeSectionsCacheExpiry = 0;
 const HOME_SECTIONS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
@@ -471,7 +476,8 @@ class CourseService {
                 (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id) as total_lessons,
                 (SELECT COUNT(*)::int FROM videos v 
                  JOIN lessons l ON v.lesson_id = l.id 
-                 WHERE l.course_id = courses.id) as total_videos
+                 WHERE l.course_id = courses.id) as total_videos,
+                ${sqlActiveInstituteSlug()} as institute_slug
             FROM courses 
             LEFT JOIN users ON courses.teacher_id = users.id 
             LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
@@ -497,7 +503,8 @@ class CourseService {
             total_videos: row.total_videos || 0,
             category_slug: row.category_slug || null,
             category_name: row.category_name || null,
-            category_name_bn: row.category_name_bn || null
+            category_name_bn: row.category_name_bn || null,
+            institute_slug: row.institute_slug || null,
         }));
     }
 
@@ -567,7 +574,8 @@ class CourseService {
                 (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id) as total_lessons,
                 (SELECT COUNT(*)::int FROM videos v 
                  JOIN lessons l ON v.lesson_id = l.id 
-                 WHERE l.course_id = courses.id) as total_videos
+                 WHERE l.course_id = courses.id) as total_videos,
+                ${sqlActiveInstituteSlug()} as institute_slug
             FROM courses 
             LEFT JOIN users ON courses.teacher_id = users.id 
             LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
@@ -655,7 +663,8 @@ class CourseService {
                 ${reviewsCountQuery} as review_count,
                 (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = courses.id) as purchase_count,
                 (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id) as total_lessons,
-                (SELECT COUNT(*)::int FROM videos v JOIN lessons l ON v.lesson_id = l.id WHERE l.course_id = courses.id) as total_videos
+                (SELECT COUNT(*)::int FROM videos v JOIN lessons l ON v.lesson_id = l.id WHERE l.course_id = courses.id) as total_videos,
+                ${sqlActiveInstituteSlug()} as institute_slug
             `;
             const baseFrom = `
                 FROM courses
@@ -929,7 +938,8 @@ class CourseService {
                  WHERE l.course_id = courses.id) as total_videos,
                 COALESCE(ac.slug, LOWER(REPLACE(TRIM(COALESCE(courses.category, '')), ' ', '-'))) as category_slug,
                 ac.name as category_name,
-                ac.name_bn as category_name_bn
+                ac.name_bn as category_name_bn,
+                ${sqlActiveInstituteSlug()} as institute_slug
             FROM courses 
             LEFT JOIN users ON courses.teacher_id = users.id 
             LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
@@ -954,7 +964,8 @@ class CourseService {
             total_videos: row.total_videos || 0,
             category_slug: row.category_slug || null,
             category_name: row.category_name || null,
-            category_name_bn: row.category_name_bn || null
+            category_name_bn: row.category_name_bn || null,
+            institute_slug: row.institute_slug || null,
         }));
 
         const currentPage = Math.max(1, parseInt(page, 10) || 1);
@@ -987,7 +998,11 @@ class CourseService {
             `SELECT u.id, u.email, u.created_at,
                     COALESCE(tp.name, u.email) as name,
                     tp.profile_image_path,
-                    tp.institute_name,
+                    COALESCE(
+                      (SELECT ti.name FROM teacher_institutes ti WHERE ti.teacher_id = u.id AND ti.status = 'active' LIMIT 1),
+                      tp.institute_name
+                    ) as institute_name,
+                    ${sqlActiveInstituteSlug('u.id')} as institute_slug,
                     ${verifiedSelect},
                     tp.address,
                     (SELECT COUNT(DISTINCT ce.user_id) FROM course_enrollments ce
@@ -1076,6 +1091,7 @@ class CourseService {
                           name: teacher.name || teacher.email,
                           profile_image_path: teacher.profile_image_path || null,
                           institute_name: teacher.institute_name || null,
+                          institute_slug: teacher.institute_slug || null,
                           is_verified: !!teacher.is_verified,
                           address: teacher.address || null,
                           totalStudents: parseInt(teacher.total_students) || course.purchase_count || 0,
@@ -1228,6 +1244,7 @@ class CourseService {
                 name: teacher.name || teacher.email,
                 profile_image_path: teacher.profile_image_path || null,
                 institute_name: teacher.institute_name || null,
+                institute_slug: teacher.institute_slug || null,
                 is_verified: !!teacher.is_verified,
                 address: teacher.address || null,
                 totalStudents: parseInt(teacher.total_students) || course.purchase_count || 0,
@@ -1295,7 +1312,8 @@ class CourseService {
                 (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id AND (COALESCE(l.status, 'active') = 'active')) as total_lessons,
                 (SELECT COUNT(*)::int FROM videos v 
                  JOIN lessons l ON v.lesson_id = l.id 
-                 WHERE l.course_id = courses.id AND (COALESCE(l.status, 'active') = 'active') AND (v.status IS NULL OR v.status = 'active')) as total_videos
+                 WHERE l.course_id = courses.id AND (COALESCE(l.status, 'active') = 'active') AND (v.status IS NULL OR v.status = 'active')) as total_videos,
+                ${sqlActiveInstituteSlug()} as institute_slug
             FROM courses 
             LEFT JOIN users ON courses.teacher_id = users.id 
             WHERE courses.id = $1`,

@@ -1,6 +1,7 @@
 const db = require('../../db');
 const userService = require('../services/userService');
 const cache = require('../utils/ttlCache');
+const { bootstrapCacheKey } = require('../utils/bootstrapCache');
 
 /**
  * GET /v1/me/bootstrap
@@ -11,17 +12,17 @@ async function getBootstrap(req, res) {
         const userId = req.user?.id;
         if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-        const ttlMs = 60 * 1000;
-        const key = `user:${userId}:bootstrap`;
+        const user = await userService.findById(userId);
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
 
-        const body = await cache.getOrSet(key, ttlMs, async () => {
-            const user = await userService.findById(userId);
-            if (!user) {
-                const err = new Error('User not found');
-                err.status = 404;
-                throw err;
-            }
+        // Staff permissions must always be fresh (owner may have just changed them).
+        const isStaff = (user.role || '') === 'teacher_staff';
+        const ttlMs = isStaff ? 0 : 60 * 1000;
+        const key = bootstrapCacheKey(userId);
 
+        const load = async () => {
             const base = {
                 user: {
                     id: user.id,
@@ -29,10 +30,11 @@ async function getBootstrap(req, res) {
                     role: user.role || 'student',
                     linkedGoogle: !!user.google_id,
                     coreMember: !!user.core_member,
+                    mustChangePassword: !!user.must_change_password,
+                    name: user.name || null,
                 },
             };
 
-            // Always include teacherProfile if it exists (same behavior as /auth/me).
             const teacherProfile = await userService.getTeacherProfile(userId);
             if (teacherProfile) {
                 base.user.teacherProfile = {
@@ -53,7 +55,6 @@ async function getBootstrap(req, res) {
             }
 
             if ((user.role || 'student') === 'teacher') {
-                // Teacher bootstrap: owned course ids + a tiny summary.
                 const ownedRes = await db.query(
                     'SELECT id FROM courses WHERE teacher_id = $1 ORDER BY created_at DESC',
                     [userId]
@@ -64,11 +65,48 @@ async function getBootstrap(req, res) {
                     teacher: {
                         ownedCourseIds,
                         totalOwnedCourses: ownedCourseIds.length,
+                        isOwner: true,
+                        teacherId: userId,
+                        permissions: null,
                     },
                 };
             }
 
-            // Student bootstrap: purchased/enrolled course ids + quick progress summary.
+            if (isStaff) {
+                const teacherStaffService = require('../services/teacherStaffService');
+                const membership = await teacherStaffService.getActiveMembershipByStaffUserId(userId);
+                if (!membership) {
+                    return {
+                        ...base,
+                        teacherStaff: { disabled: true },
+                    };
+                }
+                const ownedRes = await db.query(
+                    'SELECT id FROM courses WHERE teacher_id = $1 ORDER BY created_at DESC',
+                    [membership.teacher_id]
+                );
+                const ownedCourseIds = ownedRes.rows.map((r) => r.id);
+                const ownerProfile = await userService.getTeacherProfile(membership.teacher_id);
+                return {
+                    ...base,
+                    teacher: {
+                        ownedCourseIds,
+                        totalOwnedCourses: ownedCourseIds.length,
+                        isOwner: false,
+                        teacherId: membership.teacher_id,
+                        permissions: membership.permissions,
+                        displayName: membership.display_name,
+                        ownerName: ownerProfile?.name || null,
+                    },
+                    teacherStaff: {
+                        teacherId: membership.teacher_id,
+                        permissions: membership.permissions,
+                        displayName: membership.display_name,
+                        status: membership.status,
+                    },
+                };
+            }
+
             const enrolledRes = await db.query(
                 'SELECT course_id FROM course_enrollments WHERE user_id = $1',
                 [userId]
@@ -133,10 +171,11 @@ async function getBootstrap(req, res) {
                     },
                 },
             };
-        });
+        };
 
-        // Client caching: short private cache; the server-side cache already protects the DB.
-        res.set('Cache-Control', 'private, max-age=30');
+        const body = ttlMs > 0 ? await cache.getOrSet(key, ttlMs, load) : await load();
+
+        res.set('Cache-Control', isStaff ? 'private, no-store' : 'private, max-age=30');
         return res.json(body);
     } catch (error) {
         if (error && error.status === 404) {
@@ -148,4 +187,3 @@ async function getBootstrap(req, res) {
 }
 
 module.exports = { getBootstrap };
-

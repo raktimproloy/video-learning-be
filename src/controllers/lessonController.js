@@ -21,6 +21,14 @@ const r2Storage = require('../services/r2StorageService');
 const fs = require('fs');
 const path = require('path');
 
+function workspaceTeacherId(req) {
+    return req.effectiveTeacherId || req.user.id;
+}
+
+function isTeacherWorkspaceUser(req) {
+    return req.user?.role === 'teacher' || req.user?.role === 'teacher_staff';
+}
+
 const STAGING_DIR = path.resolve(__dirname, '../../staging');
 const UPLOADS_LESSONS = path.resolve(__dirname, '../../uploads/lessons');
 
@@ -129,15 +137,16 @@ async function processLessonFiles(req, notes, assignments, lessonId, courseId, t
 class LessonController {
     async createLesson(req, res) {
         try {
-            if (req.user.role !== 'teacher') {
+            if (!isTeacherWorkspaceUser(req)) {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
             const { courseId, title, description, order, isPreview, status: reqStatus } = req.body;
             const { notes, assignments } = parseNotesAndAssignments(req.body);
 
-            const course = await courseService.getCourseById(courseId, req.user.id);
+            const ownerId = workspaceTeacherId(req);
+            const course = await courseService.getCourseById(courseId, ownerId);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+            if (course.teacher_id !== ownerId) return res.status(403).json({ error: 'Not authorized' });
 
             const lessonData = {
                 title: (title || '').trim(),
@@ -163,7 +172,7 @@ class LessonController {
                 assignments,
                 lesson.id,
                 courseId,
-                req.user.id
+                ownerId
             );
             if (finalNotes.length > 0 || finalAssignments.length > 0) {
                 lesson = await lessonService.updateLesson(lesson.id, { notes: finalNotes, assignments: finalAssignments });
@@ -196,7 +205,7 @@ class LessonController {
                 return res.status(404).json({ error: 'Lesson not found' });
             }
             const course = await courseService.getCourseByIdSimple(lesson.course_id);
-            const isOwner = course && req.user?.id && course.teacher_id === req.user.id;
+            const isOwner = course && req.user?.id && course.teacher_id === workspaceTeacherId(req);
             const userId = req.user?.role === 'student' ? req.user.id : null;
             const videos = await videoService.getVideosByLesson(lessonId, userId, false, isOwner);
             res.json(videos);
@@ -221,7 +230,7 @@ class LessonController {
 
     async updateLesson(req, res) {
         try {
-            if (req.user.role !== 'teacher') {
+            if (!isTeacherWorkspaceUser(req)) {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
             const { title, description, order, isPreview, status } = req.body;
@@ -230,9 +239,10 @@ class LessonController {
             const existingLesson = await lessonService.getLessonById(req.params.id);
             if (!existingLesson) return res.status(404).json({ error: 'Lesson not found' });
 
-            const course = await courseService.getCourseById(existingLesson.course_id, req.user.id);
+            const ownerId = workspaceTeacherId(req);
+            const course = await courseService.getCourseById(existingLesson.course_id, ownerId);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+            if (course.teacher_id !== ownerId) return res.status(403).json({ error: 'Not authorized' });
 
             let finalNotes = notes.length > 0 ? notes : existingLesson.notes || [];
             let finalAssignments = assignments.length > 0 ? assignments : existingLesson.assignments || [];
@@ -244,7 +254,7 @@ class LessonController {
                     finalAssignments,
                     req.params.id,
                     existingLesson.course_id,
-                    req.user.id
+                    ownerId
                 );
                 finalNotes = processed.notes;
                 finalAssignments = processed.assignments;
@@ -296,10 +306,10 @@ class LessonController {
 
     async getTeacherLiveLessons(req, res) {
         try {
-            if (req.user.role !== 'teacher') {
+            if (!isTeacherWorkspaceUser(req)) {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
-            const lessons = await lessonService.getTeacherLiveLessons(req.user.id);
+            const lessons = await lessonService.getTeacherLiveLessons(workspaceTeacherId(req));
             res.json(lessons);
         } catch (error) {
             console.error('Get teacher live lessons error:', error);
@@ -338,7 +348,7 @@ class LessonController {
                     return res.status(403).json({ error: 'Live is available for Core Members only.' });
                 }
 
-                if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+                if (course.teacher_id !== workspaceTeacherId(req)) return res.status(403).json({ error: 'Not authorized' });
                 if (is_live === true) {
                     if (!course.has_live_class) {
                         return res.status(403).json({
@@ -459,7 +469,7 @@ class LessonController {
 
             const uid = Math.abs(req.user.id.split('').reduce((a, c) => ((a << 5) - a) + c.charCodeAt(0), 0)) % 2147483647;
             const role = userRole === 'teacher' ? 'publisher' : 'subscriber';
-            if (userRole === 'teacher' && course.teacher_id !== req.user.id) {
+            if (userRole === 'teacher' && course.teacher_id !== workspaceTeacherId(req)) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
             if (userRole === 'student') {
@@ -484,7 +494,7 @@ class LessonController {
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             const course = await courseService.getCourseById(lesson.course_id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            const isTeacher = req.user.role === 'teacher' && course.teacher_id === req.user.id;
+            const isTeacher = isTeacherWorkspaceUser(req) && course.teacher_id === workspaceTeacherId(req);
             const isStudent = req.user.role === 'student';
             if (isStudent) {
                 const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
@@ -509,7 +519,7 @@ class LessonController {
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             const course = await courseService.getCourseById(lesson.course_id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            const isTeacher = req.user.role === 'teacher' && course.teacher_id === req.user.id;
+            const isTeacher = isTeacherWorkspaceUser(req) && course.teacher_id === workspaceTeacherId(req);
             const isStudent = req.user.role === 'student';
             if (isStudent) {
                 const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
@@ -533,7 +543,7 @@ class LessonController {
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             const course = await courseService.getCourseById(lesson.course_id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            const isTeacher = req.user.role === 'teacher' && course.teacher_id === req.user.id;
+            const isTeacher = isTeacherWorkspaceUser(req) && course.teacher_id === workspaceTeacherId(req);
             const isStudent = req.user.role === 'student';
             const onlyPublished = isStudent;
             const { liveSessionId: querySessionId } = req.query;
@@ -579,13 +589,13 @@ class LessonController {
 
     async saveLiveExam(req, res) {
         try {
-            if (req.user.role !== 'teacher') return res.status(403).json({ error: 'Teachers only' });
+            if (!isTeacherWorkspaceUser(req)) return res.status(403).json({ error: 'Teachers only' });
             const lessonId = req.params.id;
             const lesson = await lessonService.getLessonById(lessonId);
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             const course = await courseService.getCourseById(lesson.course_id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+            if (course.teacher_id !== workspaceTeacherId(req)) return res.status(403).json({ error: 'Not authorized' });
             const { examId, title, timeLimitMinutes, questions } = req.body || {};
             let exam;
             if (examId) {
@@ -624,7 +634,7 @@ class LessonController {
 
     async setLiveExamStatus(req, res) {
         try {
-            if (req.user.role !== 'teacher') return res.status(403).json({ error: 'Teachers only' });
+            if (!isTeacherWorkspaceUser(req)) return res.status(403).json({ error: 'Teachers only' });
             const lessonId = req.params.id;
             const { examId } = req.params;
             const { status } = req.body || {};
@@ -632,7 +642,7 @@ class LessonController {
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             const course = await courseService.getCourseById(lesson.course_id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+            if (course.teacher_id !== workspaceTeacherId(req)) return res.status(403).json({ error: 'Not authorized' });
             const exam = await liveExamService.setStatus(lessonId, examId, req.user.id, status);
             res.json({ exam });
             try {
@@ -688,7 +698,7 @@ class LessonController {
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             const course = await courseService.getCourseById(lesson.course_id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            const isTeacher = req.user.role === 'teacher' && course.teacher_id === req.user.id;
+            const isTeacher = isTeacherWorkspaceUser(req) && course.teacher_id === workspaceTeacherId(req);
             const isStudent = req.user.role === 'student';
             if (isStudent) {
                 const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
@@ -712,7 +722,7 @@ class LessonController {
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             const course = await courseService.getCourseById(lesson.course_id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            const isTeacher = req.user.role === 'teacher' && course.teacher_id === req.user.id;
+            const isTeacher = isTeacherWorkspaceUser(req) && course.teacher_id === workspaceTeacherId(req);
             const isStudent = req.user.role === 'student';
             if (isStudent) {
                 const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
@@ -733,7 +743,7 @@ class LessonController {
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             const course = await courseService.getCourseById(lesson.course_id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            const isTeacher = req.user.role === 'teacher' && course.teacher_id === req.user.id;
+            const isTeacher = isTeacherWorkspaceUser(req) && course.teacher_id === workspaceTeacherId(req);
             const isStudent = req.user.role === 'student';
             if (isStudent) {
                 const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
@@ -766,13 +776,13 @@ class LessonController {
 
     async updateLiveSession(req, res) {
         try {
-            if (req.user.role !== 'teacher') return res.status(403).json({ error: 'Teachers only' });
+            if (!isTeacherWorkspaceUser(req)) return res.status(403).json({ error: 'Teachers only' });
             const lessonId = req.params.id;
             const lesson = await lessonService.getLessonById(lessonId);
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             const course = await courseService.getCourseById(lesson.course_id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+            if (course.teacher_id !== workspaceTeacherId(req)) return res.status(403).json({ error: 'Not authorized' });
             const { live_name, live_description } = req.body || {};
             const session = await liveSessionService.updateSession(lessonId, {
                 liveName: live_name,
@@ -788,13 +798,13 @@ class LessonController {
 
     async setBroadcastStatus(req, res) {
         try {
-            if (req.user.role !== 'teacher') return res.status(403).json({ error: 'Teachers only' });
+            if (!isTeacherWorkspaceUser(req)) return res.status(403).json({ error: 'Teachers only' });
             const lessonId = req.params.id;
             const lesson = await lessonService.getLessonById(lessonId);
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             const course = await courseService.getCourseById(lesson.course_id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+            if (course.teacher_id !== workspaceTeacherId(req)) return res.status(403).json({ error: 'Not authorized' });
             const { broadcast_status } = req.body || {};
             if (!['live', 'paused', 'ended'].includes(broadcast_status)) {
                 return res.status(400).json({ error: 'broadcast_status must be live, paused, or ended' });
@@ -833,13 +843,13 @@ class LessonController {
     /** Teacher reports that the live time limit was reached; backend will force-end after grace period if not stopped. */
     async reportLimitReached(req, res) {
         try {
-            if (req.user.role !== 'teacher') return res.status(403).json({ error: 'Teachers only' });
+            if (!isTeacherWorkspaceUser(req)) return res.status(403).json({ error: 'Teachers only' });
             const lessonId = req.params.id;
             const lesson = await lessonService.getLessonById(lessonId);
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             const course = await courseService.getCourseById(lesson.course_id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+            if (course.teacher_id !== workspaceTeacherId(req)) return res.status(403).json({ error: 'Not authorized' });
             const session = await liveSessionService.setLimitReachedAt(lessonId);
             if (!session) return res.status(400).json({ error: 'No active live session for this lesson.' });
             res.status(200).json({ ok: true });
@@ -856,7 +866,7 @@ class LessonController {
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             const course = await courseService.getCourseById(lesson.course_id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            if (req.user.role !== 'teacher' || course.teacher_id !== req.user.id) {
+            if (!isTeacherWorkspaceUser(req) || course.teacher_id !== workspaceTeacherId(req)) {
                 return res.status(403).json({ error: 'Access denied' });
             }
             const watchers = await liveWatchService.getWatchers(lessonId);
@@ -984,13 +994,13 @@ class LessonController {
 
     async addLiveNote(req, res) {
         try {
-            if (req.user.role !== 'teacher') return res.status(403).json({ error: 'Teachers only' });
+            if (!isTeacherWorkspaceUser(req)) return res.status(403).json({ error: 'Teachers only' });
             const lessonId = req.params.id;
             const lesson = await lessonService.getLessonById(lessonId);
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             const course = await courseService.getCourseById(lesson.course_id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+            if (course.teacher_id !== workspaceTeacherId(req)) return res.status(403).json({ error: 'Not authorized' });
             const content = (req.body && req.body.content) || '';
             const file = req.files?.file?.[0];
             let filePath = null, fileName = null;
@@ -1028,13 +1038,13 @@ class LessonController {
 
     async addLiveAssignment(req, res) {
         try {
-            if (req.user.role !== 'teacher') return res.status(403).json({ error: 'Teachers only' });
+            if (!isTeacherWorkspaceUser(req)) return res.status(403).json({ error: 'Teachers only' });
             const lessonId = req.params.id;
             const lesson = await lessonService.getLessonById(lessonId);
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             const course = await courseService.getCourseById(lesson.course_id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+            if (course.teacher_id !== workspaceTeacherId(req)) return res.status(403).json({ error: 'Not authorized' });
             const content = (req.body && req.body.content) || '';
             const isRequired = req.body && (req.body.is_required === true || req.body.is_required === 'true');
             const file = req.files?.file?.[0];
@@ -1077,13 +1087,13 @@ class LessonController {
      */
     async uploadPreliveNoteFile(req, res) {
         try {
-            if (req.user.role !== 'teacher') return res.status(403).json({ error: 'Teachers only' });
+            if (!isTeacherWorkspaceUser(req)) return res.status(403).json({ error: 'Teachers only' });
             const lessonId = req.params.id;
             const lesson = await lessonService.getLessonById(lessonId);
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             const course = await courseService.getCourseById(lesson.course_id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+            if (course.teacher_id !== workspaceTeacherId(req)) return res.status(403).json({ error: 'Not authorized' });
             const file = req.files?.file?.[0];
             if (!file || (!file.buffer && !file.path)) {
                 return res.status(400).json({ error: 'No file uploaded' });
@@ -1120,13 +1130,13 @@ class LessonController {
      */
     async uploadPreliveAssignmentFile(req, res) {
         try {
-            if (req.user.role !== 'teacher') return res.status(403).json({ error: 'Teachers only' });
+            if (!isTeacherWorkspaceUser(req)) return res.status(403).json({ error: 'Teachers only' });
             const lessonId = req.params.id;
             const lesson = await lessonService.getLessonById(lessonId);
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             const course = await courseService.getCourseById(lesson.course_id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+            if (course.teacher_id !== workspaceTeacherId(req)) return res.status(403).json({ error: 'Not authorized' });
             const file = req.files?.file?.[0];
             if (!file || (!file.buffer && !file.path)) {
                 return res.status(400).json({ error: 'No file uploaded' });
@@ -1159,7 +1169,7 @@ class LessonController {
 
     async deleteLesson(req, res) {
         try {
-            if (req.user.role !== 'teacher') {
+            if (!isTeacherWorkspaceUser(req)) {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
             const existingLesson = await lessonService.getLessonById(req.params.id);
@@ -1170,7 +1180,7 @@ class LessonController {
             if (!course) {
                 return res.status(404).json({ error: 'Course not found' });
             }
-            if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+            if (course.teacher_id !== workspaceTeacherId(req)) return res.status(403).json({ error: 'Not authorized' });
 
             await lessonService.deleteLesson(req.params.id);
             res.json({ message: 'Lesson deleted successfully' });
@@ -1186,7 +1196,7 @@ class LessonController {
      */
     async saveLiveRecording(req, res) {
         try {
-            if (req.user.role !== 'teacher') {
+            if (!isTeacherWorkspaceUser(req)) {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
             const lessonId = req.params.id;
@@ -1203,7 +1213,7 @@ class LessonController {
 
             const course = await courseService.getCourseById(lesson.course_id);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            if (course.teacher_id !== req.user.id) return res.status(403).json({ error: 'Not authorized to save recording for this lesson.' });
+            if (course.teacher_id !== workspaceTeacherId(req)) return res.status(403).json({ error: 'Not authorized to save recording for this lesson.' });
 
             const liveSession = await liveSessionService.getActiveByLesson(lessonId);
             if (!liveSession) {

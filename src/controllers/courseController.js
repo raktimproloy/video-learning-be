@@ -11,6 +11,14 @@ const fs = require('fs');
 const userService = require('../services/userService');
 const { normalizeExternalImageUrl } = require('../utils/externalMediaUrl');
 
+function workspaceTeacherId(req) {
+    return req.effectiveTeacherId || req.user.id;
+}
+
+function isTeacherActor(req) {
+    return req.user?.role === 'teacher' || req.user?.role === 'teacher_staff';
+}
+
 function enrichCourseMediaUrls(courses, req) {
     const apiUrl = process.env.BASE_URL || 'http://localhost:5000';
     const v1Url = `${apiUrl}/v1`;
@@ -126,7 +134,7 @@ class CourseController {
                 }
                 const externalThumbnailUrl = thumbnailPath ? null : externalThumbnailUrlRaw;
                 const specific = trim(raw.specific_category_id) || trim(raw.admin_category_id) || null;
-                const course = await courseService.createExternalCourse(req.user.id, {
+                const course = await courseService.createExternalCourse(workspaceTeacherId(req), {
                     title: title.trim(),
                     shortDescription: shortDescription.trim(),
                     fullDescription: (fullDescription || shortDescription).trim(),
@@ -291,7 +299,7 @@ class CourseController {
                 testCourse: isCoreMember && (testCourse === 'true' || testCourse === true)
             };
 
-            const course = await courseService.createCourse(req.user.id, courseData);
+            const course = await courseService.createCourse(workspaceTeacherId(req), courseData);
             
             // If R2 was used with temp courseId, update paths with actual courseId
             if (r2Storage.isConfigured && course.id && (thumbnailPath || introVideoPath)) {
@@ -391,7 +399,7 @@ class CourseController {
             if (!existingCourse) {
                 return res.status(404).json({ error: 'Course not found' });
             }
-            if (String(existingCourse.teacher_id) !== String(req.user.id)) {
+            if (String(existingCourse.teacher_id) !== String(workspaceTeacherId(req))) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
             const file = req.file;
@@ -450,10 +458,10 @@ class CourseController {
 
     async getMyCourses(req, res) {
         try {
-            if (req.user.role !== 'teacher') {
+            if (!isTeacherActor(req)) {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
-            const courses = await courseService.getCoursesByTeacher(req.user.id);
+            const courses = await courseService.getCoursesByTeacher(workspaceTeacherId(req));
             const enriched = enrichCourseMediaUrls(courses, req);
             res.json(enriched);
         } catch (error) {
@@ -464,7 +472,7 @@ class CourseController {
 
     async getMyStudents(req, res) {
         try {
-            if (req.user.role !== 'teacher') {
+            if (!isTeacherActor(req)) {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
             const page = Math.max(1, parseInt(req.query.page) || 1);
@@ -472,7 +480,7 @@ class CourseController {
             const offset = (page - 1) * limit;
 
             const { students, total } = await courseService.getStudentsEnrolledInTeacherCourses(
-                req.user.id,
+                workspaceTeacherId(req),
                 limit,
                 offset
             );
@@ -527,7 +535,7 @@ class CourseController {
 
     async getTeacherRevenue(req, res) {
         try {
-            const teacherId = req.user.id;
+            const teacherId = workspaceTeacherId(req);
             const data = await courseService.getTeacherRevenueDetailed(teacherId);
             res.json({
                 currency: data.currency,
@@ -548,7 +556,7 @@ class CourseController {
 
     async getTeacherPurchaseHistory(req, res) {
         try {
-            const teacherId = req.user.id;
+            const teacherId = workspaceTeacherId(req);
             const page = Math.max(1, parseInt(req.query.page, 10) || 1);
             const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 10));
             const offset = (page - 1) * limit;
@@ -569,7 +577,7 @@ class CourseController {
 
     async getTeacherDashboardStats(req, res) {
         try {
-            const teacherId = req.user.id;
+            const teacherId = workspaceTeacherId(req);
             const stats = await courseService.getTeacherDashboardStats(teacherId);
             res.json(stats);
         } catch (error) {
@@ -580,7 +588,7 @@ class CourseController {
 
     async requestWithdraw(req, res) {
         try {
-            const teacherId = req.user.id;
+            const teacherId = workspaceTeacherId(req);
             const { payment_method_id: paymentMethodId } = req.body || {};
             const teacherWithdrawRequestService = require('../services/teacherWithdrawRequestService');
             const request = await teacherWithdrawRequestService.create(teacherId, {
@@ -916,7 +924,7 @@ class CourseController {
             if (!existingCourse) {
                 return res.status(404).json({ error: 'Course not found' });
             }
-            if (existingCourse.teacher_id !== req.user.id) {
+            if (existingCourse.teacher_id !== workspaceTeacherId(req)) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
 
@@ -1194,7 +1202,7 @@ class CourseController {
             if (!course) {
                 return res.status(404).json({ error: 'Course not found' });
             }
-            if (course.teacher_id !== req.user.id) {
+            if (course.teacher_id !== workspaceTeacherId(req)) {
                 return res.status(403).json({ error: 'Not authorized to request for this course.' });
             }
             if (course.has_live_class) {
@@ -1222,7 +1230,7 @@ class CourseController {
             if (!existingCourse) {
                 return res.status(404).json({ error: 'Course not found' });
             }
-            if (String(existingCourse.teacher_id) !== String(req.user.id)) {
+            if (String(existingCourse.teacher_id) !== String(workspaceTeacherId(req))) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
 

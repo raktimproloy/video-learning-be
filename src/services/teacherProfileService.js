@@ -104,7 +104,11 @@ class TeacherProfileService {
                 tp.bio,
                 tp.location,
                 tp.profile_image_path,
-                tp.institute_name,
+                COALESCE(
+                  (SELECT ti.name FROM teacher_institutes ti WHERE ti.teacher_id = tp.user_id AND ti.status = 'active' LIMIT 1),
+                  tp.institute_name
+                ) as institute_name,
+                (SELECT ti.slug FROM teacher_institutes ti WHERE ti.teacher_id = tp.user_id AND ti.status = 'active' LIMIT 1) as institute_slug,
                 ${isVerifiedSelect},
                 tp.specialization,
                 tp.education,
@@ -163,6 +167,7 @@ class TeacherProfileService {
             location: profile.location,
             profile_image_path: profile.profile_image_path,
             institute_name: profile.institute_name || null,
+            institute_slug: profile.institute_slug || null,
             is_verified: !!profile.is_verified,
             coreMember: !!profile.core_member,
             specialization,
