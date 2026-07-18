@@ -358,7 +358,8 @@ class CourseService {
         };
     }
 
-    async getCoursesByTeacher(teacherId) {
+    async getCoursesByTeacher(teacherId, options = {}) {
+        const { onlyActive = false } = options;
         // Check if reviews table exists
         const tableCheck = await db.query(`
             SELECT EXISTS (
@@ -398,7 +399,7 @@ class CourseService {
             FROM courses c
             LEFT JOIN users ON c.teacher_id = users.id
             LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
-            WHERE c.teacher_id = $1 
+            WHERE c.teacher_id = $1 ${onlyActive ? "AND c.status = 'active'" : ""}
             ORDER BY c.created_at DESC`,
             [teacherId]
         );

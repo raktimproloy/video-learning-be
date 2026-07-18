@@ -118,6 +118,7 @@ class TeacherDiscoveryService {
             tp.institute_name
           ) AS institute_name,
           (SELECT ti.slug FROM teacher_institutes ti WHERE ti.teacher_id = u.id AND ti.status = 'active' LIMIT 1) AS institute_slug,
+          (SELECT ti.cover_path FROM teacher_institutes ti WHERE ti.teacher_id = u.id AND ti.status = 'active' LIMIT 1) AS institute_cover_path,
           ${verifiedSelect} AS verified,
           COALESCE(cf.has_academic, false) AS has_academic,
           COALESCE(cf.has_skill, false) AS has_skill,
@@ -127,8 +128,8 @@ class TeacherDiscoveryService {
              JOIN courses c ON ce.course_id = c.id
             WHERE c.teacher_id = u.id AND c.status = 'active'
           ) AS student_count,
-          (SELECT COALESCE(AVG(tr.rating), 0)::float FROM teacher_reviews tr WHERE tr.teacher_id = u.id) AS rating,
-          (SELECT COUNT(*)::int FROM teacher_reviews tr WHERE tr.teacher_id = u.id) AS review_count
+          (SELECT COALESCE(AVG(r.rating), 0)::float FROM reviews r JOIN courses c ON r.course_id = c.id WHERE c.teacher_id = u.id AND c.status = 'active') AS rating,
+          (SELECT COUNT(*)::int FROM reviews r JOIN courses c ON r.course_id = c.id WHERE c.teacher_id = u.id AND c.status = 'active') AS review_count
         FROM users u
         LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
         LEFT JOIN course_flags cf ON cf.teacher_id = u.id
@@ -141,6 +142,7 @@ class TeacherDiscoveryService {
         profile_image_path,
         institute_name,
         institute_slug,
+        institute_cover_path,
         verified,
         rating,
         review_count,
@@ -178,6 +180,7 @@ class TeacherDiscoveryService {
       name: r.name,
       instituteName: r.institute_name || null,
       instituteSlug: r.institute_slug || null,
+      instituteCoverPath: r.institute_cover_path || null,
       profileImagePath: r.profile_image_path || null,
       verified: !!r.verified,
       rating: Number(r.rating) || 0,
@@ -185,6 +188,122 @@ class TeacherDiscoveryService {
       courseCount: Number(r.course_count) || 0,
       totalStudents: Number(r.student_count) || 0,
       category: r.category || null,
+    }));
+
+    return {
+      teachers,
+      limit,
+      cursor,
+      nextCursor,
+      hasMore,
+    };
+  }
+
+  /**
+   * Public teacher search listing with random stable sorting.
+   *
+   * @param {{ limit?: number, cursor?: number, q?: string, seed?: string }} options
+   */
+  async searchTeachers(options = {}) {
+    const { limit = 20, cursor = 0, q = '', seed = 'default' } = options;
+
+    const { academicIds, skillIds } = await this._getTopCategoryIds();
+
+    // Cache the raw list of ALL active teachers for 30 minutes to eliminate DB strain from complex random sorting
+    const allTeachers = await cache.getOrSet('public:teachers:all_active_v3', 30 * 60 * 1000, async () => {
+      const sql = `
+        WITH course_flags AS (
+          SELECT
+            c.teacher_id,
+            BOOL_OR(
+              c.status = 'active'
+              AND (
+                c.admin_category_id = ANY($1::uuid[])
+                OR c.main_category_id = ANY($1::uuid[])
+                OR c.sub_category_id = ANY($1::uuid[])
+                OR LOWER(REPLACE(TRIM(COALESCE(c.category, '')), ' ', '-')) = 'academic'
+              )
+            ) AS has_academic,
+            BOOL_OR(
+              c.status = 'active'
+              AND (
+                c.admin_category_id = ANY($2::uuid[])
+                OR c.main_category_id = ANY($2::uuid[])
+                OR c.sub_category_id = ANY($2::uuid[])
+                OR LOWER(REPLACE(TRIM(COALESCE(c.category, '')), ' ', '-')) IN ('skill-based', 'skill')
+              )
+            ) AS has_skill
+          FROM courses c
+          GROUP BY c.teacher_id
+        )
+        SELECT
+          u.id,
+          u.name,
+          u.email,
+          tp.profile_image_path,
+          COALESCE(
+            (SELECT ti.name FROM teacher_institutes ti WHERE ti.teacher_id = u.id AND ti.status = 'active' LIMIT 1),
+            tp.institute_name
+          ) AS institute_name,
+          (SELECT ti.slug FROM teacher_institutes ti WHERE ti.teacher_id = u.id AND ti.status = 'active' LIMIT 1) AS institute_slug,
+          (SELECT ti.cover_path FROM teacher_institutes ti WHERE ti.teacher_id = u.id AND ti.status = 'active' LIMIT 1) AS institute_cover_path,
+          (CASE WHEN tp.is_verified = true OR (SELECT count(*) FROM teacher_institutes WHERE teacher_id = u.id AND status = 'active') > 0 THEN true ELSE false END) AS verified,
+          COALESCE(cf.has_academic, false) AS has_academic,
+          COALESCE(cf.has_skill, false) AS has_skill,
+          (SELECT COUNT(*)::int FROM courses c WHERE c.teacher_id = u.id AND c.status = 'active') AS course_count,
+          (SELECT COUNT(DISTINCT ce.user_id)::int
+             FROM course_enrollments ce
+             JOIN courses c ON ce.course_id = c.id
+            WHERE c.teacher_id = u.id AND c.status = 'active'
+          ) AS student_count,
+          (SELECT COALESCE(AVG(r.rating), 0)::float FROM reviews r JOIN courses c ON r.course_id = c.id WHERE c.teacher_id = u.id AND c.status = 'active') AS rating,
+          (SELECT COUNT(*)::int FROM reviews r JOIN courses c ON r.course_id = c.id WHERE c.teacher_id = u.id AND c.status = 'active') AS review_count
+        FROM users u
+        LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
+        LEFT JOIN course_flags cf ON cf.teacher_id = u.id
+        WHERE (u.role = 'teacher' OR tp.user_id IS NOT NULL)
+      `;
+      const result = await db.query(sql, [academicIds.map(String), skillIds.map(String)]);
+      return result.rows;
+    });
+
+    // In-memory filter
+    let filtered = allTeachers;
+    if (q) {
+      const lowerQ = q.toLowerCase();
+      filtered = filtered.filter(t => 
+        (t.name && t.name.toLowerCase().includes(lowerQ)) ||
+        (t.institute_name && t.institute_name.toLowerCase().includes(lowerQ))
+      );
+    }
+
+    // In-memory stable shuffle based on seed
+    // Using a simple seeded pseudo-random sort
+    const seedNumber = seed.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    filtered.sort((a, b) => {
+      // Deterministic hash based on seed and teacher ID
+      const hashA = ((a.id.charCodeAt(0) + a.id.charCodeAt(a.id.length-1)) * seedNumber) % 10000;
+      const hashB = ((b.id.charCodeAt(0) + b.id.charCodeAt(b.id.length-1)) * seedNumber) % 10000;
+      return hashA - hashB;
+    });
+
+    const pageRows = filtered.slice(cursor, cursor + limit);
+    const hasMore = cursor + limit < filtered.length;
+    const nextCursor = hasMore ? cursor + limit : null;
+
+    const teachers = pageRows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      instituteName: r.institute_name || null,
+      instituteSlug: r.institute_slug || null,
+      instituteCoverPath: r.institute_cover_path || null,
+      profileImagePath: r.profile_image_path || null,
+      verified: !!r.verified,
+      rating: Number(r.rating) || 0,
+      reviewCount: Number(r.review_count) || 0,
+      courseCount: Number(r.course_count) || 0,
+      totalStudents: Number(r.student_count) || 0,
+      category: r.has_academic && r.has_skill ? 'both' : r.has_academic ? 'academic' : r.has_skill ? 'skill' : null,
     }));
 
     return {

@@ -66,6 +66,44 @@ class TeacherDiscoveryController {
       return res.status(500).json({ error: 'Internal server error' });
     }
   }
+
+  async search(req, res) {
+    try {
+      const { limit, cursor, q, seed } = req.query;
+      const options = {
+        limit: limit ? parseInt(limit, 10) : 20,
+        cursor: cursor ? parseInt(cursor, 10) : 0,
+        q: q ? String(q) : '',
+        seed: seed ? String(seed) : 'default',
+      };
+
+      const result = await teacherDiscoveryService.searchTeachers(options);
+
+      const responseBody = {
+        ...result,
+        teachers: result.teachers.map((t) => ({
+          ...t,
+          profileImageUrl: buildProfileImageUrl(req, t.profileImagePath),
+          instituteCoverUrl: buildProfileImageUrl(req, t.instituteCoverPath),
+        })),
+      };
+
+      // Simple ETag caching similar to best teachers
+      const json = JSON.stringify(responseBody);
+      const etag = `W/"${crypto.createHash('sha1').update(json).digest('hex')}"`;
+      res.set('ETag', etag);
+      res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
+      const inm = req.headers['if-none-match'];
+      if (inm && String(inm) === etag) {
+        return res.status(304).end();
+      }
+
+      return res.json(responseBody);
+    } catch (error) {
+      console.error('Search teachers error:', error);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  }
 }
 
 module.exports = new TeacherDiscoveryController();

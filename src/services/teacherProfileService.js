@@ -123,10 +123,10 @@ class TeacherProfileService {
                 tp.twitter_url,
                 u.email as login_email,
                 COALESCE(u.core_member, false) as core_member,
-                (SELECT COUNT(*) FROM courses WHERE teacher_id = u.id) as total_courses,
+                (SELECT COUNT(*) FROM courses WHERE teacher_id = u.id AND status = 'active') as total_courses,
                 (SELECT COUNT(*) FROM course_enrollments ce 
                  JOIN courses c ON ce.course_id = c.id 
-                 WHERE c.teacher_id = u.id) as total_students,
+                 WHERE c.teacher_id = u.id AND c.status = 'active') as total_students,
                 ${teacherReviewsRatingQuery} as rating,
                 ${teacherReviewsCountQuery} as total_reviews
              FROM teacher_profiles tp
