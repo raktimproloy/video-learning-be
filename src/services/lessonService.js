@@ -280,6 +280,46 @@ class LessonService {
         return result.rows;
     }
 
+    async reorderLessons(courseId, orderedIds) {
+        const client = await db.pool.connect();
+        try {
+            await client.query('BEGIN');
+            for (let i = 0; i < orderedIds.length; i++) {
+                const id = orderedIds[i];
+                await client.query(
+                    'UPDATE lessons SET "order" = $1 WHERE id = $2 AND course_id = $3',
+                    [i + 1, id, courseId]
+                );
+            }
+            await client.query('COMMIT');
+        } catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        } finally {
+            client.release();
+        }
+    }
+
+    async reorderVideosInLesson(lessonId, orderedIds) {
+        const client = await db.pool.connect();
+        try {
+            await client.query('BEGIN');
+            for (let i = 0; i < orderedIds.length; i++) {
+                const id = orderedIds[i];
+                await client.query(
+                    'UPDATE videos SET "order" = $1, lesson_id = $2 WHERE id = $3',
+                    [i + 1, lessonId, id]
+                );
+            }
+            await client.query('COMMIT');
+        } catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        } finally {
+            client.release();
+        }
+    }
+
     async deleteLesson(id) {
         await db.query('DELETE FROM lessons WHERE id = $1', [id]);
     }

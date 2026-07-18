@@ -77,6 +77,9 @@ router.get('/:id/live/exams/:examId/leaderboard', authMiddleware, lessonControll
 router.get('/:id', authMiddleware, lessonController.getLessonById);
 
 // Teacher only routes (with multer for notes/assignments file uploads)
+router.put('/reorder', authMiddleware, requireTeacherPermission('courses'), lessonController.reorderLessons);
+router.put('/videos/reorder', authMiddleware, requireTeacherPermission('courses'), lessonController.reorderVideos);
+
 router.post('/', authMiddleware, requireTeacherPermission('courses'), uploadLesson, lessonController.createLesson);
 router.put('/:id', authMiddleware, requireTeacherPermission('courses'), uploadLesson, lessonController.updateLesson);
 router.delete('/:id', authMiddleware, requireTeacherPermission('courses'), lessonController.deleteLesson);

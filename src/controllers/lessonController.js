@@ -1167,6 +1167,57 @@ class LessonController {
         }
     }
 
+    async reorderLessons(req, res) {
+        try {
+            if (!isTeacherWorkspaceUser(req)) {
+                return res.status(403).json({ error: 'Access denied. Teachers only.' });
+            }
+            const { courseId, orderedIds } = req.body;
+            if (!courseId || !Array.isArray(orderedIds)) {
+                return res.status(400).json({ error: 'Invalid input' });
+            }
+            
+            const ownerId = workspaceTeacherId(req);
+            const course = await courseService.getCourseById(courseId, ownerId);
+            if (!course || course.teacher_id !== ownerId) {
+                return res.status(403).json({ error: 'Not authorized' });
+            }
+
+            await lessonService.reorderLessons(courseId, orderedIds);
+            res.json({ message: 'Lessons reordered successfully' });
+        } catch (error) {
+            console.error('Reorder lessons error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async reorderVideos(req, res) {
+        try {
+            if (!isTeacherWorkspaceUser(req)) {
+                return res.status(403).json({ error: 'Access denied. Teachers only.' });
+            }
+            const { lessonId, orderedIds } = req.body;
+            if (!lessonId || !Array.isArray(orderedIds)) {
+                return res.status(400).json({ error: 'Invalid input' });
+            }
+            
+            const ownerId = workspaceTeacherId(req);
+            const lesson = await lessonService.getLessonById(lessonId);
+            if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
+            
+            const course = await courseService.getCourseById(lesson.course_id, ownerId);
+            if (!course || course.teacher_id !== ownerId) {
+                return res.status(403).json({ error: 'Not authorized' });
+            }
+
+            await lessonService.reorderVideosInLesson(lessonId, orderedIds);
+            res.json({ message: 'Videos reordered successfully' });
+        } catch (error) {
+            console.error('Reorder videos error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
     async deleteLesson(req, res) {
         try {
             if (!isTeacherWorkspaceUser(req)) {
