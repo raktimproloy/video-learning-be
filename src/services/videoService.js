@@ -380,13 +380,14 @@ class VideoService {
         
         await db.query(`
             INSERT INTO video_versions 
-            (video_id, storage_path, signing_secret, r2_key, duration_seconds, size_bytes, version_number, created_by_user_id, created_by_role)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            (video_id, storage_path, signing_secret, r2_key, original_r2_key, duration_seconds, size_bytes, version_number, created_by_user_id, created_by_role)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         `, [
             video.id, 
             video.storage_path, 
             video.signing_secret, 
             video.r2_key, 
+            video.original_r2_key,
             video.duration_seconds, 
             video.size_bytes, 
             video.version_number,
@@ -410,6 +411,17 @@ class VideoService {
     }
 
     /**
+     * Fetches a specific video version by ID.
+     */
+    async getVideoVersionById(versionId, videoId) {
+        const result = await db.query(
+            'SELECT * FROM video_versions WHERE id = $1 AND video_id = $2', 
+            [versionId, videoId]
+        );
+        return result.rows[0];
+    }
+
+    /**
      * Restores a video to a previous version.
      */
     async restoreVideoVersion(videoId, versionId, userId, userRole) {
@@ -426,21 +438,21 @@ class VideoService {
         
         await db.query(`
             UPDATE videos
-            SET storage_path = $1, signing_secret = $2, r2_key = $3, duration_seconds = $4, size_bytes = $5, 
-                version_number = $6, last_updated_by_user_id = $7, last_updated_by_role = $8, status = 'active'
-            WHERE id = $9
+            SET storage_path = $1, signing_secret = $2, r2_key = $3, original_r2_key = $4, duration_seconds = $5, size_bytes = $6, 
+                version_number = $7, last_updated_by_user_id = $8, last_updated_by_role = $9, status = 'active'
+            WHERE id = $10
         `, [
-            version.storage_path, version.signing_secret, version.r2_key, version.duration_seconds, version.size_bytes,
+            version.storage_path, version.signing_secret, version.r2_key, version.original_r2_key, version.duration_seconds, version.size_bytes,
             newVersionNumber, userId, userRole, videoId
         ]);
 
         // Save the restored state as the new current version in the history table
         await db.query(`
             INSERT INTO video_versions 
-            (video_id, storage_path, signing_secret, r2_key, duration_seconds, size_bytes, version_number, created_by_user_id, created_by_role)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            (video_id, storage_path, signing_secret, r2_key, original_r2_key, duration_seconds, size_bytes, version_number, created_by_user_id, created_by_role)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         `, [
-            videoId, version.storage_path, version.signing_secret, version.r2_key, version.duration_seconds, version.size_bytes,
+            videoId, version.storage_path, version.signing_secret, version.r2_key, version.original_r2_key, version.duration_seconds, version.size_bytes,
             newVersionNumber, userId, userRole
         ]);
 

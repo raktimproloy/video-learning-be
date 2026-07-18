@@ -399,6 +399,21 @@ class VideoProcessor {
                     }
                 }
 
+                // 8c. Upload original source to R2
+                if (sourcePath && fs.existsSync(sourcePath) && r2Storage.isConfigured) {
+                    try {
+                        logStep('Original', 'Uploading original unencrypted video...');
+                        const ext = path.extname(sourcePath) || '.mp4';
+                        const originalR2Key = `${video.r2_key}/original/source${ext}`;
+                        const contentType = ext.toLowerCase() === '.webm' ? 'video/webm' : 'video/mp4';
+                        await r2Storage.uploadFromPath(sourcePath, originalR2Key, contentType);
+                        await db.query('UPDATE videos SET original_r2_key = $1 WHERE id = $2', [originalR2Key, task.video_id]);
+                        logStep('Original', 'Original uploaded: %s', originalR2Key);
+                    } catch (origErr) {
+                        console.warn('[VideoProcessor] [Task %s] Original video upload failed:', task.id, origErr.message);
+                    }
+                }
+
                 if (workDir && fs.existsSync(workDir)) {
                     fs.rmSync(workDir, { recursive: true, force: true });
                     logStep('Cleanup', 'Removed work dir: %s', workDir);

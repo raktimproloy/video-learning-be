@@ -3,15 +3,15 @@ const jwt = require('jsonwebtoken');
 const verifyToken = (req, res, next) => {
     const authHeader = req.headers.authorization;
 
-    if (!authHeader) {
-        return res.status(401).json({ error: 'No token provided' });
+    let token;
+    if (authHeader) {
+        token = authHeader.split(' ')[1];
+    } else if (req.query && req.query.token) {
+        token = req.query.token;
     }
 
-    // Assuming format "Bearer <token>"
-    const token = authHeader.split(' ')[1];
-
     if (!token) {
-        return res.status(401).json({ error: 'Malformed token' });
+        return res.status(401).json({ error: 'No token provided' });
     }
 
     try {
@@ -26,8 +26,12 @@ const verifyToken = (req, res, next) => {
 /** Optional auth: set req.user if valid token, otherwise continue without req.user */
 const optionalAuth = (req, res, next) => {
     const authHeader = req.headers.authorization;
-    if (!authHeader) return next();
-    const token = authHeader.split(' ')[1];
+    let token;
+    if (authHeader) {
+        token = authHeader.split(' ')[1];
+    } else if (req.query && req.query.token) {
+        token = req.query.token;
+    }
     if (!token) return next();
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_jwt_secret');

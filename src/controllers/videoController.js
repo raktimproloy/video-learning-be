@@ -293,6 +293,128 @@ class VideoController {
             res.status(500).send('Internal server error');
         }
     }
+    
+    async streamOriginal(req, res) {
+        try {
+            const { videoId } = req.params;
+            const userId = req.user.id;
+
+            const video = await videoService.getVideoById(videoId);
+            if (!video) return res.status(404).send('Not found');
+            if (!video.original_r2_key) return res.status(404).send('Original video not available');
+
+            const isOwnerOrManager = await videoService.isOwnerOrManager(userId, videoId);
+            if (!isOwnerOrManager) return res.status(403).send('Access denied. Only the owner or manager can view the original video.');
+
+            const stream = await r2Storage.getObjectStream(video.original_r2_key);
+            const ext = video.original_r2_key.split('.').pop()?.toLowerCase();
+            const contentType = ext === 'webm' ? 'video/webm' : 'video/mp4';
+            
+            res.set('Content-Type', contentType);
+            // Optionally, handle range requests properly if required by the player
+            // But for simple streaming, returning the stream works.
+            stream.pipe(res);
+        } catch (error) {
+            console.error('Stream original error:', error);
+            if (error.name === 'NoSuchKey' || error.$metadata?.httpStatusCode === 404) {
+                return res.status(404).send('Original file not found in storage');
+            }
+            res.status(500).send('Internal server error');
+        }
+    }
+
+    async downloadOriginal(req, res) {
+        try {
+            const { videoId } = req.params;
+            const userId = req.user.id;
+
+            const video = await videoService.getVideoById(videoId);
+            if (!video) return res.status(404).send('Not found');
+            if (!video.original_r2_key) return res.status(404).send('Original video not available');
+
+            const isOwnerOrManager = await videoService.isOwnerOrManager(userId, videoId);
+            if (!isOwnerOrManager) return res.status(403).send('Access denied. Only the owner or manager can download the original video.');
+
+            const stream = await r2Storage.getObjectStream(video.original_r2_key);
+            const ext = video.original_r2_key.split('.').pop()?.toLowerCase() || 'mp4';
+            const contentType = ext === 'webm' ? 'video/webm' : 'video/mp4';
+            const filename = video.title ? `${video.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.${ext}` : `original_video.${ext}`;
+            
+            res.set('Content-Type', contentType);
+            res.set('Content-Disposition', `attachment; filename="${filename}"`);
+            stream.pipe(res);
+        } catch (error) {
+            console.error('Download original error:', error);
+            if (error.name === 'NoSuchKey' || error.$metadata?.httpStatusCode === 404) {
+                return res.status(404).send('Original file not found in storage');
+            }
+            res.status(500).send('Internal server error');
+        }
+    }
+
+    async streamVersionOriginal(req, res) {
+        try {
+            const { videoId, versionId } = req.params;
+            const userId = req.user.id;
+
+            const video = await videoService.getVideoById(videoId);
+            if (!video) return res.status(404).send('Not found');
+            
+            const version = await videoService.getVideoVersionById(versionId, videoId);
+            if (!version) return res.status(404).send('Version not found');
+            if (!version.original_r2_key) return res.status(404).send('Original video not available for this version');
+
+            const isOwnerOrManager = await videoService.isOwnerOrManager(userId, videoId);
+            if (!isOwnerOrManager) return res.status(403).send('Access denied. Only the owner or manager can view the original video.');
+
+            const stream = await r2Storage.getObjectStream(version.original_r2_key);
+            const ext = version.original_r2_key.split('.').pop()?.toLowerCase();
+            const contentType = ext === 'webm' ? 'video/webm' : 'video/mp4';
+            
+            res.set('Content-Type', contentType);
+            stream.pipe(res);
+        } catch (error) {
+            console.error('Stream version original error:', error);
+            if (error.name === 'NoSuchKey' || error.$metadata?.httpStatusCode === 404) {
+                return res.status(404).send('Original file not found in storage');
+            }
+            res.status(500).send('Internal server error');
+        }
+    }
+
+    async downloadVersionOriginal(req, res) {
+        try {
+            const { videoId, versionId } = req.params;
+            const userId = req.user.id;
+
+            const video = await videoService.getVideoById(videoId);
+            if (!video) return res.status(404).send('Video not found');
+            
+            const version = await videoService.getVideoVersionById(versionId, videoId);
+            if (!version) return res.status(404).send('Version not found');
+            if (!version.original_r2_key) return res.status(404).send('Original video not available for this version');
+
+            const isOwnerOrManager = await videoService.isOwnerOrManager(userId, videoId);
+            if (!isOwnerOrManager) return res.status(403).send('Access denied. Only the owner or manager can download the original video.');
+
+            const stream = await r2Storage.getObjectStream(version.original_r2_key);
+            const ext = version.original_r2_key.split('.').pop()?.toLowerCase() || 'mp4';
+            const contentType = ext === 'webm' ? 'video/webm' : 'video/mp4';
+            const titleSafe = video.title ? video.title.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 'video';
+            const filename = `${titleSafe}_v${version.version_number}.${ext}`;
+            
+            res.set('Content-Type', contentType);
+            res.set('Content-Disposition', `attachment; filename="${filename}"`);
+            stream.pipe(res);
+        } catch (error) {
+            console.error('Download version original error:', error);
+            if (error.name === 'NoSuchKey' || error.$metadata?.httpStatusCode === 404) {
+                return res.status(404).send('Original file not found in storage');
+            }
+            res.status(500).send('Internal server error');
+        }
+    }
+
     async getThumbnail(req, res) {
         try {
             const { videoId } = req.params;

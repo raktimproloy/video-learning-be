@@ -103,9 +103,9 @@ class CourseController {
                 const externalWhatsapp = trim(raw.externalWhatsapp) || null;
                 const externalPhone = trim(raw.externalPhone) || null;
                 const priceDisplayPeriod = trim(raw.priceDisplayPeriod) || null;
-                if (!title || !shortDescription || !externalUrl || price === undefined || price === '' || !currency) {
+                if (!title || !externalUrl || price === undefined || price === '' || !currency) {
                     return res.status(400).json({
-                        error: 'External URL courses require: title, shortDescription, externalUrl, price, currency',
+                        error: 'External URL courses require: title, externalUrl, price, currency',
                     });
                 }
                 let parsedTags = [];
@@ -168,7 +168,6 @@ class CourseController {
             // Validate required fields and report which are missing
             const required = [
                 { key: 'title', value: title },
-                { key: 'shortDescription', value: shortDescription },
                 { key: 'level', value: level },
                 { key: 'courseType', value: courseType },
                 { key: 'price', value: price },
@@ -178,7 +177,7 @@ class CourseController {
             if (missing.length > 0) {
                 return res.status(400).json({
                     error: 'Missing required fields',
-                    required: ['title', 'shortDescription', 'level', 'courseType', 'price', 'currency'],
+                    required: ['title', 'level', 'courseType', 'price', 'currency'],
                     missing,
                 });
             }

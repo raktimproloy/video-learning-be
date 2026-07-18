@@ -23,6 +23,18 @@ router.get('/:videoId/sign', optionalAuth, videoController.getSignedUrl);
 // Get archived live chat for a video saved from live (video_id = live_session_id)
 router.get('/:videoId/live-chat', verifyToken, videoController.getLiveChat);
 
+// Stream original unencrypted video (teacher only)
+router.get('/:videoId/original', verifyToken, videoController.streamOriginal);
+
+// Stream original unencrypted video for a specific version (teacher only)
+router.get('/:videoId/versions/:versionId/original', verifyToken, videoController.streamVersionOriginal);
+
+// Download original unencrypted video (teacher only)
+router.get('/:videoId/original/download', verifyToken, videoController.downloadOriginal);
+
+// Download original unencrypted video for a specific version (teacher only)
+router.get('/:videoId/versions/:versionId/original/download', verifyToken, videoController.downloadVersionOriginal);
+
 // Serve video thumbnail (first frame JPEG)
 router.get('/:videoId/thumbnail', verifyToken, videoController.getThumbnail);
 
