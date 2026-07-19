@@ -22,7 +22,7 @@ function sqlNonExternal(tableAlias = 'courses') {
 
 /** Active storefront subdomain for the course teacher (null if none). */
 function sqlActiveInstituteSlug(teacherIdExpr = 'courses.teacher_id') {
-    return `(SELECT ti.slug FROM teacher_institutes ti WHERE ti.teacher_id = ${teacherIdExpr} AND ti.status = 'active' LIMIT 1)`;
+    return require('./teacherInstituteService').getMainInstituteFieldExpr(teacherIdExpr, 'slug');
 }
 
 let homeSectionsCache = null;
@@ -1000,7 +1000,7 @@ class CourseService {
                     COALESCE(tp.name, u.email) as name,
                     tp.profile_image_path,
                     COALESCE(
-                      (SELECT ti.name FROM teacher_institutes ti WHERE ti.teacher_id = u.id AND ti.status = 'active' LIMIT 1),
+                      ${require('./teacherInstituteService').getMainInstituteFieldExpr('u.id', 'name')},
                       tp.institute_name
                     ) as institute_name,
                     ${sqlActiveInstituteSlug('u.id')} as institute_slug,

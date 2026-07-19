@@ -114,11 +114,11 @@ class TeacherDiscoveryService {
           COALESCE(tp.name, u.email) AS name,
           tp.profile_image_path,
           COALESCE(
-            (SELECT ti.name FROM teacher_institutes ti WHERE ti.teacher_id = u.id AND ti.status = 'active' LIMIT 1),
+            ${require('./teacherInstituteService').getMainInstituteFieldExpr('u.id', 'name')},
             tp.institute_name
           ) AS institute_name,
-          (SELECT ti.slug FROM teacher_institutes ti WHERE ti.teacher_id = u.id AND ti.status = 'active' LIMIT 1) AS institute_slug,
-          (SELECT ti.cover_path FROM teacher_institutes ti WHERE ti.teacher_id = u.id AND ti.status = 'active' LIMIT 1) AS institute_cover_path,
+          ${require('./teacherInstituteService').getMainInstituteFieldExpr('u.id', 'slug')} AS institute_slug,
+          ${require('./teacherInstituteService').getMainInstituteFieldExpr('u.id', 'cover_path')} AS institute_cover_path,
           ${verifiedSelect} AS verified,
           COALESCE(cf.has_academic, false) AS has_academic,
           COALESCE(cf.has_skill, false) AS has_skill,
@@ -242,11 +242,11 @@ class TeacherDiscoveryService {
           u.email,
           tp.profile_image_path,
           COALESCE(
-            (SELECT ti.name FROM teacher_institutes ti WHERE ti.teacher_id = u.id AND ti.status = 'active' LIMIT 1),
+            ${require('./teacherInstituteService').getMainInstituteFieldExpr('u.id', 'name')},
             tp.institute_name
           ) AS institute_name,
-          (SELECT ti.slug FROM teacher_institutes ti WHERE ti.teacher_id = u.id AND ti.status = 'active' LIMIT 1) AS institute_slug,
-          (SELECT ti.cover_path FROM teacher_institutes ti WHERE ti.teacher_id = u.id AND ti.status = 'active' LIMIT 1) AS institute_cover_path,
+          ${require('./teacherInstituteService').getMainInstituteFieldExpr('u.id', 'slug')} AS institute_slug,
+          ${require('./teacherInstituteService').getMainInstituteFieldExpr('u.id', 'cover_path')} AS institute_cover_path,
           (CASE WHEN tp.is_verified = true OR (SELECT count(*) FROM teacher_institutes WHERE teacher_id = u.id AND status = 'active') > 0 THEN true ELSE false END) AS verified,
           COALESCE(cf.has_academic, false) AS has_academic,
           COALESCE(cf.has_skill, false) AS has_skill,

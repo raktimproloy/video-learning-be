@@ -38,7 +38,7 @@ class TeacherProfileService {
             ? `COALESCE(tp.is_verified, false) as is_verified`
             : `false as is_verified`;
         const result = await db.query(
-            `SELECT tp.*, ${isVerifiedSelect}, u.email as login_email 
+            `SELECT tp.*, ${isVerifiedSelect}, u.email as login_email, u.name as u_name
              FROM teacher_profiles tp
              JOIN users u ON tp.user_id = u.id
              WHERE tp.user_id = $1`,
@@ -78,8 +78,10 @@ class TeacherProfileService {
             education,
             experience,
             certifications,
+            name: profile.name || profile.u_name,
             // Remove internal fields
             login_email: undefined,
+            u_name: undefined,
             experience_new: undefined
         };
     }
@@ -100,15 +102,15 @@ class TeacherProfileService {
         const result = await db.query(
             `SELECT 
                 tp.user_id,
-                tp.name,
+                COALESCE(tp.name, u.name) as name,
                 tp.bio,
                 tp.location,
                 tp.profile_image_path,
                 COALESCE(
-                  (SELECT ti.name FROM teacher_institutes ti WHERE ti.teacher_id = tp.user_id AND ti.status = 'active' LIMIT 1),
+                  ${require('./teacherInstituteService').getMainInstituteFieldExpr('tp.user_id', 'name')},
                   tp.institute_name
                 ) as institute_name,
-                (SELECT ti.slug FROM teacher_institutes ti WHERE ti.teacher_id = tp.user_id AND ti.status = 'active' LIMIT 1) as institute_slug,
+                ${require('./teacherInstituteService').getMainInstituteFieldExpr('tp.user_id', 'slug')} as institute_slug,
                 ${isVerifiedSelect},
                 tp.specialization,
                 tp.education,

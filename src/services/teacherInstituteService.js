@@ -52,6 +52,13 @@ function validateSlugFormat(slug) {
   return null;
 }
 
+function getMainInstituteFieldExpr(teacherIdExpr, fieldName) {
+  return `COALESCE(
+    (SELECT ti.${fieldName} FROM institute_affiliations ia JOIN teacher_institutes ti ON ti.id = ia.institute_id WHERE ia.teacher_id = ${teacherIdExpr} AND ia.status = 'accepted' AND ia.is_main = true LIMIT 1),
+    (SELECT ti.${fieldName} FROM teacher_institutes ti WHERE ti.teacher_id = ${teacherIdExpr} AND ti.status = 'active' LIMIT 1)
+  )`;
+}
+
 function parseJsonField(value, fallback) {
   if (value == null || value === '') return fallback;
   if (typeof value === 'object') return value;
@@ -618,6 +625,8 @@ class TeacherInstituteService {
       profile_image_url: teacherProfileImageUrl,
     };
 
+    institute.teachers = await require('./instituteAffiliationService').listInstituteTeachers(row.id);
+
     const allCourses = await courseService.getCoursesByTeacher(row.teacher_id);
     const activeCourses = (allCourses || []).filter((c) => !c.status || c.status === 'active');
 
@@ -705,3 +714,4 @@ module.exports = new TeacherInstituteService();
 module.exports.normalizeSlug = normalizeSlug;
 module.exports.validateSlugFormat = validateSlugFormat;
 module.exports.RESERVED_SLUGS = RESERVED_SLUGS;
+module.exports.getMainInstituteFieldExpr = getMainInstituteFieldExpr;
