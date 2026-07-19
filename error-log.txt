@@ -76,3 +76,5 @@
 [getVideo] req.user.id=429cdb7a-dcea-4855-a132-756490488686, req.user.role=teacher, video.owner_id=429cdb7a-dcea-4855-a132-756490488686, ownerId=429cdb7a-dcea-4855-a132-756490488686
 
 [getVideo] req.user.id=429cdb7a-dcea-4855-a132-756490488686, req.user.role=teacher, video.owner_id=429cdb7a-dcea-4855-a132-756490488686, ownerId=429cdb7a-dcea-4855-a132-756490488686
+
+[getVideo] req.user.id=429cdb7a-dcea-4855-a132-756490488686, req.user.role=teacher, video.owner_id=429cdb7a-dcea-4855-a132-756490488686, ownerId=429cdb7a-dcea-4855-a132-756490488686
