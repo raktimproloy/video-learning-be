@@ -21,7 +21,7 @@ class AdminUserService {
 
     async findById(id) {
         const result = await db.query(
-            `SELECT id, email, role, created_at FROM users 
+            `SELECT id, email, role, created_at, status, suspended_reason FROM users
              WHERE id = $1 AND role = 'admin'`,
             [id]
         );

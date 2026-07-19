@@ -6,10 +6,12 @@ const path = require('path');
 require('dotenv').config();
 
 const videoRoutes = require('./routes/videoRoutes');
+const examRoutes = require('./routes/examRoutes');
 const authRoutes = require('./routes/authRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const adminAuthRoutes = require('./routes/adminAuthRoutes');
 const adminUserRoutes = require('./routes/adminUserRoutes');
+const adminUserModerationRoutes = require('./routes/adminUserModerationRoutes');
 const adminDashboardRoutes = require('./routes/adminDashboardRoutes');
 const adminTeachersRoutes = require('./routes/adminTeachersRoutes');
 const adminStudentsRoutes = require('./routes/adminStudentsRoutes');
@@ -77,6 +79,7 @@ app.use(cors({
         'Accept',
         'Origin',
         'X-Requested-With',
+        'X-Device-Id',
     ],
     exposedHeaders: ['Content-Length', 'Content-Type'],
     maxAge: 86400,
@@ -104,10 +107,12 @@ app.use('/v1/settings', settingsRoutes);
 app.use('/v1/auth', authRoutes);
 app.use('/v1/reference', referenceRoutes);
 app.use('/v1/video', videoRoutes);
+app.use('/v1/exams', examRoutes);
 app.use('/v1/admin/auth', adminAuthRoutes);   // Public - must be before /v1/admin
 app.use('/v1/admin/dashboard', adminDashboardRoutes);
 app.use('/v1/admin/analytics', adminAnalyticsRoutes);
 app.use('/v1/admin/users', adminUserRoutes);
+app.use('/v1/admin/users', adminUserModerationRoutes);
 app.use('/v1/admin/teachers', adminTeachersRoutes);
 app.use('/v1/admin/students', adminStudentsRoutes);
 app.use('/v1/admin/courses', adminCoursesRoutes);

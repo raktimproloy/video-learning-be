@@ -1,7 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const videoController = require('../controllers/videoController');
+const examController = require('../controllers/examController');
 const verifyToken = require('../middleware/authMiddleware');
+const { requireTeacherPermission } = require('../middleware/teacherPermissionMiddleware');
 const optionalAuth = verifyToken.optional;
 
 // Endpoint to list videos with access status
@@ -37,6 +39,9 @@ router.get('/:videoId/versions/:versionId/original/download', verifyToken, video
 
 // Serve video thumbnail (first frame JPEG)
 router.get('/:videoId/thumbnail', verifyToken, videoController.getThumbnail);
+
+router.get('/:videoId/exams', verifyToken, examController.listForVideo);
+router.post('/:videoId/exams', verifyToken, requireTeacherPermission('courses'), examController.createForVideo);
 
 // Get video details (title, description, notes, assignments, lesson_id, order)
 // optionalAuth: allows guests to fetch preview video details without a 401

@@ -20,6 +20,9 @@ const verifyAdmin = async (req, res, next) => {
         if (!admin) {
             return res.status(403).json({ error: 'Access denied. Admin privileges required.' });
         }
+        if (admin.status === 'suspended') {
+            return res.status(403).json({ error: 'ACCOUNT_SUSPENDED', reason: admin.suspended_reason });
+        }
 
         req.admin = admin;
         req.user = admin;

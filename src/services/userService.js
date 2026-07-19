@@ -58,12 +58,12 @@ class UserService {
     }
 
     async findByEmail(email) {
-        const result = await db.query('SELECT id, email, role, name, core_member, onboarding_completed, onboarding_role, onboarding_category, created_at, google_id, password_hash, COALESCE(must_change_password, false) AS must_change_password FROM users WHERE email = $1', [email]);
+        const result = await db.query('SELECT id, email, role, name, core_member, onboarding_completed, onboarding_role, onboarding_category, created_at, google_id, password_hash, COALESCE(must_change_password, false) AS must_change_password, status, suspended_reason FROM users WHERE email = $1', [email]);
         return result.rows[0];
     }
 
     async findById(id) {
-        const result = await db.query('SELECT id, email, role, name, core_member, onboarding_completed, onboarding_role, onboarding_category, created_at, google_id, COALESCE(must_change_password, false) AS must_change_password FROM users WHERE id = $1', [id]);
+        const result = await db.query('SELECT id, email, role, name, core_member, onboarding_completed, onboarding_role, onboarding_category, created_at, google_id, COALESCE(must_change_password, false) AS must_change_password, status, suspended_reason FROM users WHERE id = $1', [id]);
         return result.rows[0];
     }
 

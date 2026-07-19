@@ -21,6 +21,9 @@ class AdminAuthController {
             if (!isValid) {
                 return res.status(401).json({ error: 'Invalid credentials' });
             }
+            if (admin.status === 'suspended') {
+                return res.status(403).json({ error: 'ACCOUNT_SUSPENDED', reason: admin.suspended_reason });
+            }
 
             const token = jwt.sign(
                 { id: admin.id, email: admin.email, role: 'admin' },

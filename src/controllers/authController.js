@@ -1,6 +1,9 @@
 const userService = require('../services/userService');
 const teacherProfileService = require('../services/teacherProfileService');
+const sessionService = require('../services/sessionService');
+const moderationService = require('../services/moderationService');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const axios = require('axios');
 const { OAuth2Client } = require('google-auth-library');
 const { validationResult } = require('express-validator');
@@ -8,6 +11,111 @@ const { isStaffEmailAddress, staffEmailBlockedMessage } = require('../utils/staf
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
+const PENDING_SESSION_TOKEN_TTL_SECONDS = parseInt(process.env.PENDING_SESSION_TOKEN_TTL_SECONDS || '300', 10);
+
+function publicSessionSummary(row) {
+    return {
+        id: row.id,
+        deviceLabel: row.device_label,
+        deviceType: row.device_type,
+        createdAt: row.created_at,
+        lastSeenAt: row.last_seen_at,
+    };
+}
+
+/**
+ * Shared login-completion logic used by password login, Google login, and the
+ * "free a device slot" continuation. Enforces the account-suspension check and
+ * the max-concurrent-device cap, records the new session, and runs abuse
+ * detection. Returns { status, body } for the caller to send directly.
+ */
+async function issueSession(user, req) {
+    if (user.status === 'suspended') {
+        return {
+            status: 403,
+            body: { error: 'ACCOUNT_SUSPENDED', reason: user.suspended_reason || 'Your account has been suspended.' },
+        };
+    }
+
+    const deviceId = typeof req.headers['x-device-id'] === 'string' ? req.headers['x-device-id'].trim() : '';
+    const activeSessions = await sessionService.countActive(user.id);
+
+    const sameDeviceSession = deviceId ? activeSessions.find((s) => s.device_id === deviceId) : null;
+    if (sameDeviceSession) {
+        await sessionService.revoke(sameDeviceSession.id, 'superseded');
+    } else if (activeSessions.length >= sessionService.maxConcurrentDevices) {
+        const pendingToken = jwt.sign({ id: user.id, purpose: 'free_slot' }, JWT_SECRET, {
+            expiresIn: PENDING_SESSION_TOKEN_TTL_SECONDS,
+        });
+        return {
+            status: 409,
+            body: {
+                error: 'DEVICE_LIMIT_REACHED',
+                message: 'You are already logged in on the maximum number of devices. Log out one to continue.',
+                maxDevices: sessionService.maxConcurrentDevices,
+                sessions: activeSessions.map(publicSessionSummary),
+                pendingToken,
+            },
+        };
+    }
+
+    const jti = crypto.randomUUID();
+    const expiresInSeconds = 7 * 24 * 60 * 60;
+    const token = jwt.sign(
+        { id: user.id, email: user.email, role: user.role || 'student', jti },
+        JWT_SECRET,
+        { expiresIn: expiresInSeconds }
+    );
+    const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
+    await sessionService.create({ userId: user.id, jti, deviceId: deviceId || jti, req, expiresAt });
+
+    let warning = null;
+    try {
+        const evaluation = await moderationService.evaluateDeviceAbuse(user.id);
+        if (evaluation?.action === 'warning') {
+            warning = evaluation.message;
+        } else if (evaluation?.action === 'suspended') {
+            // Suspended as a direct result of this very login — reject it immediately.
+            return {
+                status: 403,
+                body: { error: 'ACCOUNT_SUSPENDED', reason: evaluation.message },
+            };
+        }
+    } catch (evalErr) {
+        console.error('Device abuse evaluation error:', evalErr);
+    }
+
+    return { status: 200, body: { token, warning } };
+}
+
+/**
+ * Re-signs the JWT with a new role for the caller's *existing* device session
+ * (join-teacher / switch-role). Reuses the same user_sessions row in place so
+ * a role change never consumes an extra device slot. Falls back to minting a
+ * brand-new tracked session if the old one can't be found (e.g. a legacy
+ * pre-session token), rather than issuing an untracked token.
+ */
+async function reissueTokenForRoleChange(req, updatedUser) {
+    const jti = crypto.randomUUID();
+    const expiresInSeconds = 7 * 24 * 60 * 60;
+    const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
+    const token = jwt.sign(
+        { id: updatedUser.id, email: updatedUser.email, role: updatedUser.role, jti },
+        JWT_SECRET,
+        { expiresIn: expiresInSeconds }
+    );
+
+    const existing = req.user?.jti ? await sessionService.findByJti(req.user.jti) : null;
+    if (existing) {
+        await sessionService.reissue(existing.id, { jti, expiresAt });
+        const ttlCache = require('../utils/ttlCache');
+        ttlCache.delete(`session:${req.user.jti}`);
+    } else {
+        await sessionService.create({ userId: updatedUser.id, jti, deviceId: jti, req, expiresAt });
+    }
+    return token;
+}
 
 class AuthController {
     async register(req, res) {
@@ -79,17 +187,17 @@ class AuthController {
                 return res.status(400).json({ error: 'Invalid credentials' });
             }
 
-            // Generate Token
-            const token = jwt.sign(
-                { id: user.id, email: user.email, role: user.role || 'student' },
-                process.env.JWT_SECRET || 'your_jwt_secret',
-                { expiresIn: '7d' }
-            );
+            // Enforce suspension / device-limit / issue session token
+            const sessionResult = await issueSession(user, req);
+            if (sessionResult.status !== 200) {
+                return res.status(sessionResult.status).json(sessionResult.body);
+            }
 
             const needsProfileCompletion = user.onboarding_completed === false;
 
             res.json({
-                token,
+                token: sessionResult.body.token,
+                warning: sessionResult.body.warning || undefined,
                 user: {
                     id: user.id,
                     email: user.email,
@@ -105,6 +213,108 @@ class AuthController {
             });
         } catch (error) {
             console.error('Login error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    /**
+     * Continuation of a blocked login: the client picked a device session to
+     * free up (from the DEVICE_LIMIT_REACHED response) and presents the
+     * short-lived pendingToken instead of credentials.
+     */
+    async freeSlotAndLogin(req, res) {
+        const authHeader = req.headers.authorization;
+        const pendingToken = authHeader ? authHeader.split(' ')[1] : null;
+        const { sessionId } = req.body || {};
+        if (!pendingToken || !sessionId) {
+            return res.status(400).json({ error: 'sessionId and a valid pendingToken are required' });
+        }
+
+        let decoded;
+        try {
+            decoded = jwt.verify(pendingToken, JWT_SECRET);
+        } catch (err) {
+            return res.status(401).json({ error: 'Your session selection has expired. Please log in again.' });
+        }
+        if (decoded.purpose !== 'free_slot' || !decoded.id) {
+            return res.status(401).json({ error: 'Invalid session token' });
+        }
+
+        try {
+            const user = await userService.findById(decoded.id);
+            if (!user) {
+                return res.status(404).json({ error: 'User not found' });
+            }
+
+            const revoked = await sessionService.revoke(sessionId, 'slot_freed');
+            if (!revoked || revoked.user_id !== user.id) {
+                return res.status(400).json({ error: 'That device session could not be freed. Please try again.' });
+            }
+
+            const sessionResult = await issueSession(user, req);
+            if (sessionResult.status !== 200) {
+                return res.status(sessionResult.status).json(sessionResult.body);
+            }
+
+            const needsProfileCompletion = user.onboarding_completed === false;
+            res.json({
+                token: sessionResult.body.token,
+                warning: sessionResult.body.warning || undefined,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    role: user.role || 'student',
+                    name: user.name || null,
+                    coreMember: !!user.core_member,
+                    onboardingCompleted: !!user.onboarding_completed,
+                    onboardingRole: user.onboarding_role || null,
+                    onboardingCategory: user.onboarding_category || null,
+                    mustChangePassword: !!user.must_change_password,
+                },
+                needsProfileCompletion,
+            });
+        } catch (error) {
+            console.error('Free slot login error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async logout(req, res) {
+        try {
+            if (req.user?.jti) {
+                await sessionService.revoke((await sessionService.findByJti(req.user.jti))?.id, 'user_logout');
+                const ttlCache = require('../utils/ttlCache');
+                ttlCache.delete(`session:${req.user.jti}`);
+            }
+            res.json({ success: true });
+        } catch (error) {
+            console.error('Logout error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async listSessions(req, res) {
+        try {
+            const sessions = await sessionService.listForUser(req.user.id);
+            res.json({ sessions });
+        } catch (error) {
+            console.error('List sessions error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async revokeSession(req, res) {
+        try {
+            const { id } = req.params;
+            const sessions = await sessionService.listForUser(req.user.id);
+            const owned = sessions.find((s) => s.id === id);
+            if (!owned) {
+                return res.status(404).json({ error: 'Session not found' });
+            }
+            await sessionService.revoke(id, 'user_logout');
+            res.json({ success: true });
+        } catch (error) {
+            console.error('Revoke session error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     }
@@ -147,14 +357,11 @@ class AuthController {
                 await db.query('UPDATE teacher_profiles SET referred_by = $1 WHERE user_id = $2', [referredBy, userId]);
             }
 
-            // Generate new token with updated role
-            const token = jwt.sign(
-                { id: updatedUser.id, email: updatedUser.email, role: updatedUser.role },
-                process.env.JWT_SECRET || 'your_jwt_secret',
-                { expiresIn: '7d' }
-            );
+            // Reissue the JWT with the updated role, keeping the same device session
+            // (a role switch must not consume a second device slot).
+            const token = await reissueTokenForRoleChange(req, updatedUser);
 
-            res.json({ 
+            res.json({
                 message: 'Successfully joined as teacher',
                 token,
                 user: { id: updatedUser.id, email: updatedUser.email, role: updatedUser.role }
@@ -192,15 +399,11 @@ class AuthController {
                 }
                 // Update role to teacher in database
                 const updatedUser = await userService.updateRole(userId, 'teacher');
-                
-                // Generate new token with teacher role
-                const token = jwt.sign(
-                    { id: updatedUser.id, email: updatedUser.email, role: 'teacher' },
-                    process.env.JWT_SECRET || 'your_jwt_secret',
-                    { expiresIn: '7d' }
-                );
 
-                return res.json({ 
+                // Reissue token in-place with teacher role (same device session)
+                const token = await reissueTokenForRoleChange(req, updatedUser);
+
+                return res.json({
                     message: `Role switched to teacher`,
                     token,
                     user: { id: updatedUser.id, email: updatedUser.email, role: updatedUser.role }
@@ -208,15 +411,11 @@ class AuthController {
             } else {
                 // Switching to student - update database role to student
                 const updatedUser = await userService.updateRole(userId, 'student');
-                
-                // Generate new token with student role
-                const token = jwt.sign(
-                    { id: updatedUser.id, email: updatedUser.email, role: 'student' },
-                    process.env.JWT_SECRET || 'your_jwt_secret',
-                    { expiresIn: '7d' }
-                );
 
-                return res.json({ 
+                // Reissue token in-place with student role (same device session)
+                const token = await reissueTokenForRoleChange(req, updatedUser);
+
+                return res.json({
                     message: `Role switched to student`,
                     token,
                     user: { id: updatedUser.id, email: updatedUser.email, role: updatedUser.role }
@@ -302,16 +501,16 @@ class AuthController {
             // If user signed in with Google, mark teacher account email as verified (same email)
             await teacherProfileService.markAccountEmailVerifiedIfGoogle(user.id, user.email);
 
-            const token = jwt.sign(
-                { id: user.id, email: user.email, role: user.role || 'student' },
-                process.env.JWT_SECRET || 'your_jwt_secret',
-                { expiresIn: '7d' }
-            );
+            const sessionResult = await issueSession(user, req);
+            if (sessionResult.status !== 200) {
+                return res.status(sessionResult.status).json(sessionResult.body);
+            }
 
             const needsProfileCompletion = user.onboarding_completed === false;
 
             res.json({
-                token,
+                token: sessionResult.body.token,
+                warning: sessionResult.body.warning || undefined,
                 user: {
                     id: user.id,
                     email: user.email,

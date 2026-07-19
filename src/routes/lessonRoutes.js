@@ -4,6 +4,7 @@ const router = express.Router();
 const fs = require('fs');
 const path = require('path');
 const lessonController = require('../controllers/lessonController');
+const examController = require('../controllers/examController');
 const authMiddleware = require('../middleware/authMiddleware');
 const { requireRole } = require('../middleware/roleMiddleware');
 const { requireTeacherPermission } = require('../middleware/teacherPermissionMiddleware');
@@ -74,6 +75,8 @@ router.post('/:id/live/exams', authMiddleware, requireTeacherPermission('courses
 router.put('/:id/live/exams/:examId/status', authMiddleware, requireTeacherPermission('courses'), lessonController.setLiveExamStatus);
 router.post('/:id/live/exams/:examId/submit', authMiddleware, requireRole(['student']), lessonController.submitLiveExam);
 router.get('/:id/live/exams/:examId/leaderboard', authMiddleware, lessonController.getLiveExamLeaderboard);
+router.get('/:id/exams', authMiddleware, examController.listForLesson);
+router.post('/:id/exams', authMiddleware, requireTeacherPermission('courses'), examController.createForLesson);
 router.get('/:id', authMiddleware, lessonController.getLessonById);
 
 // Teacher only routes (with multer for notes/assignments file uploads)

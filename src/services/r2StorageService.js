@@ -199,6 +199,33 @@ async function uploadVideoMedia(teacherId, courseId, lessonId, videoId, fileBuff
 }
 
 /**
+ * R2 key prefix for exam media (question/passage/option/solution images, uploaded templates).
+ */
+function getExamMediaKeyPrefix(teacherId, courseId, examId, type) {
+  return `teachers/${teacherId}/courses/${courseId}/exams/${examId}/${type}`;
+}
+
+/**
+ * Upload an exam image (question/passage/option/solution) to R2.
+ */
+async function uploadExamMedia(teacherId, courseId, examId, fileBuffer, originalFilename, type = 'images') {
+  if (!r2Config.isConfigured) {
+    throw new Error('R2 is not configured');
+  }
+  const timestamp = Date.now();
+  const ext = require('path').extname(originalFilename) || '.jpg';
+  const filename = `${type}-${timestamp}${ext}`;
+  const key = getExamMediaKeyPrefix(teacherId, courseId, examId, type) + '/' + filename;
+  const extLower = ext.toLowerCase();
+  let contentType = 'image/jpeg';
+  if (extLower === '.png') contentType = 'image/png';
+  else if (extLower === '.gif') contentType = 'image/gif';
+  else if (extLower === '.webp') contentType = 'image/webp';
+  await uploadFile(key, fileBuffer, contentType);
+  return key;
+}
+
+/**
  * Upload a file from buffer or path (stream).
  */
 async function uploadFile(key, body, contentType = 'application/octet-stream') {
@@ -439,8 +466,10 @@ module.exports = {
   getInstituteMediaKeyPrefix,
   getLessonMediaKeyPrefix,
   getVideoMediaKeyPrefix,
+  getExamMediaKeyPrefix,
   uploadLessonMedia,
   uploadVideoMedia,
+  uploadExamMedia,
   uploadFile,
   uploadStream,
   uploadFromPath,

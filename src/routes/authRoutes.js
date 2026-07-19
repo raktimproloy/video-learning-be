@@ -55,4 +55,12 @@ router.post(
     authController.postLinkGoogle
 );
 
+router.post('/sessions/free', authLimiter, authController.freeSlotAndLogin);
+
+router.post('/logout', verifyToken, authController.logout);
+
+router.get('/sessions', verifyToken, authController.listSessions);
+
+router.delete('/sessions/:id', verifyToken, authController.revokeSession);
+
 module.exports = router;
