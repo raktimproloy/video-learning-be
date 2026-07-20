@@ -372,7 +372,7 @@ class CourseController {
                 if (Object.keys(updates).length > 0) {
                     await courseService.updateCourse(course.id, updates);
                     // Fetch updated course
-                    const updatedCourse = await courseService.getCourseById(course.id);
+                    const updatedCourse = await courseService.getCourseById(course.id, workspaceTeacherId(req));
                     return res.status(201).json(updatedCourse);
                 }
             }
