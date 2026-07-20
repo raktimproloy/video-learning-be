@@ -1322,6 +1322,21 @@ class CourseController {
             if (course.status && course.status !== 'active') {
                 return res.status(400).json({ error: 'This course is not available for purchase' });
             }
+
+            // Direct enrollment if the user is the course instructor
+            if (course.teacher_id === userId) {
+                await courseService.enrollUser(userId, courseId, {
+                    inviteCode: inviteCode || undefined,
+                    amountPaid: 0,
+                    currency: course.currency || 'USD',
+                });
+                return res.json({
+                    message: 'Enrolled in your own course successfully',
+                    payment_method: paymentMethod || null,
+                    enrolledDirectly: true
+                });
+            }
+
             let finalAmount = course.discount_price != null ? parseFloat(course.discount_price) : parseFloat(course.price) || 0;
             const finalCurrency = course.currency || 'USD';
             if (couponCode) {
@@ -1603,6 +1618,20 @@ class CourseController {
             const alreadyEnrolled = await courseService.isEnrolled(userId, courseId);
             if (alreadyEnrolled) {
                 return res.status(400).json({ error: 'You are already enrolled in this course' });
+            }
+
+            // Direct enrollment if the user is the course instructor
+            if (course.teacher_id === userId) {
+                await courseService.enrollUser(userId, courseId, {
+                    inviteCode: inviteCode || undefined,
+                    amountPaid: 0,
+                    currency: course.currency || 'BDT',
+                });
+                return res.status(200).json({
+                    success: true,
+                    enrolledDirectly: true,
+                    message: 'Enrolled in your own course successfully.'
+                });
             }
 
             let finalAmount = course.discount_price != null ? parseFloat(course.discount_price) : parseFloat(course.price) || 0;
