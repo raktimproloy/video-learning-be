@@ -18,7 +18,7 @@ function isTeacherWorkspaceUser(req) {
 async function resolveLessonContext(req, lessonId) {
     const lesson = await lessonService.getLessonById(lessonId);
     if (!lesson) return { ok: false, status: 404, error: 'Lesson not found' };
-    const course = await courseService.getCourseById(lesson.course_id);
+    const course = await courseService.getCourseById(lesson.course_id, workspaceTeacherId(req));
     if (!course) return { ok: false, status: 404, error: 'Course not found' };
     if (course.teacher_id !== workspaceTeacherId(req)) return { ok: false, status: 403, error: 'Not authorized' };
     return { ok: true, lesson, course };
@@ -44,7 +44,7 @@ class ExamController {
             const lessonId = req.params.id;
             const lesson = await lessonService.getLessonById(lessonId);
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
-            const course = await courseService.getCourseById(lesson.course_id);
+            const course = await courseService.getCourseById(lesson.course_id, req.user.id, req.user.role);
             if (!course) return res.status(404).json({ error: 'Course not found' });
             const isTeacher = isTeacherWorkspaceUser(req) && course.teacher_id === workspaceTeacherId(req);
             const isStudent = req.user.role === 'student';

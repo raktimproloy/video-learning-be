@@ -73,7 +73,7 @@ async function getLessonStatus(req, res) {
 
     const lesson = await lessonService.getLessonById(lessonId);
     if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
-    const course = await courseService.getCourseById(lesson.course_id);
+    const course = await courseService.getCourseById(lesson.course_id, req.user?.id, req.user?.role);
     const enrolled = await db.query(
       'SELECT 1 FROM course_enrollments WHERE user_id = $1 AND course_id = $2',
       [userId, lesson.course_id]
