@@ -124,7 +124,7 @@ class AdminController {
             if (!lesson_id || !file_name) {
                 return res.status(400).json({ error: 'lesson_id and file_name are required.' });
             }
-            
+
             let ownerId;
             try {
                 ownerId = await getEffectiveOwnerId(req, lesson_id);
@@ -218,11 +218,13 @@ class AdminController {
         const videoFile = files.find((f) => f.fieldname === 'video');
         const videoR2StagingKey = req.body?.video_r2_staging_key;
         const videoR2Prefix = req.body?.video_r2_prefix;
-        if (!videoFile && !videoR2StagingKey) {
+        const { title, description, order, isPreview, is_uploading } = req.body;
+        const isUploadingFlag = is_uploading === 'true' || is_uploading === true;
+
+        if (!isUploadingFlag && !videoFile && !videoR2StagingKey) {
             return res.status(400).json({ error: 'No video upload data found. Upload a video file first.' });
         }
 
-        const { title, description, order, isPreview } = req.body;
         const { notes, assignments } = parseNotesAndAssignments(req.body);
         const useR2 = r2Storage.isConfigured;
 
@@ -268,6 +270,11 @@ class AdminController {
                     storageProvider: 'r2',
                     r2Key: null,
                 });
+
+                if (isUploadingFlag && !videoFile && !videoR2StagingKey) {
+                    return res.status(201).json(video);
+                }
+
                 const r2Prefix = r2Storage.getVideoKeyPrefix(ownerId, effectiveCourseId, effectiveLessonId, video.id);
                 if (videoR2StagingKey && videoR2Prefix) {
                     // Move finalized multipart object from temp prefix to final video prefix.
@@ -279,14 +286,14 @@ class AdminController {
                     const ext = path.extname(videoR2StagingKey) || '.mp4';
                     const finalStagingKey = `${r2Prefix}/staging/input${ext}`;
                     await r2Storage.uploadStream(finalStagingKey, tempStream, 'application/octet-stream');
-                    try { await r2Storage.deletePrefix(videoR2Prefix); } catch (e) {}
+                    try { await r2Storage.deletePrefix(videoR2Prefix); } catch (e) { }
                 } else {
                     const r2StagingKey = `${r2Prefix}/staging/input.mp4`;
                     const uploadedPath = path.isAbsolute(videoFile.path) ? videoFile.path : path.resolve(process.cwd(), videoFile.path);
                     if (!fs.existsSync(uploadedPath)) throw new Error(`Uploaded file not found at ${uploadedPath}. Ensure uploads directory exists.`);
                     const fileBuffer = fs.readFileSync(uploadedPath);
                     await r2Storage.uploadFile(r2StagingKey, fileBuffer, 'video/mp4');
-                    try { fs.unlinkSync(uploadedPath); } catch (e) {}
+                    try { fs.unlinkSync(uploadedPath); } catch (e) { }
                 }
                 await adminService.updateVideoR2(video.id, r2Prefix);
 
@@ -308,6 +315,11 @@ class AdminController {
             }
 
             const video = await adminService.createVideo(title, 'pending_creation', ownerId, lesson_id, parseInt(order, 10) || 0, videoOptions);
+
+            if (isUploadingFlag && !videoFile && !videoR2StagingKey) {
+                return res.status(201).json(video);
+            }
+
             const publicVideosDir = path.join(__dirname, '../../public/videos');
             const videoDir = path.join(publicVideosDir, video.id);
             if (!fs.existsSync(videoDir)) fs.mkdirSync(videoDir, { recursive: true });
@@ -336,7 +348,7 @@ class AdminController {
             console.error('Add Video Error:', error);
             const cleanupPaths = (req.files || []).map((f) => f.path && (path.isAbsolute(f.path) ? f.path : path.resolve(process.cwd(), f.path)));
             cleanupPaths.forEach((p) => {
-                if (p && fs.existsSync(p)) { try { fs.unlinkSync(p); } catch (e) {} }
+                if (p && fs.existsSync(p)) { try { fs.unlinkSync(p); } catch (e) { } }
             });
             if (error.code === '23503') return res.status(400).json({ error: 'Invalid user or lesson. Please sign in again and try again.' });
             const message = error.message || 'Video upload failed. Please try again.';
@@ -353,8 +365,8 @@ class AdminController {
         try {
             const { user_id, video_id, duration_seconds } = req.body;
             // Default to 1 hour if not specified
-            const duration = duration_seconds || 3600; 
-            
+            const duration = duration_seconds || 3600;
+
             const permission = await adminService.grantPermission(user_id, video_id, duration);
             res.status(200).json({ message: 'Permission granted', permission });
         } catch (error) {
@@ -383,13 +395,13 @@ class AdminController {
     async deleteVideo(req, res) {
         try {
             const videoId = req.params.id;
-            
+
             const video = await videoService.getVideoById(videoId);
             if (!video) return res.status(404).json({ error: 'Video not found' });
-            
+
             let ownerId;
             try { ownerId = await getEffectiveOwnerId(req, video.lesson_id, null); } catch (e) { return res.status(403).json({ error: e.message }); }
-            
+
             if (video.owner_id !== ownerId) {
                 return res.status(404).json({ error: 'Video not found or access denied' });
             }
@@ -408,16 +420,16 @@ class AdminController {
     async getVideo(req, res) {
         try {
             const videoId = req.params.id;
-            
+
             const video = await videoService.getVideoById(videoId);
             if (!video) return res.status(404).json({ error: 'Video not found' });
-            
+
             let ownerId;
-            try { 
-                ownerId = await getEffectiveOwnerId(req, video.lesson_id, null); 
-            } catch (e) { 
+            try {
+                ownerId = await getEffectiveOwnerId(req, video.lesson_id, null);
+            } catch (e) {
                 require('fs').appendFileSync('error-log.txt', `\n[getVideo] EffectiveOwner Error: ${e.message}\n`);
-                return res.status(403).json({ error: e.message }); 
+                return res.status(403).json({ error: e.message });
             }
 
             require('fs').appendFileSync('error-log.txt', `\n[getVideo] req.user.id=${req.user.id}, req.user.role=${req.user.role}, video.owner_id=${video.owner_id}, ownerId=${ownerId}\n`);
@@ -445,17 +457,17 @@ class AdminController {
     async getProcessingStatus(req, res) {
         try {
             const videoId = req.params.id;
-            
+
             const video = await videoService.getVideoById(videoId);
             if (!video) return res.status(404).json({ error: 'Video not found' });
-            
+
             let ownerId;
             try { ownerId = await getEffectiveOwnerId(req, video.lesson_id, null); } catch (e) { return res.status(403).json({ error: e.message }); }
 
             if (video.owner_id !== ownerId) {
                 return res.status(404).json({ error: 'Video not found or access denied' });
             }
-            
+
             const status = await adminService.getProcessingStatus(videoId, ownerId);
             res.status(200).json(status);
         } catch (error) {
@@ -493,7 +505,7 @@ class AdminController {
 
             const { title, description, order, isPreview, status, video_r2_staging_key, video_r2_prefix } = req.body;
             const { notes, assignments } = parseNotesAndAssignments(req.body);
-            
+
             const metadata = {};
             if (title !== undefined) metadata.title = title;
             if (description !== undefined) metadata.description = description;
@@ -547,7 +559,7 @@ class AdminController {
                         const ext = path.extname(video_r2_staging_key) || '.mp4';
                         const finalStagingKey = `${r2Prefix}/staging/input${ext}`;
                         await r2Storage.uploadStream(finalStagingKey, tempStream, 'application/octet-stream');
-                        try { await r2Storage.deletePrefix(video_r2_prefix); } catch (e) {}
+                        try { await r2Storage.deletePrefix(video_r2_prefix); } catch (e) { }
                     } else {
                         // video_r2_prefix not provided: staging key exists but no temp prefix to clean up
                         const stagingExists = await r2Storage.objectExists(video_r2_staging_key);
@@ -567,15 +579,15 @@ class AdminController {
                     if (!fs.existsSync(uploadedPath)) throw new Error(`Uploaded file not found at ${uploadedPath}.`);
                     const fileBuffer = fs.readFileSync(uploadedPath);
                     await r2Storage.uploadFile(r2StagingKey, fileBuffer, 'video/mp4');
-                    try { fs.unlinkSync(uploadedPath); } catch (e) {}
+                    try { fs.unlinkSync(uploadedPath); } catch (e) { }
                     await adminService.updateVideoR2(video.id, r2Prefix);
                 }
-                
+
                 const codecPreference = 'h264';
                 const resolutions = ['360p', '720p', '1080p'];
                 await adminService.createProcessingTask(ownerId, video.id, codecPreference, resolutions, 28, false);
                 metadata.status = 'processing';
-                
+
                 // Increment version number directly in metadata update below
                 const newVersionNumber = video.version_number + 1;
                 await db.query('UPDATE videos SET version_number = $1 WHERE id = $2', [newVersionNumber, video.id]);
@@ -597,7 +609,7 @@ class AdminController {
             const videoId = req.params.id;
             const video = await videoService.getVideoById(videoId);
             if (!video) return res.status(404).json({ error: 'Video not found' });
-            
+
             let ownerId;
             try { ownerId = await getEffectiveOwnerId(req, video.lesson_id, null); } catch (e) { return res.status(403).json({ error: e.message }); }
             if (video.owner_id !== ownerId) return res.status(404).json({ error: 'Access denied' });

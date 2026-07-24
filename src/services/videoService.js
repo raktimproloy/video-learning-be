@@ -160,7 +160,7 @@ class VideoService {
             for (let i = 0; i < videos.length; i++) {
                 const video = videos[i];
                 let isLocked = false;
-                
+
                 // First video is never locked
                 if (i > 0) {
                     // Check ALL previous videos - if any previous video has required assignments not completed, lock this video
@@ -173,7 +173,7 @@ class VideoService {
                         }
                     }
                 }
-                
+
                 videosWithLockStatus.push({
                     ...video,
                     isLocked
@@ -181,7 +181,7 @@ class VideoService {
             }
             return videosWithLockStatus;
         }
-        
+
         return videos;
     }
 
@@ -217,7 +217,7 @@ class VideoService {
 
         const assignmentService = require('./assignmentService');
         const lessonService = require('./lessonService');
-        
+
         // Get lesson info
         const lesson = await lessonService.getLessonById(video.lesson_id);
         if (!lesson) return false;
@@ -323,7 +323,7 @@ class VideoService {
         // Check access: User must be owner OR have permission
         const video = await this.getVideoById(videoId);
         if (!video) {
-             throw new Error('Video not found');
+            throw new Error('Video not found');
         }
 
         // Guest (no token): only preview videos allowed
@@ -377,19 +377,19 @@ class VideoService {
     async saveVideoVersion(videoId, userId, userRole) {
         const video = await this.getVideoById(videoId);
         if (!video) throw new Error('Video not found');
-        
+
         await db.query(`
             INSERT INTO video_versions 
             (video_id, storage_path, signing_secret, r2_key, original_r2_key, duration_seconds, size_bytes, version_number, created_by_user_id, created_by_role)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         `, [
-            video.id, 
-            video.storage_path, 
-            video.signing_secret, 
-            video.r2_key, 
+            video.id,
+            video.storage_path,
+            video.signing_secret,
+            video.r2_key,
             video.original_r2_key,
-            video.duration_seconds, 
-            video.size_bytes, 
+            video.duration_seconds,
+            video.size_bytes,
             video.version_number,
             userId,
             userRole
@@ -415,7 +415,7 @@ class VideoService {
      */
     async getVideoVersionById(versionId, videoId) {
         const result = await db.query(
-            'SELECT * FROM video_versions WHERE id = $1 AND video_id = $2', 
+            'SELECT * FROM video_versions WHERE id = $1 AND video_id = $2',
             [versionId, videoId]
         );
         return result.rows[0];
@@ -435,7 +435,7 @@ class VideoService {
 
         // Update the main video row with the version's data and increment version_number
         const newVersionNumber = (await this.getVideoById(videoId)).version_number + 1;
-        
+
         await db.query(`
             UPDATE videos
             SET storage_path = $1, signing_secret = $2, r2_key = $3, original_r2_key = $4, duration_seconds = $5, size_bytes = $6, 

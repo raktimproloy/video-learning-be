@@ -142,9 +142,12 @@ class VideoController {
                 
                 // For students, check if the lesson itself is locked
                 const lesson = await lessonService.getLessonById(lessonId);
-                let isOwner = false;
-                if (lesson) {
+                // Teachers and Admins always see all their videos; isOwner=true disables the status filter
+                let isOwner = role === 'teacher' || role === 'admin';
+                console.log(`[DEBUG] listVideos: role=${role}, userId=${userId}, initial isOwner=${isOwner}`);
+                if (lesson && !isOwner) {
                     const course = await courseService.getCourseByIdSimple(lesson.course_id);
+                    console.log(`[DEBUG] listVideos: course.teacher_id=${course?.teacher_id}, userId=${userId}`);
                     isOwner = course && userId && course.teacher_id === userId;
                     if (userIdForLockCheck) {
                         const allLessons = await lessonService.getLessonsByCourse(lesson.course_id, userIdForLockCheck, course?.teacher_id);
@@ -152,19 +155,22 @@ class VideoController {
                         lessonIsLocked = currentLesson?.isLocked === true;
                     }
                 }
+                console.log(`[DEBUG] listVideos: final isOwner=${isOwner}`);
                 
                 videos = await videoService.getVideosByLesson(lessonId, userIdForLockCheck, lessonIsLocked, isOwner);
-                // Filter out processing videos for students
-                if (role === 'student') {
-                    videos = videos.filter(v => v.status !== 'processing');
+                
+                // If they are the owner, they should not be filtered as a student
+                if (role === 'student' && !isOwner) {
+                    videos = videos.filter(v => v.status !== 'processing' && v.status !== 'uploading');
                 }
             } else if (role === 'teacher') {
-                 // Teacher sees videos they own
-                 videos = await videoService.getManagedVideos(userId);
+                // Teacher sees videos they own
+                videos = await videoService.getManagedVideos(userId);
             } else {
-                 // Student sees videos they have permission for
-                 videos = await videoService.getAvailableVideos(userId);
+                // Student sees videos they have permission for
+                videos = await videoService.getAvailableVideos(userId);
             }
+            console.log(`listVideos: role=${role}, lessonId=${lessonId}, returned ${videos.length} videos`);
             res.json(videos);
         } catch (error) {
             console.error('Error listing videos:', error);
@@ -293,7 +299,7 @@ class VideoController {
             res.status(500).send('Internal server error');
         }
     }
-    
+
     async streamOriginal(req, res) {
         try {
             const { videoId } = req.params;
@@ -309,7 +315,7 @@ class VideoController {
             const stream = await r2Storage.getObjectStream(video.original_r2_key);
             const ext = video.original_r2_key.split('.').pop()?.toLowerCase();
             const contentType = ext === 'webm' ? 'video/webm' : 'video/mp4';
-            
+
             res.set('Content-Type', contentType);
             // Optionally, handle range requests properly if required by the player
             // But for simple streaming, returning the stream works.
@@ -339,7 +345,7 @@ class VideoController {
             const ext = video.original_r2_key.split('.').pop()?.toLowerCase() || 'mp4';
             const contentType = ext === 'webm' ? 'video/webm' : 'video/mp4';
             const filename = video.title ? `${video.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.${ext}` : `original_video.${ext}`;
-            
+
             res.set('Content-Type', contentType);
             res.set('Content-Disposition', `attachment; filename="${filename}"`);
             stream.pipe(res);
@@ -359,7 +365,7 @@ class VideoController {
 
             const video = await videoService.getVideoById(videoId);
             if (!video) return res.status(404).send('Not found');
-            
+
             const version = await videoService.getVideoVersionById(versionId, videoId);
             if (!version) return res.status(404).send('Version not found');
             if (!version.original_r2_key) return res.status(404).send('Original video not available for this version');
@@ -370,7 +376,7 @@ class VideoController {
             const stream = await r2Storage.getObjectStream(version.original_r2_key);
             const ext = version.original_r2_key.split('.').pop()?.toLowerCase();
             const contentType = ext === 'webm' ? 'video/webm' : 'video/mp4';
-            
+
             res.set('Content-Type', contentType);
             stream.pipe(res);
         } catch (error) {
@@ -389,7 +395,7 @@ class VideoController {
 
             const video = await videoService.getVideoById(videoId);
             if (!video) return res.status(404).send('Video not found');
-            
+
             const version = await videoService.getVideoVersionById(versionId, videoId);
             if (!version) return res.status(404).send('Version not found');
             if (!version.original_r2_key) return res.status(404).send('Original video not available for this version');
@@ -402,7 +408,7 @@ class VideoController {
             const contentType = ext === 'webm' ? 'video/webm' : 'video/mp4';
             const titleSafe = video.title ? video.title.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 'video';
             const filename = `${titleSafe}_v${version.version_number}.${ext}`;
-            
+
             res.set('Content-Type', contentType);
             res.set('Content-Disposition', `attachment; filename="${filename}"`);
             stream.pipe(res);

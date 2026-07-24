@@ -23,19 +23,19 @@ class AdminCoursesController {
         try {
             const courseId = req.params.id;
             const { suspend } = req.body;
-            
+
             const db = require('../../db');
             const newStatus = suspend ? 'suspend' : 'active';
-            
+
             const result = await db.query(
                 'UPDATE courses SET status = $1 WHERE id = $2 RETURNING *',
                 [newStatus, courseId]
             );
-            
+
             if (result.rows.length === 0) {
                 return res.status(404).json({ error: 'Course not found' });
             }
-            
+
             res.json({ message: `Course ${suspend ? 'suspended' : 'activated'} successfully`, course: result.rows[0] });
         } catch (error) {
             console.error('Toggle suspend course error:', error);
