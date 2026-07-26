@@ -27,8 +27,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
     storage,
-    // Normal (non-live) video upload limit
-    limits: { fileSize: ADMIN_VIDEO_UPLOAD_MAX_BYTES },
+    // Normal (non-live) video upload limit removed for unlimited uploads
 });
 
 // Protect admin routes with JWT

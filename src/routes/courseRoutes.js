@@ -31,9 +31,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
     storage,
-    limits: {
-        fileSize: COURSE_UPLOAD_MAX_BYTES
-    },
+    // File size limit removed for unlimited uploads
     fileFilter: (req, file, cb) => {
         // Allow images for thumbnail
         if (file.fieldname === 'thumbnail') {

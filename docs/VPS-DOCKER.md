@@ -153,7 +153,8 @@ server {
     ssl_certificate     /etc/letsencrypt/live/api.shikkhabhumi.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/api.shikkhabhumi.com/privkey.pem;
 
-    client_max_body_size 500M;
+    # client_max_body_size 0 allows unlimited file sizes for video uploads
+    client_max_body_size 0;
 
     location / {
         proxy_pass http://127.0.0.1:8080;
