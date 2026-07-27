@@ -123,7 +123,7 @@ class ExamController {
 
     async update(req, res) {
         try {
-            if (!isTeacherWorkspaceUser(req)) return res.status(403).json({ error: 'Teachers only' });
+            if (!isTeacherWorkspaceUser(req)) return res.status(403).json({ error: 'Teachers only', yourRole: req.user?.role, payload: req.user });
             const exam = await examService.getById(req.params.examId);
             if (!exam) return res.status(404).json({ error: 'Exam not found' });
             if (exam.teacher_id !== workspaceTeacherId(req)) return res.status(403).json({ error: 'Not authorized' });
@@ -140,7 +140,7 @@ class ExamController {
 
     async setStatus(req, res) {
         try {
-            if (!isTeacherWorkspaceUser(req)) return res.status(403).json({ error: 'Teachers only' });
+            if (!isTeacherWorkspaceUser(req)) return res.status(403).json({ error: 'Teachers only', yourRole: req.user?.role, payload: req.user });
             const exam = await examService.getById(req.params.examId);
             if (!exam) return res.status(404).json({ error: 'Exam not found' });
             if (exam.teacher_id !== workspaceTeacherId(req)) return res.status(403).json({ error: 'Not authorized' });

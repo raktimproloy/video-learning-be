@@ -342,6 +342,109 @@ class ExamSubmissionService {
             perQuestionDifficulty,
         };
     }
+
+    async listCourseExamsForStudent(courseId, studentId) {
+        const result = await db.query(
+            `SELECT e.id, e.title, e.description, e.time_limit_minutes, e.total_marks, e.created_at, e.lesson_id, e.video_id,
+                    s.score, s.time_taken_ms, s.submitted_at,
+                    l.title as lesson_title, v.title as video_title,
+                    v.lesson_id as video_lesson_id
+             FROM exams e
+             LEFT JOIN exam_submissions s ON s.exam_id = e.id AND s.student_id = $2
+             LEFT JOIN lessons l ON e.lesson_id = l.id
+             LEFT JOIN videos v ON e.video_id = v.id
+             WHERE e.course_id = $1 AND e.status = 'published'
+             ORDER BY e.created_at ASC`,
+            [courseId, studentId]
+        );
+        return result.rows.map(row => ({
+            id: row.id,
+            title: row.title,
+            description: row.description,
+            timeLimitMinutes: row.time_limit_minutes,
+            totalMarks: row.total_marks,
+            createdAt: row.created_at,
+            lessonId: row.lesson_id || row.video_lesson_id,
+            lessonTitle: row.lesson_title,
+            videoTitle: row.video_title,
+            submission: row.submitted_at ? {
+                score: row.score,
+                timeTakenMs: row.time_taken_ms,
+                submittedAt: row.submitted_at
+            } : null
+        }));
+    }
+
+    async getExamLeaderboard(examId, studentId) {
+        const result = await db.query(
+            `SELECT s.student_id, u.name, sp.profile_image_path as avatar_url, s.score, s.time_taken_ms, s.submitted_at
+             FROM exam_submissions s
+             JOIN users u ON u.id = s.student_id
+             LEFT JOIN student_profiles sp ON sp.user_id = u.id
+             WHERE s.exam_id = $1
+             ORDER BY s.score DESC, s.time_taken_ms ASC
+             LIMIT 100`,
+            [examId]
+        );
+        
+        let studentRank = null;
+        let studentEntry = null;
+        
+        const leaderboard = result.rows.map((row, index) => {
+            const entry = {
+                rank: index + 1,
+                studentId: row.student_id,
+                name: row.name,
+                avatarUrl: row.avatar_url,
+                score: row.score,
+                timeTakenMs: row.time_taken_ms,
+                submittedAt: row.submitted_at
+            };
+            if (row.student_id === studentId) {
+                studentRank = index + 1;
+                studentEntry = entry;
+            }
+            return entry;
+        });
+
+        if (!studentEntry) {
+            const studentSubmission = await db.query(
+                `SELECT score, time_taken_ms, submitted_at FROM exam_submissions WHERE exam_id = $1 AND student_id = $2`,
+                [examId, studentId]
+            );
+            if (studentSubmission.rows.length > 0) {
+                const sub = studentSubmission.rows[0];
+                const rankQuery = await db.query(
+                    `SELECT COUNT(*) + 1 AS rank FROM exam_submissions 
+                     WHERE exam_id = $1 
+                     AND (score > $2 OR (score = $2 AND time_taken_ms < $3))`,
+                    [examId, sub.score, sub.time_taken_ms]
+                );
+                studentRank = parseInt(rankQuery.rows[0].rank);
+                const userQuery = await db.query(
+                    `SELECT u.name, sp.profile_image_path as avatar_url 
+                     FROM users u 
+                     LEFT JOIN student_profiles sp ON sp.user_id = u.id 
+                     WHERE u.id = $1`, 
+                    [studentId]
+                );
+                studentEntry = {
+                    rank: studentRank,
+                    studentId,
+                    name: userQuery.rows[0].name,
+                    avatarUrl: userQuery.rows[0].avatar_url,
+                    score: sub.score,
+                    timeTakenMs: sub.time_taken_ms,
+                    submittedAt: sub.submitted_at
+                };
+            }
+        }
+
+        return {
+            leaderboard,
+            studentResult: studentEntry
+        };
+    }
 }
 
 module.exports = new ExamSubmissionService();

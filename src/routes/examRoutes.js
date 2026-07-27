@@ -37,10 +37,12 @@ router.get('/:examId/submissions', examAnalyticsController.getSubmissions);
 router.get('/:examId/analytics', examAnalyticsController.getAnalytics);
 
 // Student: taking an exam
+router.get('/course/:courseId', examSubmissionController.listCourseExams);
 router.get('/:examId/take', examSubmissionController.take);
 router.post('/:examId/start', examSubmissionController.start);
 router.put('/:examId/autosave', examSubmissionController.autosave);
 router.post('/:examId/submit', examSubmissionController.submit);
 router.get('/:examId/result', examSubmissionController.getResult);
+router.get('/:examId/leaderboard', examSubmissionController.getLeaderboard);
 
 module.exports = router;

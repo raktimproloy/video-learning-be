@@ -101,7 +101,7 @@ class ExamService {
     }
 
     async setStatus(examId, teacherId, status) {
-        if (!['draft', 'published'].includes(status)) {
+        if (!['draft', 'published', 'inactive'].includes(status)) {
             const err = new Error('Invalid exam status');
             err.status = 400;
             throw err;

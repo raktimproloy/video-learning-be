@@ -98,9 +98,49 @@ class ExamSubmissionController {
             if (!exam) return;
             const result = await examSubmissionService.getResultForDisplay(exam.id, req.user.id);
             if (!result) return res.status(404).json({ error: 'No submission found' });
-            res.json({ result });
+            res.json({ examTitle: exam.title, result });
         } catch (error) {
             console.error('Get exam result error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async listCourseExams(req, res) {
+        try {
+            if (req.user.role !== 'student') {
+                return res.status(403).json({ error: 'Students only' });
+            }
+            const courseId = req.params.courseId;
+            const enrolled = await courseService.isEnrolled(req.user.id, courseId);
+            if (!enrolled) {
+                return res.status(403).json({ error: 'Access denied' });
+            }
+            const exams = await examSubmissionService.listCourseExamsForStudent(courseId, req.user.id);
+            res.json(exams);
+        } catch (error) {
+            console.error('List course exams error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async getLeaderboard(req, res) {
+        try {
+            if (req.user.role !== 'student') {
+                return res.status(403).json({ error: 'Students only' });
+            }
+            const examId = req.params.examId;
+            const exam = await examService.getById(examId);
+            if (!exam || exam.status !== 'published') {
+                return res.status(404).json({ error: 'Exam not found' });
+            }
+            const enrolled = await courseService.isEnrolled(req.user.id, exam.course_id);
+            if (!enrolled) {
+                return res.status(403).json({ error: 'Access denied' });
+            }
+            const leaderboard = await examSubmissionService.getExamLeaderboard(examId, req.user.id);
+            res.json(leaderboard);
+        } catch (error) {
+            console.error('Get leaderboard error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     }
