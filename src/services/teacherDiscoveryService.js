@@ -113,6 +113,7 @@ class TeacherDiscoveryService {
           u.created_at,
           COALESCE(tp.name, u.email) AS name,
           tp.profile_image_path,
+          tp.display_order,
           COALESCE(
             ${require('./teacherInstituteService').getMainInstituteFieldExpr('u.id', 'name')},
             tp.institute_name
@@ -148,6 +149,7 @@ class TeacherDiscoveryService {
         review_count,
         course_count,
         student_count,
+        display_order,
         CASE
           WHEN has_academic AND has_skill THEN 'both'
           WHEN has_academic THEN 'academic'
@@ -158,6 +160,7 @@ class TeacherDiscoveryService {
       WHERE 1=1
         ${categoryFilterSql}
       ORDER BY
+        display_order ASC NULLS LAST,
         rating DESC,
         course_count DESC,
         student_count DESC,
@@ -241,6 +244,7 @@ class TeacherDiscoveryService {
           u.name,
           u.email,
           tp.profile_image_path,
+          tp.display_order,
           COALESCE(
             ${require('./teacherInstituteService').getMainInstituteFieldExpr('u.id', 'name')},
             tp.institute_name
@@ -281,6 +285,13 @@ class TeacherDiscoveryService {
     // Using a simple seeded pseudo-random sort
     const seedNumber = seed.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
     filtered.sort((a, b) => {
+      // Prioritize display_order if set
+      if (a.display_order !== null && b.display_order === null) return -1;
+      if (a.display_order === null && b.display_order !== null) return 1;
+      if (a.display_order !== null && b.display_order !== null) {
+          if (a.display_order !== b.display_order) return a.display_order - b.display_order;
+      }
+      
       // Deterministic hash based on seed and teacher ID
       const hashA = ((a.id.charCodeAt(0) + a.id.charCodeAt(a.id.length-1)) * seedNumber) % 10000;
       const hashB = ((b.id.charCodeAt(0) + b.id.charCodeAt(b.id.length-1)) * seedNumber) % 10000;

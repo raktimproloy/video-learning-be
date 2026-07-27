@@ -696,7 +696,7 @@ class CourseService {
             const liveResult = await db.query(
                 `SELECT ${baseSelect} ${baseFrom}
                  ${activeWhereNonExternal} AND courses.has_live_class = true
-                 ORDER BY RANDOM()
+                 ORDER BY courses.display_order ASC NULLS LAST, RANDOM()
                  LIMIT ${limitVal}`
             );
             const live = liveResult.rows.map(parseRow);
@@ -714,7 +714,7 @@ class CourseService {
                 const acResult = await db.query(
                     `SELECT ${baseSelect} ${baseFrom}
                      ${activeWhereNonExternal} ${excludeLive} AND courses.admin_category_id IN (${placeholders})
-                     ORDER BY RANDOM()
+                     ORDER BY courses.display_order ASC NULLS LAST, RANDOM()
                      LIMIT ${limitVal}`,
                     acParams
                 );
@@ -729,7 +729,7 @@ class CourseService {
             const skillResult = await db.query(
                 `SELECT ${baseSelect} ${baseFrom}
                  ${activeWhereNonExternal} ${excludeUsed}
-                 ORDER BY RANDOM()
+                 ORDER BY courses.display_order ASC NULLS LAST, RANDOM()
                  LIMIT ${limitVal}`,
                 skillParams
             );
@@ -914,8 +914,8 @@ class CourseService {
             ) as search_relevance`
             : '';
         const orderByClause = searchPatternParam
-            ? `ORDER BY search_relevance DESC NULLS LAST, courses.created_at DESC`
-            : `ORDER BY courses.created_at DESC`;
+            ? `ORDER BY courses.display_order ASC NULLS LAST, search_relevance DESC NULLS LAST, courses.created_at DESC`
+            : `ORDER BY courses.display_order ASC NULLS LAST, courses.created_at DESC`;
         const dataQuery = `
             SELECT 
                 courses.*,
@@ -1422,6 +1422,7 @@ class CourseService {
             visitorCount,
             teacherId,
             institutionName,
+            display_order,
         } = courseData;
 
         // Build dynamic update query
@@ -1448,6 +1449,10 @@ class CourseService {
         if (subcategory !== undefined) {
             updates.push(`subcategory = $${paramIndex++}`);
             values.push(subcategory);
+        }
+        if (display_order !== undefined) {
+            updates.push(`display_order = $${paramIndex++}`);
+            values.push(display_order);
         }
         if (main_category_id !== undefined) {
             updates.push(`main_category_id = $${paramIndex++}`);

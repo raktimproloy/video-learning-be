@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS courses (
     has_live_class BOOLEAN DEFAULT false,
     has_assignments BOOLEAN DEFAULT false,
     created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    updated_at TIMESTAMP DEFAULT NOW(),
+    display_order INTEGER DEFAULT NULL
 );
 
 -- Create indexes for better query performance
@@ -154,7 +155,8 @@ CREATE TABLE IF NOT EXISTS teacher_profiles (
     education JSONB DEFAULT '[]'::jsonb,
     -- Payment information
     bank_accounts JSONB DEFAULT '[]'::jsonb,
-    card_accounts JSONB DEFAULT '[]'::jsonb
+    card_accounts JSONB DEFAULT '[]'::jsonb,
+    display_order INTEGER DEFAULT NULL
 );
 
 -- Create indexes for faster lookups

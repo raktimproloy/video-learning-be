@@ -263,6 +263,7 @@ class AdminCoursesController {
                 priceDisplayPeriod,
                 visitorCount,
                 institutionName,
+                display_order,
             } = req.body;
 
             const courseData = {};
@@ -339,6 +340,9 @@ class AdminCoursesController {
                     institutionName === null || institutionName === ''
                         ? null
                         : String(institutionName).trim() || null;
+            }
+            if (display_order !== undefined) {
+                courseData.display_order = display_order === null || display_order === '' ? null : parseInt(display_order, 10);
             }
 
             if (teacherId !== undefined) {

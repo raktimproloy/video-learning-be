@@ -385,7 +385,7 @@ class AdminTeachersService {
         if (check.rows.length === 0) {
             return null;
         }
-        const camelToSnake = { name: 'name', bio: 'bio', instituteName: 'institute_name', accountEmail: 'account_email', address: 'address', youtubeUrl: 'youtube_url', linkedinUrl: 'linkedin_url' };
+        const camelToSnake = { name: 'name', bio: 'bio', instituteName: 'institute_name', accountEmail: 'account_email', address: 'address', youtubeUrl: 'youtube_url', linkedinUrl: 'linkedin_url', displayOrder: 'display_order' };
         const values = [id];
         const setParts = [];
         let idx = 2;
@@ -405,8 +405,8 @@ class AdminTeachersService {
         );
         if (updateResult.rowCount === 0) {
             await db.query(
-                `INSERT INTO teacher_profiles (user_id, name, bio, institute_name, account_email, address, youtube_url, linkedin_url)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                `INSERT INTO teacher_profiles (user_id, name, bio, institute_name, account_email, address, youtube_url, linkedin_url, display_order)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
                 [
                     id,
                     payload.name === undefined ? null : (payload.name === '' ? null : payload.name),
@@ -416,6 +416,7 @@ class AdminTeachersService {
                     payload.address === undefined ? null : (payload.address === '' ? null : payload.address),
                     payload.youtubeUrl === undefined ? null : (payload.youtubeUrl === '' ? null : payload.youtubeUrl),
                     payload.linkedinUrl === undefined ? null : (payload.linkedinUrl === '' ? null : payload.linkedinUrl),
+                    payload.displayOrder === undefined ? null : (payload.displayOrder === '' ? null : parseInt(payload.displayOrder, 10)),
                 ]
             );
         }
