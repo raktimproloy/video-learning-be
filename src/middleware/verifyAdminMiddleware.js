@@ -4,13 +4,15 @@ const adminUserService = require('../services/adminUserService');
 const verifyAdmin = async (req, res, next) => {
     const authHeader = req.headers.authorization;
 
-    if (!authHeader) {
-        return res.status(401).json({ error: 'No token provided' });
+    let token;
+    if (authHeader) {
+        token = authHeader.split(' ')[1];
+    } else if (req.query && req.query.token) {
+        token = req.query.token;
     }
 
-    const token = authHeader.split(' ')[1];
     if (!token) {
-        return res.status(401).json({ error: 'Malformed token' });
+        return res.status(401).json({ error: 'No token provided' });
     }
 
     try {

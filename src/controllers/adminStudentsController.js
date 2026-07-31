@@ -60,6 +60,18 @@ class AdminStudentsController {
             res.status(500).json({ error: 'Internal server error' });
         }
     }
+    async getFullReport(req, res) {
+        try {
+            const report = await adminStudentsService.getFullReport(req.params.id);
+            if (!report) {
+                return res.status(404).json({ error: 'Student not found' });
+            }
+            res.json(report);
+        } catch (error) {
+            console.error('Admin get student full report error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
 }
 
 module.exports = new AdminStudentsController();

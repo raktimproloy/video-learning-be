@@ -233,6 +233,86 @@ class AdminStudentsService {
 
         return { message: 'Student and all associated data have been permanently removed.', wasAlsoTeacher: false };
     }
+    async getFullReport(id) {
+        const student = await this.getById(id);
+        if (!student) return null;
+
+        // 1. Enrollments
+        const enrollmentsRes = await db.query(
+            `SELECT ce.created_at as enrolled_at, c.id as course_id, c.title as course_title, 
+                    COALESCE(tp.name, u.email) as teacher_name, ce.price_paid, ce.currency
+             FROM course_enrollments ce
+             JOIN courses c ON ce.course_id = c.id
+             JOIN users u ON c.teacher_id = u.id
+             LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
+             WHERE ce.user_id = $1
+             ORDER BY ce.created_at DESC`,
+            [id]
+        );
+
+        // Try to get completion data if progress_summaries exists
+        let enrollments = enrollmentsRes.rows;
+        const progressCheck = await db.query(`SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'progress_summaries')`);
+        if (progressCheck.rows[0]?.exists) {
+            const progRes = await db.query(
+                `SELECT course_id, completed, completed_lessons, total_lessons, last_activity_at 
+                 FROM progress_summaries WHERE user_id = $1`,
+                [id]
+            );
+            const progMap = {};
+            progRes.rows.forEach(p => { progMap[p.course_id] = p; });
+            enrollments = enrollments.map(e => ({
+                ...e,
+                completed: progMap[e.course_id]?.completed || false,
+                completed_lessons: progMap[e.course_id]?.completed_lessons || 0,
+                total_lessons: progMap[e.course_id]?.total_lessons || 0,
+                last_activity_at: progMap[e.course_id]?.last_activity_at || null,
+                completion_rate: progMap[e.course_id]?.total_lessons > 0 ? Math.round((progMap[e.course_id].completed_lessons / progMap[e.course_id].total_lessons) * 100) : 0
+            }));
+        }
+
+        // 2. Payment Requests
+        const paymentsRes = await db.query(
+            `SELECT id, amount, currency, payment_method, status, created_at, updated_at
+             FROM payment_requests
+             WHERE user_id = $1
+             ORDER BY created_at DESC`,
+            [id]
+        );
+
+        // 3. Exam Submissions
+        const examsRes = await db.query(
+            `SELECT es.id, es.score, es.percentage, es.time_taken_ms, es.submitted_at, 
+                    e.title as exam_title, e.total_marks, c.title as course_title
+             FROM exam_submissions es
+             JOIN exams e ON es.exam_id = e.id
+             LEFT JOIN courses c ON e.course_id = c.id
+             WHERE es.student_id = $1
+             ORDER BY es.submitted_at DESC`,
+            [id]
+        );
+
+        // 4. Video Watches (Sessions)
+        const watchesRes = await db.query(
+            `SELECT vw.last_position_updated_at AS last_watched_at, v.title as video_title, c.title as course_title
+             FROM video_watch_progress vw
+             JOIN videos v ON vw.video_id = v.id
+             LEFT JOIN lessons l ON v.lesson_id = l.id
+             LEFT JOIN courses c ON l.course_id = c.id
+             WHERE vw.user_id = $1
+             ORDER BY vw.last_position_updated_at DESC
+             LIMIT 50`,
+            [id]
+        );
+
+        return {
+            student,
+            enrollments,
+            paymentRequests: paymentsRes.rows,
+            examSubmissions: examsRes.rows,
+            recentActivity: watchesRes.rows
+        };
+    }
 }
 
 module.exports = new AdminStudentsService();

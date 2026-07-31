@@ -454,6 +454,243 @@ class AdminController {
         }
     }
 
+    async getAdminVideoDetail(req, res) {
+        try {
+            const videoId = req.params.id;
+            const videoService = require('../services/videoService');
+            const video = await videoService.getVideoById(videoId);
+            if (!video) return res.status(404).json({ error: 'Video not found' });
+            
+            const result = { ...video };
+            result.isPreview = result.is_preview ?? false;
+            if (result.notes && typeof result.notes === 'string') {
+                try { result.notes = JSON.parse(result.notes); } catch { result.notes = []; }
+            }
+            if (result.assignments && typeof result.assignments === 'string') {
+                try { result.assignments = JSON.parse(result.assignments); } catch { result.assignments = []; }
+            }
+            res.status(200).json(result);
+        } catch (error) {
+            console.error('Admin Get Video Detail Error:', error);
+            res.status(500).json({ error: 'Internal Server Error' });
+        }
+    }
+
+    async streamAdminVideo(req, res) {
+        try {
+            const videoId = req.params.id;
+            const videoService = require('../services/videoService');
+            const video = await videoService.getVideoById(videoId);
+            if (!video) return res.status(404).send('Video not found');
+
+            // Prefer original unencrypted file from R2
+            if (r2Storage.isConfigured && video.original_r2_key) {
+                try {
+                    // Check if it exists before redirecting to avoid broken URLs
+                    if (await r2Storage.objectExists(video.original_r2_key)) {
+                        const signedUrl = await r2Storage.getPresignedGetUrl(video.original_r2_key, 3600);
+                        return res.redirect(signedUrl);
+                    }
+                } catch (e) {
+                    console.log(`Original file not found for video ${videoId}, falling back...`);
+                }
+            }
+
+            // Fall back to the raw MP4 from staging if available
+            if (r2Storage.isConfigured && video.r2_key) {
+                try {
+                    const mp4Key = `${video.r2_key}/staging/input.mp4`;
+                    if (await r2Storage.objectExists(mp4Key)) {
+                        const signedUrl = await r2Storage.getPresignedGetUrl(mp4Key, 3600);
+                        return res.redirect(signedUrl);
+                    }
+                } catch (e) {
+                    console.log(`Staging MP4 not found for video ${videoId}, falling back...`);
+                }
+            }
+
+            // Last resort: HLS master playlist from R2 (Note: only playable natively on Safari)
+            if (r2Storage.isConfigured && video.r2_key) {
+                try {
+                    const hlsKey = `${video.r2_key}/master.m3u8`;
+                    if (await r2Storage.objectExists(hlsKey)) {
+                        const signedUrl = await r2Storage.getPresignedGetUrl(hlsKey, 3600);
+                        return res.redirect(signedUrl);
+                    }
+                } catch (e) {
+                    console.log(`HLS master not found for video ${videoId}, falling back...`);
+                }
+            }
+
+            // Local file fallback (storage_provider = 'local')
+            if (video.storage_path) {
+                const inputPath = path.join(video.storage_path, 'input.mp4');
+                if (fs.existsSync(inputPath)) {
+                    res.set('Content-Type', 'video/mp4');
+                    // For local, we must stream it but we should ideally support ranges. 
+                    // As a simple fallback for local dev without R2, we pipe it.
+                    return fs.createReadStream(inputPath).pipe(res);
+                }
+            }
+
+            return res.status(404).send('No playable video file found for this video.');
+        } catch (error) {
+            console.error('Admin Stream Video Error:', error);
+            res.status(500).send('Internal Server Error');
+        }
+    }
+
+
+    async getAdminVideoViewers(req, res) {
+        try {
+            const videoId = req.params.id;
+            const db = require('../../db');
+            const result = await db.query(
+                `SELECT vw.user_id, vw.last_position_updated_at AS last_watched_at, COALESCE(sp.name, u.email) as name, u.email
+                 FROM video_watch_progress vw
+                 JOIN users u ON vw.user_id = u.id
+                 LEFT JOIN student_profiles sp ON u.id = sp.user_id
+                 WHERE vw.video_id = $1
+                 ORDER BY vw.last_position_updated_at DESC`,
+                [videoId]
+            );
+            res.status(200).json({ viewers: result.rows });
+        } catch (error) {
+            console.error('Admin Get Video Viewers Error:', error);
+            res.status(500).json({ error: 'Internal Server Error' });
+        }
+    }
+
+    async updateAdminVideoStatus(req, res) {
+        try {
+            const videoId = req.params.id;
+            const { status } = req.body;
+            const db = require('../../db');
+            const result = await db.query(
+                `UPDATE videos SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+                [status, videoId]
+            );
+            if (result.rowCount === 0) return res.status(404).json({ error: 'Video not found' });
+            res.status(200).json({ success: true, video: result.rows[0] });
+        } catch (error) {
+            console.error('Admin Update Video Status Error:', error);
+            res.status(500).json({ error: 'Internal Server Error' });
+        }
+    }
+
+    async getAdminLessonDetail(req, res) {
+        try {
+            const lessonId = req.params.id;
+            const lessonService = require('../services/lessonService');
+            const lesson = await lessonService.getLessonById(lessonId);
+            if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
+            
+            const result = { ...lesson };
+            result.isPreview = result.is_preview ?? false;
+            if (result.notes && typeof result.notes === 'string') {
+                try { result.notes = JSON.parse(result.notes); } catch { result.notes = []; }
+            }
+            if (result.assignments && typeof result.assignments === 'string') {
+                try { result.assignments = JSON.parse(result.assignments); } catch { result.assignments = []; }
+            }
+
+            // Also fetch exams for this lesson
+            const db = require('../../db');
+            const examRes = await db.query('SELECT * FROM exams WHERE lesson_id = $1 ORDER BY created_at ASC', [lessonId]);
+            result.exams = examRes.rows;
+
+            // Fetch videos for this lesson
+            const videoRes = await db.query('SELECT * FROM videos WHERE lesson_id = $1 ORDER BY "order" ASC', [lessonId]);
+            result.videos = videoRes.rows;
+
+            res.status(200).json(result);
+        } catch (error) {
+            console.error('Admin Get Lesson Detail Error:', error);
+            res.status(500).json({ error: 'Internal Server Error' });
+        }
+    }
+
+    async updateAdminLessonStatus(req, res) {
+        try {
+            const lessonId = req.params.id;
+            const { status } = req.body;
+            const db = require('../../db');
+            const result = await db.query(
+                `UPDATE lessons SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+                [status, lessonId]
+            );
+            if (result.rowCount === 0) return res.status(404).json({ error: 'Lesson not found' });
+            res.status(200).json({ success: true, lesson: result.rows[0] });
+        } catch (error) {
+            console.error('Admin Update Lesson Status Error:', error);
+            res.status(500).json({ error: 'Internal Server Error' });
+        }
+    }
+
+    async getAdminExamResults(req, res) {
+        try {
+            const examId = req.params.id;
+            const examService = require('../services/examService');
+            const examSubmissionService = require('../services/examSubmissionService');
+            const exam = await examService.getById(examId);
+            if (!exam) return res.status(404).json({ error: 'Exam not found' });
+            
+            // Getting leaderboard with admin studentId = null (so it won't query student specific result)
+            const leaderboardData = await examSubmissionService.getExamLeaderboard(examId, '00000000-0000-0000-0000-000000000000');
+            
+            const db = require('../../db');
+            const submissionsRes = await db.query(
+                `SELECT es.*, COALESCE(sp.name, u.email) as student_name, sp.profile_image_path
+                 FROM exam_submissions es
+                 JOIN users u ON es.student_id = u.id
+                 LEFT JOIN student_profiles sp ON u.id = sp.user_id
+                 WHERE es.exam_id = $1
+                 ORDER BY es.score DESC, es.time_taken_ms ASC`,
+                [examId]
+            );
+
+            // Calculate some basic stats
+            const submissions = submissionsRes.rows;
+            let highestScore = 0;
+            let lowestScore = submissions.length > 0 ? submissions[0].score : 0;
+            let totalScore = 0;
+            let passCount = 0;
+
+            submissions.forEach(sub => {
+                if (sub.score > highestScore) highestScore = sub.score;
+                if (sub.score < lowestScore) lowestScore = sub.score;
+                totalScore += parseFloat(sub.score);
+                if (sub.percentage >= 40) passCount++;
+            });
+            const avgScore = submissions.length > 0 ? (totalScore / submissions.length).toFixed(2) : 0;
+            const passRate = submissions.length > 0 ? ((passCount / submissions.length) * 100).toFixed(1) : 0;
+
+            const stats = {
+                totalSubmissions: submissions.length,
+                highestScore,
+                lowestScore,
+                avgScore,
+                passRate
+            };
+
+            res.status(200).json({
+                exam: {
+                    title: exam.title,
+                    description: exam.description,
+                    total_marks: exam.total_marks,
+                    time_limit_minutes: exam.time_limit_minutes,
+                    status: exam.status
+                },
+                stats,
+                leaderboard: leaderboardData.leaderboard,
+                submissions
+            });
+        } catch (error) {
+            console.error('Admin Get Exam Results Error:', error);
+            res.status(500).json({ error: 'Internal Server Error' });
+        }
+    }
+
     async getProcessingStatus(req, res) {
         try {
             const videoId = req.params.id;

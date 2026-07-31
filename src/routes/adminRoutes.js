@@ -3,7 +3,7 @@ const router = express.Router();
 const fs = require('fs');
 const { check } = require('express-validator');
 const adminController = require('../controllers/adminController');
-const verifyToken = require('../middleware/authMiddleware');
+const verifyAdmin = require('../middleware/verifyAdminMiddleware');
 const multer = require('multer');
 const path = require('path');
 
@@ -31,7 +31,7 @@ const upload = multer({
 });
 
 // Protect admin routes with JWT
-router.use(verifyToken);
+router.use(verifyAdmin);
 
 router.post(
     '/videos/r2-multipart/init',
@@ -146,6 +146,44 @@ router.delete(
         check('versionId', 'Version ID is required').isUUID()
     ],
     adminController.deleteVideoVersion
+);
+
+// Admin specific routes for full view (bypass ownership)
+router.get(
+    '/videos/:id/stream',
+    [check('id', 'Video ID is required').isUUID()],
+    adminController.streamAdminVideo
+);
+router.get(
+    '/videos/:id/admin-detail',
+    [check('id', 'Video ID is required').isUUID()],
+    adminController.getAdminVideoDetail
+);
+router.get(
+    '/videos/:id/admin-viewers',
+    [check('id', 'Video ID is required').isUUID()],
+    adminController.getAdminVideoViewers
+);
+router.put(
+    '/videos/:id/admin-status',
+    [check('id', 'Video ID is required').isUUID(), check('status').not().isEmpty()],
+    adminController.updateAdminVideoStatus
+);
+router.get(
+    '/lessons/:id/admin-detail',
+    [check('id', 'Lesson ID is required').isUUID()],
+    adminController.getAdminLessonDetail
+);
+router.put(
+    '/lessons/:id/admin-status',
+    [check('id', 'Lesson ID is required').isUUID(), check('status').not().isEmpty()],
+    adminController.updateAdminLessonStatus
+);
+
+router.get(
+    '/exams/:id/admin-results',
+    [check('id', 'Exam ID is required').isUUID()],
+    adminController.getAdminExamResults
 );
 
 module.exports = router;
