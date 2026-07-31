@@ -50,6 +50,7 @@ const analyticsRoutes = require('./routes/analyticsRoutes');
 const adminAnalyticsRoutes = require('./routes/adminAnalyticsRoutes');
 const certificateRoutes = require('./routes/certificateRoutes');
 const referenceRoutes = require('./routes/referenceRoutes');
+const teacherVideoRoutes = require('./routes/teacherVideoRoutes');
 
 const app = express();
 
@@ -129,6 +130,7 @@ app.use('/v1/admin', adminRoutes);
 app.use('/v1/courses', courseRoutes);
 app.use('/v1/lessons', lessonRoutes);
 app.use('/v1/assignments', assignmentRoutes);
+app.use('/v1/teacher/videos', teacherVideoRoutes);
 app.use('/v1/teacher/profile', teacherProfileRoutes);
 app.use('/v1/teacher/institute', teacherInstituteRoutes);
 app.use('/v1/teacher/institute-affiliations', instituteAffiliationRoutes);
