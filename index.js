@@ -8,11 +8,15 @@ const { shutdownProgressBatch } = require('./src/services/progressService');
 
 const port = parseInt(process.env.PORT || '5000', 10);
 const server = http.createServer(app);
-const serverTimeoutMs = Math.max(60_000, parseInt(process.env.SERVER_TIMEOUT_MS || '900000', 10));
+// SERVER_TIMEOUT_MS controls how long the server waits for a request to complete.
+// For large video upload finalization, this must be very high (default: 5h = 18000000ms).
+// Set SERVER_TIMEOUT_MS=0 in .env to disable (not recommended in production behind a proxy).
+const serverTimeoutMs = parseInt(process.env.SERVER_TIMEOUT_MS || '18000000', 10);
 
 server.requestTimeout = serverTimeoutMs;
 server.headersTimeout = serverTimeoutMs + 5_000;
 server.keepAliveTimeout = 65_000;
+
 
 async function start() {
     initSocket(server);

@@ -120,7 +120,7 @@ class AdminController {
             if (!r2Storage.isConfigured) {
                 return res.status(400).json({ error: 'R2 is not configured on server.' });
             }
-            const { lesson_id, file_name, file_type, file_size } = req.body || {};
+            const { lesson_id, file_name, file_type, file_size, video_id } = req.body || {};
             if (!lesson_id || !file_name) {
                 return res.status(400).json({ error: 'lesson_id and file_name are required.' });
             }
@@ -140,8 +140,12 @@ class AdminController {
 
             const ext = path.extname(file_name || '').toLowerCase();
             const safeExt = ext || '.mp4';
-            const tempVideoId = `tmp-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-            const r2Prefix = r2Storage.getVideoKeyPrefix(ownerId, effectiveCourseId, effectiveLessonId, tempVideoId);
+            // If the real video_id is provided by the frontend, use it so the file lands
+            // directly at its final R2 location — eliminating the copy step in addVideo/updateVideo.
+            const effectiveVideoId = (video_id && typeof video_id === 'string' && video_id.length > 0)
+                ? video_id
+                : `tmp-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+            const r2Prefix = r2Storage.getVideoKeyPrefix(ownerId, effectiveCourseId, effectiveLessonId, effectiveVideoId);
             const objectKey = `${r2Prefix}/staging/input${safeExt}`;
             const uploadId = await r2Storage.createMultipartUpload(objectKey, file_type || 'application/octet-stream');
 
@@ -164,7 +168,8 @@ class AdminController {
             if (!objectKey || !uploadId || !partNumber) {
                 return res.status(400).json({ error: 'objectKey, uploadId and partNumber are required.' });
             }
-            const url = await r2Storage.getPresignedUploadPartUrl(objectKey, uploadId, Number(partNumber), 3600);
+            // 4-hour expiry (up from 1h) — large files on slow connections can take >1h to upload
+            const url = await r2Storage.getPresignedUploadPartUrl(objectKey, uploadId, Number(partNumber), 14400);
             return res.status(200).json({ url });
         } catch (error) {
             console.error('Get multipart part URL error:', error);
@@ -273,20 +278,26 @@ class AdminController {
 
                 if (isUploadingFlag && !videoFile && !videoR2StagingKey) {
                     return res.status(201).json(video);
-                }
-
+                }                
                 const r2Prefix = r2Storage.getVideoKeyPrefix(ownerId, effectiveCourseId, effectiveLessonId, video.id);
                 if (videoR2StagingKey && videoR2Prefix) {
-                    // Move finalized multipart object from temp prefix to final video prefix.
                     const stagingExists = await r2Storage.objectExists(videoR2StagingKey);
                     if (!stagingExists) {
                         return res.status(400).json({ error: 'Staged video file not found in R2. The upload may have failed or expired. Please try uploading again.' });
                     }
-                    const tempStream = await r2Storage.getObjectStream(videoR2StagingKey);
-                    const ext = path.extname(videoR2StagingKey) || '.mp4';
-                    const finalStagingKey = `${r2Prefix}/staging/input${ext}`;
-                    await r2Storage.uploadStream(finalStagingKey, tempStream, 'application/octet-stream');
-                    try { await r2Storage.deletePrefix(videoR2Prefix); } catch (e) { }
+                    if (videoR2Prefix === r2Prefix) {
+                        // New flow: file was uploaded directly to the final key — no copy needed.
+                        console.log(`[addVideo] R2 prefix matches final location — skipping re-stream. prefix=${r2Prefix}`);
+                    } else {
+                        // Legacy flow (temp prefix): copy from temp to final, then clean up temp.
+                        console.log(`[addVideo] R2 prefix mismatch — re-streaming from ${videoR2Prefix} to ${r2Prefix}`);
+                        const tempStream = await r2Storage.getObjectStream(videoR2StagingKey);
+                        const ext = path.extname(videoR2StagingKey) || '.mp4';
+                        const finalStagingKey = `${r2Prefix}/staging/input${ext}`;
+                        await r2Storage.uploadStream(finalStagingKey, tempStream, 'application/octet-stream');
+                        try { await r2Storage.deletePrefix(videoR2Prefix); } catch (e) { }
+                    }
+                    await adminService.updateVideoR2(video.id, r2Prefix);
                 } else {
                     const r2StagingKey = `${r2Prefix}/staging/input.mp4`;
                     const uploadedPath = path.isAbsolute(videoFile.path) ? videoFile.path : path.resolve(process.cwd(), videoFile.path);
@@ -294,8 +305,8 @@ class AdminController {
                     const fileBuffer = fs.readFileSync(uploadedPath);
                     await r2Storage.uploadFile(r2StagingKey, fileBuffer, 'video/mp4');
                     try { fs.unlinkSync(uploadedPath); } catch (e) { }
+                    await adminService.updateVideoR2(video.id, r2Prefix);
                 }
-                await adminService.updateVideoR2(video.id, r2Prefix);
 
                 if (notes.length > 0 || assignments.length > 0) {
                     const { notes: finalNotes, assignments: finalAssignments } = await processVideoFiles(
@@ -786,23 +797,23 @@ class AdminController {
 
                 if (video_r2_staging_key) {
                     const r2Prefix = r2Storage.getVideoKeyPrefix(ownerId, effectiveCourseId, effectiveLessonId, video.id);
-                    if (video_r2_prefix) {
-                        // Verify the temp staging object exists before attempting to stream it
-                        const stagingExists = await r2Storage.objectExists(video_r2_staging_key);
-                        if (!stagingExists) {
-                            return res.status(400).json({ error: 'Staged video file not found in R2. The upload may have failed or expired. Please try uploading again.' });
-                        }
+                    const stagingExists = await r2Storage.objectExists(video_r2_staging_key);
+                    if (!stagingExists) {
+                        return res.status(400).json({ error: 'Staged video file not found in R2. The upload may have failed or expired. Please try uploading again.' });
+                    }
+                    if (video_r2_prefix && video_r2_prefix === r2Prefix) {
+                        // New flow: file was uploaded directly to the final key — no copy needed.
+                        console.log(`[updateVideo] R2 prefix matches final location — skipping re-stream. prefix=${r2Prefix}`);
+                    } else if (video_r2_prefix) {
+                        // Legacy flow (temp prefix): copy from temp to final, then clean up temp.
+                        console.log(`[updateVideo] R2 prefix mismatch — re-streaming from ${video_r2_prefix} to ${r2Prefix}`);
                         const tempStream = await r2Storage.getObjectStream(video_r2_staging_key);
                         const ext = path.extname(video_r2_staging_key) || '.mp4';
                         const finalStagingKey = `${r2Prefix}/staging/input${ext}`;
                         await r2Storage.uploadStream(finalStagingKey, tempStream, 'application/octet-stream');
                         try { await r2Storage.deletePrefix(video_r2_prefix); } catch (e) { }
                     } else {
-                        // video_r2_prefix not provided: staging key exists but no temp prefix to clean up
-                        const stagingExists = await r2Storage.objectExists(video_r2_staging_key);
-                        if (!stagingExists) {
-                            return res.status(400).json({ error: 'Staged video file not found in R2. The upload may have failed or expired. Please try uploading again.' });
-                        }
+                        // No prefix provided: staging key exists, copy to final location.
                         const tempStream = await r2Storage.getObjectStream(video_r2_staging_key);
                         const ext = path.extname(video_r2_staging_key) || '.mp4';
                         const finalStagingKey = `${r2Prefix}/staging/input${ext}`;

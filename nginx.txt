@@ -1,0 +1,57 @@
+server {
+    server_name api.shikkhabhumi.com;
+
+    # Unlimited request body size — videos upload via R2 multipart (browser→R2 direct),
+    # but the finalize/metadata requests must not be blocked by body size limits.
+    client_max_body_size 0;
+
+    # How long nginx waits to read the request body from the client.
+    # Large metadata/form payloads can be slow on mobile connections.
+    client_body_timeout 18000s;  # 5h
+
+    # How long nginx waits between sending bytes to the client.
+    send_timeout 18000s;  # 5h
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+
+        # Connection setup timeout (60s is fine — this is just the handshake)
+        proxy_connect_timeout 60s;
+
+        # How long nginx waits between sending bytes TO the backend.
+        # Must cover the slowest possible upload (legacy re-stream fallback).
+        proxy_send_timeout 18000s;  # 5h
+
+        # *** CRITICAL *** How long nginx waits for the backend to send a RESPONSE.
+        # This was 300s (5 min) — the #1 cause of "fetch failed" on large file finalize.
+        # Backend processes + responds within seconds now (after re-stream fix),
+        # but we keep this high as a safety net for edge cases.
+        proxy_read_timeout 18000s;  # 5h
+
+        # Disable request/response buffering — allows streaming without memory pressure.
+        proxy_request_buffering off;
+        proxy_buffering off;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_set_header Host $host;
+        proxy_set_header Origin $http_origin;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    listen 443 ssl;
+    ssl_certificate /etc/letsencrypt/live/api.shikkhabhumi.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.shikkhabhumi.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+}
+
+server {
+    listen 80;
+    server_name api.shikkhabhumi.com;
+    return 301 https://$host$request_uri;
+}
