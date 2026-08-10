@@ -51,8 +51,23 @@ const adminAnalyticsRoutes = require('./routes/adminAnalyticsRoutes');
 const certificateRoutes = require('./routes/certificateRoutes');
 const referenceRoutes = require('./routes/referenceRoutes');
 const teacherVideoRoutes = require('./routes/teacherVideoRoutes');
+const adminErrorLogRoutes = require('./routes/adminErrorLogRoutes');
+
+const errorLogService = require('./services/errorLogService');
 
 const app = express();
+
+// Process-level error handlers — catch unhandled rejections & exceptions and log to DB
+process.on('unhandledRejection', (reason, promise) => {
+    const err = reason instanceof Error ? reason : new Error(String(reason));
+    console.error('[Process] Unhandled Rejection:', err.message);
+    errorLogService.logSystemError('Unhandled Promise Rejection', err, { promise: String(promise) });
+});
+
+process.on('uncaughtException', (err) => {
+    console.error('[Process] Uncaught Exception:', err.message);
+    errorLogService.logSystemError('Uncaught Exception', err, {});
+});
 
 // Behind nginx / Docker proxy
 app.set('trust proxy', 1);
@@ -126,6 +141,7 @@ app.use('/v1/admin/payment-requests', adminPaymentRequestsRoutes);
 app.use('/v1/admin/live-requests', adminLiveRequestsRoutes);
 app.use('/v1/admin/live-sessions', adminLiveSessionsRoutes);
 app.use('/v1/admin/withdraw-requests', adminWithdrawRoutes);
+app.use('/v1/admin/error-logs', adminErrorLogRoutes);
 app.use('/v1/admin', adminRoutes);
 app.use('/v1/courses', courseRoutes);
 app.use('/v1/lessons', lessonRoutes);
@@ -178,19 +194,32 @@ app.get('/health', async (req, res) => {
 // Error Handling Middleware (multer, unhandled errors)
 app.use((err, req, res, next) => {
     console.error(err.stack || err);
+
     if (err.code === 'LIMIT_FILE_SIZE') {
         const maxBytes = typeof err?.limit === 'number' ? err.limit : null;
         const maxMb = maxBytes ? Math.round(maxBytes / (1024 * 1024)) : null;
         const message = maxMb
             ? `File too large. Maximum size is ${maxMb} MB per upload.`
             : 'File too large.';
+        // Log file-size errors as warnings
+        errorLogService.logApiError(err, req, 413).catch(() => {});
         return res.status(413).json({ error: message });
     }
+
     if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+        errorLogService.logApiError(err, req, 400).catch(() => {});
         return res.status(400).json({ error: 'Unexpected file field. Use "video" for the video file.' });
     }
+
+    const statusCode = err.status || 500;
     const message = err.message || 'Something went wrong. Please try again.';
-    res.status(err.status || 500).json({ error: message });
+
+    // Log all 5xx errors (and other serious errors) to DB
+    if (statusCode >= 400) {
+        errorLogService.logApiError(err, req, statusCode).catch(() => {});
+    }
+
+    res.status(statusCode).json({ error: message });
 });
 
 module.exports = app;

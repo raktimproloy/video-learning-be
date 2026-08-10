@@ -108,4 +108,12 @@ router.delete(
     adminController.deleteVideoVersion
 );
 
+
+// --- Retry failed video processing ---
+router.post(
+    '/:id/retry-processing',
+    requireTeacherPermission('courses'),
+    [check('id', 'Video ID is required').isUUID()],
+    adminController.retryVideoProcessing
+);
 module.exports = router;

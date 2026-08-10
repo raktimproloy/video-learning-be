@@ -5,6 +5,7 @@ const ffmpeg = require('fluent-ffmpeg');
 const db = require('../../db');
 const r2Storage = require('../services/r2StorageService');
 const keyStorage = require('../services/keyStorageService');
+const errorLogService = require('../services/errorLogService');
 
 const getDirSize = (dirPath) => {
     let size = 0;
@@ -46,11 +47,35 @@ class VideoProcessor {
         log('Starting processing for video_id=%s', task.video_id);
         let workDir = null;
 
+        // Mark task as started (so watchdog can detect stuck tasks by started_at age)
+        try {
+            await db.query(
+                `UPDATE video_processing_tasks SET started_at = NOW(), updated_at = NOW() WHERE id = $1`,
+                [task.id]
+            );
+        } catch (e) {
+            // Non-fatal — continue processing
+            console.warn('[VideoProcessor] Could not set started_at:', e.message);
+        }
+
+        // Fetch teacher info for error log context
+        let teacherId = null;
+        let teacherEmail = null;
+        let videoTitle = null;
+
         try {
             logStep('DB', 'Fetching video record...');
-            const videoRes = await db.query('SELECT * FROM videos WHERE id = $1', [task.video_id]);
+            const videoRes = await db.query(
+                `SELECT v.*, u.email as owner_email FROM videos v
+                 LEFT JOIN users u ON v.owner_id = u.id
+                 WHERE v.id = $1`,
+                [task.video_id]
+            );
             if (videoRes.rows.length === 0) throw new Error('Video not found');
             const video = videoRes.rows[0];
+            teacherId = video.owner_id;
+            teacherEmail = video.owner_email;
+            videoTitle = video.title;
             const useR2 = video.storage_provider === 'r2' && video.r2_key && r2Storage.isConfigured;
             const isR2Staging = video.storage_path === 'r2_staging';
             logStep('DB', 'Video found. storage_provider=%s, useR2=%s, isR2Staging=%s', video.storage_provider, useR2, isR2Staging);
@@ -451,6 +476,29 @@ class VideoProcessor {
 
         } catch (error) {
             console.error(`[VideoProcessor] [Task ${task.id}] FAILED:`, error.message);
+
+            // Always clean up temp workDir on failure to free disk space
+            if (workDir) {
+                try {
+                    if (fs.existsSync(workDir)) {
+                        fs.rmSync(workDir, { recursive: true, force: true });
+                        log('Cleanup: removed workDir %s after failure', workDir);
+                    }
+                } catch (cleanupErr) {
+                    console.warn('[VideoProcessor] Failed to cleanup workDir:', cleanupErr.message);
+                }
+            }
+
+            // Log error to DB for admin monitoring
+            await errorLogService.logWorkerError(error, {
+                taskId: task.id,
+                videoId: task.video_id,
+                videoTitle: videoTitle || null,
+                teacherId: teacherId || task.user_id,
+                teacherEmail: teacherEmail || null,
+                stage: 'video-processing',
+            }).catch(() => {}); // never let logging break anything
+
             await db.query(
                 `UPDATE video_processing_tasks 
                  SET status = 'failed', error_message = $1, processing_stage = NULL, updated_at = NOW() 

@@ -1,4 +1,4 @@
-const adminService = require('../services/adminService');
+﻿const adminService = require('../services/adminService');
 const { isImage, compressImage } = require('../utils/imageCompress');
 const lessonService = require('../services/lessonService');
 const videoService = require('../services/videoService');
@@ -906,6 +906,44 @@ class AdminController {
         } catch (error) {
             console.error('Delete version error:', error);
             res.status(500).json({ error: 'Internal Server Error' });
+        }
+    }
+    async retryVideoProcessing(req, res) {
+        try {
+            const videoId = req.params.id;
+            const video = await videoService.getVideoById(videoId);
+            if (!video) return res.status(404).json({ error: 'Video not found' });
+
+            let ownerId;
+            try { ownerId = await getEffectiveOwnerId(req, video.lesson_id, null); } catch (e) { return res.status(403).json({ error: e.message }); }
+            if (video.owner_id !== ownerId) return res.status(404).json({ error: 'Video not found or access denied' });
+
+            const lastTaskRes = await db.query(
+                `SELECT id, status FROM video_processing_tasks WHERE video_id = $1 ORDER BY created_at DESC LIMIT 1`,
+                [videoId]
+            );
+            const lastTask = lastTaskRes.rows[0];
+            if (!lastTask) return res.status(400).json({ error: 'No processing task found for this video.' });
+            if (lastTask.status === 'pending' || lastTask.status === 'processing') return res.status(400).json({ error: 'Video is already being processed. Please wait.' });
+            if (lastTask.status === 'completed' && video.status === 'active') return res.status(400).json({ error: 'Video has already been processed successfully.' });
+
+            if (video.storage_provider === 'r2' && video.r2_key) {
+                const candidateExts = ['.mp4', '.webm', '.mov', '.mkv', '.avi'];
+                let stagingExists = false;
+                for (const ext of candidateExts) {
+                    if (await r2Storage.objectExists(`${video.r2_key}/staging/input${ext}`)) { stagingExists = true; break; }
+                }
+                if (!stagingExists) return res.status(400).json({ error: 'Source video file not found in storage. Please re-upload the video.', needsReupload: true });
+            }
+
+            await db.query(`UPDATE video_processing_tasks SET status = 'cancelled', updated_at = NOW() WHERE video_id = $1 AND status IN ('failed', 'completed')`, [videoId]);
+            await db.query(`UPDATE videos SET status = 'processing', updated_at = NOW() WHERE id = $1`, [videoId]);
+            const newTask = await adminService.createProcessingTask(ownerId, videoId, 'h264', ['360p', '720p', '1080p'], 28, false);
+            console.log(`[RetryProcessing] New task: ${newTask.id} for video: ${videoId}`);
+            res.status(201).json({ message: 'Retry started successfully. Processing will begin shortly.', taskId: newTask.id, videoId });
+        } catch (error) {
+            console.error('Retry Video Processing Error:', error);
+            res.status(500).json({ error: 'Failed to retry processing. Please try again.' });
         }
     }
 }
