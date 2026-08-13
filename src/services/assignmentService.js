@@ -134,35 +134,74 @@ async function hasPassedAssignment(userId, assignmentType, videoId, lessonId, as
 }
 
 /**
- * Check if student has submitted all required assignments for a video.
- * Requires status = 'passed' for unlocking.
+ * Check if student has submitted all required published exams for a video.
+ * Submission (any official exam_submissions row) unlocks — exams are auto-graded.
  */
-async function hasCompletedVideoAssignments(userId, videoId) {
-  const video = await videoService.getVideoById(videoId);
-  if (!video || !video.assignments) return true;
-  const assignments = typeof video.assignments === 'string' ? JSON.parse(video.assignments) : video.assignments;
-  const required = assignments.filter((a) => a.isRequired);
-  for (const a of required) {
-    const passed = await hasPassedAssignment(userId, 'video', videoId, null, a.id);
-    if (!passed) return false;
+async function hasCompletedVideoExams(userId, videoId) {
+  const result = await db.query(
+    `SELECT id FROM exams WHERE video_id = $1 AND is_required = true AND status = 'published'`,
+    [videoId]
+  );
+  for (const row of result.rows) {
+    const sub = await db.query(
+      `SELECT 1 FROM exam_submissions WHERE exam_id = $1 AND student_id = $2 LIMIT 1`,
+      [row.id, userId]
+    );
+    if (sub.rows.length === 0) return false;
   }
   return true;
 }
 
 /**
+ * Check if student has submitted all required published exams for a lesson.
+ */
+async function hasCompletedLessonExams(userId, lessonId) {
+  const result = await db.query(
+    `SELECT id FROM exams WHERE lesson_id = $1 AND is_required = true AND status = 'published'`,
+    [lessonId]
+  );
+  for (const row of result.rows) {
+    const sub = await db.query(
+      `SELECT 1 FROM exam_submissions WHERE exam_id = $1 AND student_id = $2 LIMIT 1`,
+      [row.id, userId]
+    );
+    if (sub.rows.length === 0) return false;
+  }
+  return true;
+}
+
+/**
+ * Check if student has submitted all required assignments for a video.
+ * Requires status = 'passed' for unlocking. Also requires required exams to be taken.
+ */
+async function hasCompletedVideoAssignments(userId, videoId) {
+  const video = await videoService.getVideoById(videoId);
+  if (video && video.assignments) {
+    const assignments = typeof video.assignments === 'string' ? JSON.parse(video.assignments) : video.assignments;
+    const required = (Array.isArray(assignments) ? assignments : []).filter((a) => a.isRequired);
+    for (const a of required) {
+      const passed = await hasPassedAssignment(userId, 'video', videoId, null, a.id);
+      if (!passed) return false;
+    }
+  }
+  return hasCompletedVideoExams(userId, videoId);
+}
+
+/**
  * Check if student has submitted all required assignments for a lesson.
- * Requires status = 'passed' for unlocking.
+ * Requires status = 'passed' for unlocking. Also requires required exams to be taken.
  */
 async function hasCompletedLessonAssignments(userId, lessonId) {
   const lesson = await lessonService.getLessonById(lessonId);
-  if (!lesson || !lesson.assignments) return true;
-  const assignments = typeof lesson.assignments === 'string' ? JSON.parse(lesson.assignments) : lesson.assignments;
-  const required = assignments.filter((a) => a.isRequired);
-  for (const a of required) {
-    const passed = await hasPassedAssignment(userId, 'lesson', null, lessonId, a.id);
-    if (!passed) return false;
+  if (lesson && lesson.assignments) {
+    const assignments = typeof lesson.assignments === 'string' ? JSON.parse(lesson.assignments) : lesson.assignments;
+    const required = (Array.isArray(assignments) ? assignments : []).filter((a) => a.isRequired);
+    for (const a of required) {
+      const passed = await hasPassedAssignment(userId, 'lesson', null, lessonId, a.id);
+      if (!passed) return false;
+    }
   }
-  return true;
+  return hasCompletedLessonExams(userId, lessonId);
 }
 
 /**
@@ -460,6 +499,8 @@ module.exports = {
   hasPassedAssignment,
   hasCompletedVideoAssignments,
   hasCompletedLessonAssignments,
+  hasCompletedVideoExams,
+  hasCompletedLessonExams,
   isNextVideoLocked,
   isNextLessonLocked,
   getVideoSubmissionStatus,

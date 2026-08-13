@@ -3,6 +3,7 @@ const lessonService = require('../services/lessonService');
 const courseService = require('../services/courseService');
 const r2Storage = require('../services/r2StorageService');
 const liveChatService = require('../services/liveChatService');
+const { sanitizeNotes, sanitizeAssignments } = require('../utils/contentVisibility');
 
 function contentTypeForPath(subpath) {
     if (subpath.endsWith('.m3u8')) return 'application/vnd.apple.mpegurl';
@@ -22,12 +23,27 @@ class VideoController {
                 return res.status(404).json({ error: 'Video not found' });
             }
 
+            const rawNotes = (() => {
+                if (!video.notes) return [];
+                if (typeof video.notes === 'string') {
+                    try { return JSON.parse(video.notes); } catch { return []; }
+                }
+                return Array.isArray(video.notes) ? video.notes : [];
+            })();
+            const rawAssignments = (() => {
+                if (!video.assignments) return [];
+                if (typeof video.assignments === 'string') {
+                    try { return JSON.parse(video.assignments); } catch { return []; }
+                }
+                return Array.isArray(video.assignments) ? video.assignments : [];
+            })();
+
             // Guest (no token): only preview videos are accessible
             if (!userId) {
                 if (!video.is_preview) {
                     return res.status(401).json({ error: 'Authentication required' });
                 }
-                // Return safe minimal info for guests
+                // Return safe minimal info for guests — public content full, private titles only
                 const guestResult = {
                     id: video.id,
                     title: video.title,
@@ -36,8 +52,8 @@ class VideoController {
                     order: video.order,
                     lesson_id: video.lesson_id,
                     source_type: video.source_type,
-                    notes: [],
-                    assignments: [],
+                    notes: sanitizeNotes(rawNotes, false),
+                    assignments: sanitizeAssignments(rawAssignments, false),
                     isPreview: true,
                     isLocked: false,
                     thumbnail_url: null,
@@ -54,18 +70,16 @@ class VideoController {
                 return res.status(403).json({ error: 'Access denied' });
             }
 
+            const enrolled = isOwnerOrManager || await videoService.checkPermission(userId, videoId);
+            const fullAccess = enrolled;
+
             const result = { ...video };
             result.isPreview = result.is_preview ?? false;
-            if (result.notes && typeof result.notes === 'string') {
-                try { result.notes = JSON.parse(result.notes); } catch { result.notes = []; }
-            }
-            if (result.assignments && typeof result.assignments === 'string') {
-                try { result.assignments = JSON.parse(result.assignments); } catch { result.assignments = []; }
-            }
+            result.notes = sanitizeNotes(rawNotes, fullAccess);
+            result.assignments = sanitizeAssignments(rawAssignments, fullAccess);
 
             // For students, check if video is locked
             if (role === 'student') {
-                const enrolled = await videoService.checkPermission(userId, videoId);
                 if (video.is_preview && !isOwnerOrManager && !enrolled) {
                     result.isLocked = false;
                 } else {
@@ -162,6 +176,19 @@ class VideoController {
                 // If they are the owner, they should not be filtered as a student
                 if (role === 'student' && !isOwner) {
                     videos = videos.filter(v => v.status !== 'processing' && v.status !== 'uploading');
+                    // Strip private note/assignment bodies unless enrolled
+                    let enrolled = false;
+                    if (lesson) {
+                        enrolled = await courseService.isEnrolled(userId, lesson.course_id);
+                    }
+                    if (!enrolled) {
+                        const { sanitizeNotes, sanitizeAssignments } = require('../utils/contentVisibility');
+                        videos = videos.map((v) => ({
+                            ...v,
+                            notes: sanitizeNotes(Array.isArray(v.notes) ? v.notes : [], false),
+                            assignments: sanitizeAssignments(Array.isArray(v.assignments) ? v.assignments : [], false),
+                        }));
+                    }
                 }
             } else if (role === 'teacher') {
                 // Teacher sees videos they own

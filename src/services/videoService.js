@@ -204,6 +204,13 @@ class VideoService {
             if (hasRequired) {
                 return { allowed: false, reason: 'Cannot set as preview: a previous video in this lesson has required assignments. Students must complete them before accessing the next video.' };
             }
+            const examCheck = await db.query(
+                `SELECT 1 FROM exams WHERE video_id = $1 AND is_required = true AND status = 'published' LIMIT 1`,
+                [row.id]
+            );
+            if (examCheck.rows.length > 0) {
+                return { allowed: false, reason: 'Cannot set as preview: a previous video in this lesson has a required exam. Students must take it before accessing the next video.' };
+            }
         }
         return { allowed: true };
     }
@@ -304,7 +311,7 @@ class VideoService {
             if (userRole.rows.length > 0 && userRole.rows[0].role === 'student') {
                 const isLocked = await this.isVideoLockedForStudent(userId, videoId);
                 if (isLocked) {
-                    throw new Error('Video is locked. Complete the required assignment from the previous video/lesson to unlock.');
+                    throw new Error('Video is locked. Complete the required assignment or exam from the previous video/lesson to unlock.');
                 }
             }
         }

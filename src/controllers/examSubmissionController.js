@@ -2,7 +2,11 @@ const examService = require('../services/examService');
 const examSubmissionService = require('../services/examSubmissionService');
 const courseService = require('../services/courseService');
 
-async function ensureEnrolledExam(req, res) {
+/**
+ * Allow take/start/submit when enrolled OR exam is public.
+ * Returns { exam, enrolled } or sends error response and returns null.
+ */
+async function ensureExamAccess(req, res) {
     if (req.user.role !== 'student') {
         res.status(403).json({ error: 'Students only' });
         return null;
@@ -13,22 +17,24 @@ async function ensureEnrolledExam(req, res) {
         return null;
     }
     const enrolled = await courseService.isEnrolled(req.user.id, exam.course_id);
-    if (!enrolled) {
-        res.status(403).json({ error: 'Access denied' });
+    const isPublic = exam.is_public === true;
+    if (!enrolled && !isPublic) {
+        res.status(403).json({ error: 'Purchase the course to access this exam', code: 'PURCHASE_REQUIRED' });
         return null;
     }
-    return exam;
+    return { exam, enrolled };
 }
 
 class ExamSubmissionController {
     async take(req, res) {
         try {
-            const exam = await ensureEnrolledExam(req, res);
-            if (!exam) return;
+            const access = await ensureExamAccess(req, res);
+            if (!access) return;
+            const { exam } = access;
             const attempt = await examSubmissionService.peekAttempt(exam.id, req.user.id);
             if (attempt.phase === 'submitted') {
                 const result = await examSubmissionService.getResultForDisplay(exam.id, req.user.id);
-                return res.json({ phase: 'submitted', examTitle: exam.title, result });
+                return res.json({ phase: 'submitted', examTitle: exam.title, result, isPublicAttempt: !access.enrolled });
             }
             if (attempt.phase === 'in_progress') {
                 return res.json({
@@ -36,9 +42,14 @@ class ExamSubmissionController {
                     exam: examSubmissionService.getSanitizedExam(exam),
                     startedAt: attempt.draft.started_at,
                     answers: attempt.draft.answers || {},
+                    isPublicAttempt: !access.enrolled,
                 });
             }
-            res.json({ phase: 'not_started', exam: examSubmissionService.getSanitizedExam(exam) });
+            res.json({
+                phase: 'not_started',
+                exam: examSubmissionService.getSanitizedExam(exam),
+                isPublicAttempt: !access.enrolled,
+            });
         } catch (error) {
             console.error('Take exam error:', error);
             res.status(500).json({ error: 'Internal server error' });
@@ -47,8 +58,9 @@ class ExamSubmissionController {
 
     async start(req, res) {
         try {
-            const exam = await ensureEnrolledExam(req, res);
-            if (!exam) return;
+            const access = await ensureExamAccess(req, res);
+            if (!access) return;
+            const { exam } = access;
             const { restart } = req.body || {};
             const draft = restart
                 ? await examSubmissionService.restartAttempt(exam.id, req.user.id)
@@ -58,6 +70,7 @@ class ExamSubmissionController {
                 exam: examSubmissionService.getSanitizedExam(exam),
                 startedAt: draft.started_at,
                 answers: draft.answers || {},
+                isPublicAttempt: !access.enrolled,
             });
         } catch (error) {
             console.error('Start exam error:', error);
@@ -67,10 +80,10 @@ class ExamSubmissionController {
 
     async autosave(req, res) {
         try {
-            const exam = await ensureEnrolledExam(req, res);
-            if (!exam) return;
+            const access = await ensureExamAccess(req, res);
+            if (!access) return;
             const { answers } = req.body || {};
-            const draft = await examSubmissionService.autosaveAnswers(exam.id, req.user.id, answers);
+            const draft = await examSubmissionService.autosaveAnswers(access.exam.id, req.user.id, answers);
             if (!draft) return res.status(404).json({ error: 'No in-progress attempt found. Start the exam first.' });
             res.json({ success: true, lastSavedAt: draft.last_saved_at });
         } catch (error) {
@@ -81,11 +94,15 @@ class ExamSubmissionController {
 
     async submit(req, res) {
         try {
-            const exam = await ensureEnrolledExam(req, res);
-            if (!exam) return;
+            const access = await ensureExamAccess(req, res);
+            if (!access) return;
             const { answers, timeTakenMs } = req.body || {};
-            const result = await examSubmissionService.submitAttempt(exam.id, req.user.id, answers, timeTakenMs);
-            res.status(201).json({ ...result, examTitle: exam.title });
+            const result = await examSubmissionService.submitAttempt(access.exam.id, req.user.id, answers, timeTakenMs);
+            res.status(201).json({
+                ...result,
+                examTitle: access.exam.title,
+                isPublicAttempt: !access.enrolled,
+            });
         } catch (error) {
             console.error('Submit exam error:', error);
             res.status(error.status || 500).json({ error: error.message || 'Internal server error' });
@@ -94,11 +111,11 @@ class ExamSubmissionController {
 
     async getResult(req, res) {
         try {
-            const exam = await ensureEnrolledExam(req, res);
-            if (!exam) return;
-            const result = await examSubmissionService.getResultForDisplay(exam.id, req.user.id);
+            const access = await ensureExamAccess(req, res);
+            if (!access) return;
+            const result = await examSubmissionService.getResultForDisplay(access.exam.id, req.user.id);
             if (!result) return res.status(404).json({ error: 'No submission found' });
-            res.json({ examTitle: exam.title, result });
+            res.json({ examTitle: access.exam.title, result, isPublicAttempt: !access.enrolled });
         } catch (error) {
             console.error('Get exam result error:', error);
             res.status(500).json({ error: 'Internal server error' });
@@ -135,10 +152,17 @@ class ExamSubmissionController {
             }
             const enrolled = await courseService.isEnrolled(req.user.id, exam.course_id);
             if (!enrolled) {
-                return res.status(403).json({ error: 'Access denied' });
+                // Public takers can see the board but are not listed on it
+                if (!exam.is_public) {
+                    return res.status(403).json({ error: 'Access denied' });
+                }
             }
-            const leaderboard = await examSubmissionService.getExamLeaderboard(examId, req.user.id);
-            res.json(leaderboard);
+            const leaderboard = await examSubmissionService.getExamLeaderboard(examId, req.user.id, exam.course_id);
+            res.json({
+                ...leaderboard,
+                // Non-enrolled public attempts never appear / never get a personal rank on the board
+                studentResult: enrolled ? leaderboard.studentResult : null,
+            });
         } catch (error) {
             console.error('Get leaderboard error:', error);
             res.status(500).json({ error: 'Internal server error' });

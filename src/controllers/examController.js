@@ -5,6 +5,7 @@ const videoService = require('../services/videoService');
 const r2Storage = require('../services/r2StorageService');
 const { isImage, compressImage } = require('../utils/imageCompress');
 const { parseExamTemplateDocx } = require('../services/examTemplateService');
+const { sanitizeExamForStudentList } = require('../utils/contentVisibility');
 
 function workspaceTeacherId(req) {
     return req.effectiveTeacherId || req.user.id;
@@ -48,14 +49,19 @@ class ExamController {
             if (!course) return res.status(404).json({ error: 'Course not found' });
             const isTeacher = isTeacherWorkspaceUser(req) && course.teacher_id === workspaceTeacherId(req);
             const isStudent = req.user.role === 'student';
+            let enrolled = false;
             if (isStudent) {
-                const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
-                if (!enrolled) return res.status(403).json({ error: 'Access denied' });
+                enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
+                // Non-enrolled students may still see published exams (public full / private title-only)
             } else if (!isTeacher) {
                 return res.status(403).json({ error: 'Access denied' });
             }
             let exams = await examService.listByLesson(lessonId);
-            if (isStudent) exams = exams.filter((e) => e.status === 'published');
+            if (isStudent) {
+                exams = exams
+                    .filter((e) => e.status === 'published')
+                    .map((e) => sanitizeExamForStudentList(e, enrolled));
+            }
             res.json({ exams });
         } catch (error) {
             console.error('List lesson exams error:', error);
@@ -70,14 +76,27 @@ class ExamController {
             if (!video) return res.status(404).json({ error: 'Video not found' });
             const isTeacher = isTeacherWorkspaceUser(req) && video.owner_id === workspaceTeacherId(req);
             const isStudent = req.user.role === 'student';
+            let enrolled = false;
             if (isStudent) {
-                const hasAccess = (await videoService.isOwnerOrManager(req.user.id, videoId)) || (await videoService.checkPermission(req.user.id, videoId)) || video.is_preview;
-                if (!hasAccess) return res.status(403).json({ error: 'Access denied' });
+                const isOwnerOrManager = await videoService.isOwnerOrManager(req.user.id, videoId);
+                enrolled = isOwnerOrManager || (await videoService.checkPermission(req.user.id, videoId));
+                const hasAccess = enrolled || video.is_preview;
+                // Allow listing when preview OR any published public/private teasers for course context
+                if (!hasAccess) {
+                    // Still allow if lesson exists — student may open from course; require at least auth
+                    // Keep strict: must have preview access or enrollment to list video-scoped exams
+                    // Exception: return only titles for published exams if they know videoId... skip for non-access
+                    return res.status(403).json({ error: 'Access denied' });
+                }
             } else if (!isTeacher) {
                 return res.status(403).json({ error: 'Access denied' });
             }
             let exams = await examService.listByVideo(videoId);
-            if (isStudent) exams = exams.filter((e) => e.status === 'published');
+            if (isStudent) {
+                exams = exams
+                    .filter((e) => e.status === 'published')
+                    .map((e) => sanitizeExamForStudentList(e, enrolled));
+            }
             res.json({ exams });
         } catch (error) {
             console.error('List video exams error:', error);
@@ -90,11 +109,13 @@ class ExamController {
             if (!isTeacherWorkspaceUser(req)) return res.status(403).json({ error: 'Teachers only' });
             const ctx = await resolveLessonContext(req, req.params.id);
             if (!ctx.ok) return res.status(ctx.status).json({ error: ctx.error });
-            const { title, description, timeLimitMinutes, questions, gradingBands } = req.body || {};
+            const { title, description, timeLimitMinutes, questions, gradingBands, isPublic, isRequired } = req.body || {};
             const exam = await examService.createExam(workspaceTeacherId(req), {
                 courseId: ctx.course.id,
                 lessonId: ctx.lesson.id,
                 title, description, timeLimitMinutes, questions, gradingBands,
+                isPublic: !!isPublic,
+                isRequired: !!isRequired,
             });
             res.status(201).json({ exam });
         } catch (error) {
@@ -108,11 +129,13 @@ class ExamController {
             if (!isTeacherWorkspaceUser(req)) return res.status(403).json({ error: 'Teachers only' });
             const ctx = await resolveVideoContext(req, req.params.videoId);
             if (!ctx.ok) return res.status(ctx.status).json({ error: ctx.error });
-            const { title, description, timeLimitMinutes, questions, gradingBands } = req.body || {};
+            const { title, description, timeLimitMinutes, questions, gradingBands, isPublic, isRequired } = req.body || {};
             const exam = await examService.createExam(workspaceTeacherId(req), {
                 courseId: ctx.courseId,
                 videoId: ctx.video.id,
                 title, description, timeLimitMinutes, questions, gradingBands,
+                isPublic: !!isPublic,
+                isRequired: !!isRequired,
             });
             res.status(201).json({ exam });
         } catch (error) {
@@ -127,9 +150,11 @@ class ExamController {
             const exam = await examService.getById(req.params.examId);
             if (!exam) return res.status(404).json({ error: 'Exam not found' });
             if (exam.teacher_id !== workspaceTeacherId(req)) return res.status(403).json({ error: 'Not authorized' });
-            const { title, description, timeLimitMinutes, questions, gradingBands } = req.body || {};
+            const { title, description, timeLimitMinutes, questions, gradingBands, isPublic, isRequired } = req.body || {};
             const updated = await examService.updateExam(exam.id, workspaceTeacherId(req), {
                 title, description, timeLimitMinutes, questions, gradingBands,
+                isPublic: isPublic === undefined ? undefined : !!isPublic,
+                isRequired: isRequired === undefined ? undefined : !!isRequired,
             });
             res.json({ exam: updated });
         } catch (error) {

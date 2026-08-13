@@ -2,7 +2,9 @@ const assignmentService = require('../services/assignmentService');
 const videoService = require('../services/videoService');
 const lessonService = require('../services/lessonService');
 const courseService = require('../services/courseService');
+const examService = require('../services/examService');
 const db = require('../../db');
+const { sanitizeNotes, sanitizeAssignments, sanitizeExamForStudentList } = require('../utils/contentVisibility');
 
 /**
  * POST /assignments/submit
@@ -115,25 +117,30 @@ async function getLockStatus(req, res) {
 /**
  * GET /assignments/watch-context?videoId=...
  * Returns submission status + lock status for next video/lesson.
- * For preview videos, allows access without enrollment and returns isPreviewOnly + requiresPurchase flags.
+ * Preview videos are allowed without login/enrollment (isPreviewOnly).
+ * Private notes/assignments/exams are title-only; public items include content.
  */
 async function getWatchContext(req, res) {
   try {
-    const userId = req.user.id;
+    const userId = req.user?.id || null;
     const { videoId } = req.query;
     if (!videoId) return res.status(400).json({ error: 'videoId required' });
 
     const video = await videoService.getVideoById(videoId);
     if (!video) return res.status(404).json({ error: 'Video not found' });
 
-    const isOwnerOrManager = await videoService.isOwnerOrManager(userId, videoId);
-    const enrolled = await videoService.checkPermission(userId, videoId);
+    let isOwnerOrManager = false;
+    let enrolled = false;
+    if (userId) {
+      isOwnerOrManager = await videoService.isOwnerOrManager(userId, videoId);
+      enrolled = await videoService.checkPermission(userId, videoId);
+    }
     const hasAccess = isOwnerOrManager || enrolled || (video.is_preview === true);
     if (!hasAccess) return res.status(403).json({ error: 'Access denied' });
 
     const isPreviewOnly = hasAccess && !isOwnerOrManager && !enrolled;
 
-    const submissionStatus = isPreviewOnly ? {} : await assignmentService.getVideoSubmissionStatus(userId, videoId);
+    const submissionStatus = (!userId || isPreviewOnly) ? {} : await assignmentService.getVideoSubmissionStatus(userId, videoId);
 
     const lessonId = video.lesson_id;
     let nextVideoLocked = false;
@@ -149,12 +156,17 @@ async function getWatchContext(req, res) {
     let lessonNotes = [];
     let lessonAssignments = [];
     let lessonSubmissionStatus = {};
+    let courseId = null;
 
     if (lessonId) {
       const lesson = await lessonService.getLessonById(lessonId);
-      lessonNotes = Array.isArray(lesson?.notes) ? lesson.notes : [];
-      lessonAssignments = Array.isArray(lesson?.assignments) ? lesson.assignments : [];
-      if (!isPreviewOnly) {
+      courseId = lesson?.course_id || null;
+      const fullAccess = !isPreviewOnly;
+      const rawLessonNotes = Array.isArray(lesson?.notes) ? lesson.notes : [];
+      const rawLessonAssignments = Array.isArray(lesson?.assignments) ? lesson.assignments : [];
+      lessonNotes = sanitizeNotes(rawLessonNotes, fullAccess);
+      lessonAssignments = sanitizeAssignments(rawLessonAssignments, fullAccess);
+      if (userId && !isPreviewOnly) {
         lessonSubmissionStatus = await assignmentService.getLessonSubmissionStatus(userId, lessonId);
       }
       const videosResult = await db.query(
@@ -168,7 +180,7 @@ async function getWatchContext(req, res) {
       if (nextVideoRow) {
         nextVideoId = nextVideoRow.id;
         nextVideoIsPreview = nextVideoRow.is_preview === true;
-        if (isPreviewOnly) {
+        if (isPreviewOnly || !userId) {
           nextVideoLocked = !nextVideoIsPreview;
           nextVideoRequiresPurchase = !nextVideoIsPreview;
         } else {
@@ -192,7 +204,7 @@ async function getWatchContext(req, res) {
           const nvRows = nextLessonVideos.rows;
           nextLessonFullyPreview = nvRows.length > 0 && nvRows.every((v) => v.is_preview === true);
           if (nvRows.length > 0) nextLessonFirstVideoId = nvRows[0].id;
-          if (isPreviewOnly) {
+          if (isPreviewOnly || !userId) {
             nextLessonLocked = !nextLessonFullyPreview;
             nextLessonRequiresPurchase = !nextLessonFullyPreview;
           } else {
@@ -202,12 +214,37 @@ async function getWatchContext(req, res) {
       }
     }
 
+    let exams = [];
+    try {
+      const lessonExams = lessonId ? await examService.listByLesson(lessonId) : [];
+      const videoExams = await examService.listByVideo(videoId);
+      const published = [...lessonExams, ...videoExams].filter((e) => e.status === 'published');
+      exams = published.map((e) => sanitizeExamForStudentList(e, !isPreviewOnly));
+    } catch (e) {
+      console.error('Watch context exams error:', e);
+      exams = [];
+    }
+
+    const parseJsonb = (val) => {
+      if (!val) return [];
+      if (typeof val === 'string') {
+        try { return JSON.parse(val); } catch { return []; }
+      }
+      return Array.isArray(val) ? val : [];
+    };
+    const videoNotes = sanitizeNotes(parseJsonb(video.notes), !isPreviewOnly);
+    const videoAssignments = sanitizeAssignments(parseJsonb(video.assignments), !isPreviewOnly);
+
     res.json({
       isPreviewOnly,
+      courseId,
       submissionStatus,
+      videoNotes,
+      videoAssignments,
       lessonNotes,
       lessonAssignments,
       lessonSubmissionStatus,
+      exams,
       nextVideoLocked,
       nextLessonLocked,
       nextVideoId,

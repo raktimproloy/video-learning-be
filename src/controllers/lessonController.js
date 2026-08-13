@@ -65,6 +65,16 @@ function parseNotesAndAssignments(body) {
     } catch (e) {
         assignments = [];
     }
+    notes = (Array.isArray(notes) ? notes : []).map((n) => ({
+        ...n,
+        title: n.title != null ? String(n.title) : '',
+        isPublic: n.isPublic === true || n.is_public === true,
+    }));
+    assignments = (Array.isArray(assignments) ? assignments : []).map((a) => ({
+        ...a,
+        isPublic: a.isPublic === true || a.is_public === true,
+        isRequired: a.isRequired === true || a.is_required === true,
+    }));
     return { notes, assignments };
 }
 
@@ -221,7 +231,21 @@ class LessonController {
             if (!lesson) {
                 return res.status(404).json({ error: 'Lesson not found' });
             }
-            res.json(lesson);
+            const { sanitizeNotes, sanitizeAssignments } = require('../utils/contentVisibility');
+            let fullAccess = true;
+            if (req.user?.role === 'student') {
+                const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
+                const isOwner = false;
+                fullAccess = enrolled || isOwner;
+            } else if (req.user?.role === 'teacher' || req.user?.role === 'teacher_staff') {
+                fullAccess = true;
+            } else if (!req.user) {
+                fullAccess = false;
+            }
+            const out = { ...lesson };
+            out.notes = sanitizeNotes(Array.isArray(lesson.notes) ? lesson.notes : [], fullAccess);
+            out.assignments = sanitizeAssignments(Array.isArray(lesson.assignments) ? lesson.assignments : [], fullAccess);
+            res.json(out);
         } catch (error) {
             console.error('Get lesson error:', error);
             res.status(500).json({ error: 'Internal server error' });

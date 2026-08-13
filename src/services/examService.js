@@ -50,11 +50,11 @@ class ExamService {
         return result.rows[0] || null;
     }
 
-    async createExam(teacherId, { courseId, lessonId = null, videoId = null, title, description, timeLimitMinutes, questions, gradingBands }) {
+    async createExam(teacherId, { courseId, lessonId = null, videoId = null, title, description, timeLimitMinutes, questions, gradingBands, isPublic = false, isRequired = false }) {
         const totalMarks = computeTotalMarks(questions);
         const result = await db.query(
-            `INSERT INTO exams (course_id, lesson_id, video_id, teacher_id, title, description, time_limit_minutes, questions, grading_bands, total_marks)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            `INSERT INTO exams (course_id, lesson_id, video_id, teacher_id, title, description, time_limit_minutes, questions, grading_bands, total_marks, is_public, is_required)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
              RETURNING *`,
             [
                 courseId,
@@ -67,24 +67,48 @@ class ExamService {
                 JSON.stringify(questions || []),
                 JSON.stringify(gradingBands && gradingBands.length ? gradingBands : DEFAULT_GRADING_BANDS),
                 totalMarks,
+                !!isPublic,
+                !!isRequired,
             ]
         );
         return result.rows[0];
     }
 
-    async updateExam(examId, teacherId, { title, description, timeLimitMinutes, questions, gradingBands }) {
+    async updateExam(examId, teacherId, { title, description, timeLimitMinutes, questions, gradingBands, isPublic, isRequired }) {
         const existing = await db.query('SELECT status FROM exams WHERE id = $1 AND teacher_id = $2', [examId, teacherId]);
-        if (existing.rows[0]?.status === 'published') {
-            const err = new Error('Cannot edit a published exam. Unpublish it first.');
-            err.status = 403;
-            throw err;
+        if (!existing.rows[0]) return null;
+        if (existing.rows[0].status === 'published') {
+            // Visibility / requirement flags may change while published; content stays locked.
+            if (isPublic === undefined && isRequired === undefined) {
+                const err = new Error('Cannot edit a published exam. Unpublish it first.');
+                err.status = 403;
+                throw err;
+            }
+            const result = await db.query(
+                `UPDATE exams
+                 SET is_public = COALESCE($1, is_public),
+                     is_required = COALESCE($2, is_required),
+                     updated_at = NOW()
+                 WHERE id = $3 AND teacher_id = $4
+                 RETURNING *`,
+                [
+                    isPublic === undefined ? null : !!isPublic,
+                    isRequired === undefined ? null : !!isRequired,
+                    examId,
+                    teacherId,
+                ]
+            );
+            return result.rows[0] || null;
         }
         const totalMarks = computeTotalMarks(questions);
         const result = await db.query(
             `UPDATE exams
              SET title = $1, description = $2, time_limit_minutes = $3, questions = $4, grading_bands = $5,
-                 total_marks = $6, updated_at = NOW()
-             WHERE id = $7 AND teacher_id = $8
+                 total_marks = $6,
+                 is_public = COALESCE($7, is_public),
+                 is_required = COALESCE($8, is_required),
+                 updated_at = NOW()
+             WHERE id = $9 AND teacher_id = $10
              RETURNING *`,
             [
                 title || 'Untitled Exam',
@@ -93,6 +117,8 @@ class ExamService {
                 JSON.stringify(questions || []),
                 JSON.stringify(gradingBands && gradingBands.length ? gradingBands : DEFAULT_GRADING_BANDS),
                 totalMarks,
+                isPublic === undefined ? null : !!isPublic,
+                isRequired === undefined ? null : !!isRequired,
                 examId,
                 teacherId,
             ]

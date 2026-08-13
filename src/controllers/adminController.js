@@ -20,6 +20,16 @@ function parseNotesAndAssignments(body) {
     try {
         assignments = body.assignments ? (typeof body.assignments === 'string' ? JSON.parse(body.assignments) : body.assignments) : [];
     } catch (e) { assignments = []; }
+    notes = (Array.isArray(notes) ? notes : []).map((n) => ({
+        ...n,
+        title: n.title != null ? String(n.title) : '',
+        isPublic: n.isPublic === true || n.is_public === true,
+    }));
+    assignments = (Array.isArray(assignments) ? assignments : []).map((a) => ({
+        ...a,
+        isPublic: a.isPublic === true || a.is_public === true,
+        isRequired: a.isRequired === true || a.is_required === true,
+    }));
     return { notes, assignments };
 }
 
@@ -647,7 +657,7 @@ class AdminController {
             if (!exam) return res.status(404).json({ error: 'Exam not found' });
             
             // Getting leaderboard with admin studentId = null (so it won't query student specific result)
-            const leaderboardData = await examSubmissionService.getExamLeaderboard(examId, '00000000-0000-0000-0000-000000000000');
+            const leaderboardData = await examSubmissionService.getExamLeaderboard(examId, '00000000-0000-0000-0000-000000000000', exam.course_id);
             
             const db = require('../../db');
             const submissionsRes = await db.query(

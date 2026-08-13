@@ -375,16 +375,19 @@ class ExamSubmissionService {
         }));
     }
 
-    async getExamLeaderboard(examId, studentId) {
+    async getExamLeaderboard(examId, studentId, courseId) {
+        // Only currently enrolled students count toward the leaderboard.
+        // Public (non-purchased) attempts are excluded.
         const result = await db.query(
             `SELECT s.student_id, u.name, sp.profile_image_path as avatar_url, s.score, s.time_taken_ms, s.submitted_at
              FROM exam_submissions s
              JOIN users u ON u.id = s.student_id
              LEFT JOIN student_profiles sp ON sp.user_id = u.id
+             INNER JOIN course_enrollments ce ON ce.user_id = s.student_id AND ce.course_id = $2
              WHERE s.exam_id = $1
              ORDER BY s.score DESC, s.time_taken_ms ASC
              LIMIT 100`,
-            [examId]
+            [examId, courseId]
         );
         
         let studentRank = null;
@@ -408,35 +411,43 @@ class ExamSubmissionService {
         });
 
         if (!studentEntry) {
-            const studentSubmission = await db.query(
-                `SELECT score, time_taken_ms, submitted_at FROM exam_submissions WHERE exam_id = $1 AND student_id = $2`,
-                [examId, studentId]
+            // Only compute personal rank if this student is enrolled
+            const enrolledCheck = await db.query(
+                `SELECT 1 FROM course_enrollments WHERE user_id = $1 AND course_id = $2`,
+                [studentId, courseId]
             );
-            if (studentSubmission.rows.length > 0) {
-                const sub = studentSubmission.rows[0];
-                const rankQuery = await db.query(
-                    `SELECT COUNT(*) + 1 AS rank FROM exam_submissions 
-                     WHERE exam_id = $1 
-                     AND (score > $2 OR (score = $2 AND time_taken_ms < $3))`,
-                    [examId, sub.score, sub.time_taken_ms]
+            if (enrolledCheck.rows.length > 0) {
+                const studentSubmission = await db.query(
+                    `SELECT score, time_taken_ms, submitted_at FROM exam_submissions WHERE exam_id = $1 AND student_id = $2`,
+                    [examId, studentId]
                 );
-                studentRank = parseInt(rankQuery.rows[0].rank);
-                const userQuery = await db.query(
-                    `SELECT u.name, sp.profile_image_path as avatar_url 
-                     FROM users u 
-                     LEFT JOIN student_profiles sp ON sp.user_id = u.id 
-                     WHERE u.id = $1`, 
-                    [studentId]
-                );
-                studentEntry = {
-                    rank: studentRank,
-                    studentId,
-                    name: userQuery.rows[0].name,
-                    avatarUrl: userQuery.rows[0].avatar_url,
-                    score: sub.score,
-                    timeTakenMs: sub.time_taken_ms,
-                    submittedAt: sub.submitted_at
-                };
+                if (studentSubmission.rows.length > 0) {
+                    const sub = studentSubmission.rows[0];
+                    const rankQuery = await db.query(
+                        `SELECT COUNT(*) + 1 AS rank FROM exam_submissions s
+                         INNER JOIN course_enrollments ce ON ce.user_id = s.student_id AND ce.course_id = $4
+                         WHERE s.exam_id = $1 
+                         AND (s.score > $2 OR (s.score = $2 AND s.time_taken_ms < $3))`,
+                        [examId, sub.score, sub.time_taken_ms, courseId]
+                    );
+                    studentRank = parseInt(rankQuery.rows[0].rank);
+                    const userQuery = await db.query(
+                        `SELECT u.name, sp.profile_image_path as avatar_url 
+                         FROM users u 
+                         LEFT JOIN student_profiles sp ON sp.user_id = u.id 
+                         WHERE u.id = $1`, 
+                        [studentId]
+                    );
+                    studentEntry = {
+                        rank: studentRank,
+                        studentId,
+                        name: userQuery.rows[0].name,
+                        avatarUrl: userQuery.rows[0].avatar_url,
+                        score: sub.score,
+                        timeTakenMs: sub.time_taken_ms,
+                        submittedAt: sub.submitted_at
+                    };
+                }
             }
         }
 
