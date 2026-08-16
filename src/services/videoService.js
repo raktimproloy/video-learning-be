@@ -204,12 +204,19 @@ class VideoService {
             if (hasRequired) {
                 return { allowed: false, reason: 'Cannot set as preview: a previous video in this lesson has required assignments. Students must complete them before accessing the next video.' };
             }
-            const examCheck = await db.query(
-                `SELECT 1 FROM exams WHERE video_id = $1 AND is_required = true AND status = 'published' LIMIT 1`,
-                [row.id]
-            );
-            if (examCheck.rows.length > 0) {
-                return { allowed: false, reason: 'Cannot set as preview: a previous video in this lesson has a required exam. Students must take it before accessing the next video.' };
+            try {
+                const { hasColumn } = require('../utils/dbSchemaCache');
+                if (await hasColumn('exams', 'is_required')) {
+                    const examCheck = await db.query(
+                        `SELECT 1 FROM exams WHERE video_id = $1 AND is_required = true AND status = 'published' LIMIT 1`,
+                        [row.id]
+                    );
+                    if (examCheck.rows.length > 0) {
+                        return { allowed: false, reason: 'Cannot set as preview: a previous video in this lesson has a required exam. Students must take it before accessing the next video.' };
+                    }
+                }
+            } catch (err) {
+                console.error('canSetVideoPreview exam check error:', err.message);
             }
         }
         return { allowed: true };

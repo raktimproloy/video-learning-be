@@ -3,6 +3,7 @@ const r2Storage = require('./r2StorageService');
 const videoService = require('./videoService');
 const lessonService = require('./lessonService');
 const { compressImage } = require('../utils/imageCompress');
+const { hasColumn } = require('../utils/dbSchemaCache');
 const path = require('path');
 const fs = require('fs');
 
@@ -138,36 +139,50 @@ async function hasPassedAssignment(userId, assignmentType, videoId, lessonId, as
  * Submission (any official exam_submissions row) unlocks — exams are auto-graded.
  */
 async function hasCompletedVideoExams(userId, videoId) {
-  const result = await db.query(
-    `SELECT id FROM exams WHERE video_id = $1 AND is_required = true AND status = 'published'`,
-    [videoId]
-  );
-  for (const row of result.rows) {
-    const sub = await db.query(
-      `SELECT 1 FROM exam_submissions WHERE exam_id = $1 AND student_id = $2 LIMIT 1`,
-      [row.id, userId]
+  try {
+    const hasRequiredCol = await hasColumn('exams', 'is_required');
+    if (!hasRequiredCol) return true;
+    const result = await db.query(
+      `SELECT id FROM exams WHERE video_id = $1 AND is_required = true AND status = 'published'`,
+      [videoId]
     );
-    if (sub.rows.length === 0) return false;
+    for (const row of result.rows) {
+      const sub = await db.query(
+        `SELECT 1 FROM exam_submissions WHERE exam_id = $1 AND student_id = $2 LIMIT 1`,
+        [row.id, userId]
+      );
+      if (sub.rows.length === 0) return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('hasCompletedVideoExams error:', err.message);
+    return true;
   }
-  return true;
 }
 
 /**
  * Check if student has submitted all required published exams for a lesson.
  */
 async function hasCompletedLessonExams(userId, lessonId) {
-  const result = await db.query(
-    `SELECT id FROM exams WHERE lesson_id = $1 AND is_required = true AND status = 'published'`,
-    [lessonId]
-  );
-  for (const row of result.rows) {
-    const sub = await db.query(
-      `SELECT 1 FROM exam_submissions WHERE exam_id = $1 AND student_id = $2 LIMIT 1`,
-      [row.id, userId]
+  try {
+    const hasRequiredCol = await hasColumn('exams', 'is_required');
+    if (!hasRequiredCol) return true;
+    const result = await db.query(
+      `SELECT id FROM exams WHERE lesson_id = $1 AND is_required = true AND status = 'published'`,
+      [lessonId]
     );
-    if (sub.rows.length === 0) return false;
+    for (const row of result.rows) {
+      const sub = await db.query(
+        `SELECT 1 FROM exam_submissions WHERE exam_id = $1 AND student_id = $2 LIMIT 1`,
+        [row.id, userId]
+      );
+      if (sub.rows.length === 0) return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('hasCompletedLessonExams error:', err.message);
+    return true;
   }
-  return true;
 }
 
 /**

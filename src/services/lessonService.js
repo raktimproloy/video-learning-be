@@ -122,23 +122,29 @@ class LessonService {
         if (hasRequired) {
             return { allowed: false, reason: 'Cannot set as preview: the previous lesson has required assignments. Students must complete them before accessing the next lesson.' };
         }
-        const examCheck = await db.query(
-            `SELECT 1 FROM exams WHERE lesson_id = $1 AND is_required = true AND status = 'published' LIMIT 1`,
-            [previous.id]
-        );
-        if (examCheck.rows.length > 0) {
-            return { allowed: false, reason: 'Cannot set as preview: the previous lesson has a required exam. Students must take it before accessing the next lesson.' };
-        }
-        // Also block if any video in previous lesson has required exams
-        const videoExamCheck = await db.query(
-            `SELECT 1 FROM exams e
-             JOIN videos v ON v.id = e.video_id
-             WHERE v.lesson_id = $1 AND e.is_required = true AND e.status = 'published'
-             LIMIT 1`,
-            [previous.id]
-        );
-        if (videoExamCheck.rows.length > 0) {
-            return { allowed: false, reason: 'Cannot set as preview: a video in the previous lesson has a required exam.' };
+        try {
+            const { hasColumn } = require('../utils/dbSchemaCache');
+            if (await hasColumn('exams', 'is_required')) {
+                const examCheck = await db.query(
+                    `SELECT 1 FROM exams WHERE lesson_id = $1 AND is_required = true AND status = 'published' LIMIT 1`,
+                    [previous.id]
+                );
+                if (examCheck.rows.length > 0) {
+                    return { allowed: false, reason: 'Cannot set as preview: the previous lesson has a required exam. Students must take it before accessing the next lesson.' };
+                }
+                const videoExamCheck = await db.query(
+                    `SELECT 1 FROM exams e
+                     JOIN videos v ON v.id = e.video_id
+                     WHERE v.lesson_id = $1 AND e.is_required = true AND e.status = 'published'
+                     LIMIT 1`,
+                    [previous.id]
+                );
+                if (videoExamCheck.rows.length > 0) {
+                    return { allowed: false, reason: 'Cannot set as preview: a video in the previous lesson has a required exam.' };
+                }
+            }
+        } catch (err) {
+            console.error('canSetLessonPreview exam check error:', err.message);
         }
         return { allowed: true };
     }
