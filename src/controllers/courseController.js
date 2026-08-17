@@ -754,8 +754,7 @@ class CourseController {
             const live = req.query.live === '1' || req.query.live === 'true';
             const page = req.query.page || 1;
             const limit = req.query.limit || 12;
-            const externalOnly = req.query.external === '1' || req.query.external === 'true';
-            const result = await courseService.searchCourses(userId, { q, category, live, page, limit, externalOnly });
+            const result = await courseService.searchCourses(userId, { q, category, live, page, limit, externalOnly: false });
             const enriched = enrichCourseMediaUrls(result.courses, req);
             res.json({
                 courses: enriched,

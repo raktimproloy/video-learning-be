@@ -9,7 +9,7 @@ const cache = require('../utils/ttlCache');
  */
 async function getSettings(req, res) {
     try {
-        const body = await cache.getOrSet('public:settings:v2', 10 * 60 * 1000, async () => {
+        const body = await cache.getOrSet('public:settings:v3', 10 * 60 * 1000, async () => {
             const [publicCounts, platformSettings] = await Promise.all([
                 adminCategoryService.getPublicListingCourseCountByCategoryId(),
                 adminSettingsService.getAllForPublic(),

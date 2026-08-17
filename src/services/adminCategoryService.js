@@ -2,7 +2,13 @@ const db = require('../../db');
 const cache = require('../utils/ttlCache');
 const { hasColumn } = require('../utils/dbSchemaCache');
 
-const PUBLIC_SETTINGS_CACHE_KEY = 'public:settings:v2';
+const PUBLIC_SETTINGS_CACHE_KEYS = ['public:settings:v2', 'public:settings:v3'];
+
+function invalidatePublicCategoryCache() {
+    for (const key of PUBLIC_SETTINGS_CACHE_KEYS) {
+        cache.delete(key);
+    }
+}
 
 /**
  * Generate URL-friendly slug from name
@@ -168,6 +174,7 @@ class AdminCategoryService {
                     : [];
                 nodes.push({
                     id: row.id,
+                    parentId: row.parent_id || null,
                     name: row.name,
                     nameBn: row.name_bn || null,
                     slug: row.slug,
@@ -189,6 +196,7 @@ class AdminCategoryService {
                 : [];
             result.push({
                 id: row.id,
+                parentId: null,
                 name: row.name,
                 nameBn: row.name_bn || null,
                 slug: row.slug,
@@ -217,6 +225,7 @@ class AdminCategoryService {
              FROM courses c
              WHERE COALESCE(c.status, 'active') = 'active'
              ${testClause}
+             AND c.course_type IS DISTINCT FROM 'external'
              AND c.admin_category_id IS NOT NULL
              GROUP BY c.admin_category_id`
         );
@@ -379,7 +388,7 @@ class AdminCategoryService {
         for (const id of ids) {
             await this.incrementCourseCount(id);
         }
-        cache.delete(PUBLIC_SETTINGS_CACHE_KEY);
+        invalidatePublicCategoryCache();
     }
 
     /**
@@ -391,7 +400,7 @@ class AdminCategoryService {
         for (const id of ids) {
             await this.decrementCourseCount(id);
         }
-        cache.delete(PUBLIC_SETTINGS_CACHE_KEY);
+        invalidatePublicCategoryCache();
     }
 
     /**
@@ -503,6 +512,7 @@ class AdminCategoryService {
             [parentId || null, name.trim(), nameBn ? nameBn.trim() : null, slug, description?.trim() || null, status, level, display_order]
         );
         const row = result.rows[0];
+        invalidatePublicCategoryCache();
         return {
             id: row.id,
             parentId: row.parent_id,
@@ -584,6 +594,7 @@ class AdminCategoryService {
             values
         );
         const row = result.rows[0];
+        invalidatePublicCategoryCache();
         return {
             id: row.id,
             parentId: row.parent_id,
@@ -595,6 +606,52 @@ class AdminCategoryService {
             createdAt: row.created_at,
             updatedAt: row.updated_at,
         };
+    }
+
+    /**
+     * Reorder siblings under the same parent. orderedIds must be the full sibling set.
+     * @param {string|null} parentId
+     * @param {string[]} orderedIds
+     */
+    async reorderSiblings(parentId, orderedIds) {
+        if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
+            throw new Error('orderedIds must be a non-empty array');
+        }
+        const unique = new Set(orderedIds);
+        if (unique.size !== orderedIds.length) {
+            throw new Error('orderedIds must be unique');
+        }
+
+        const siblingsRes = parentId
+            ? await db.query('SELECT id FROM admin_categories WHERE parent_id = $1', [parentId])
+            : await db.query('SELECT id FROM admin_categories WHERE parent_id IS NULL');
+        const siblingIds = new Set(siblingsRes.rows.map((r) => r.id));
+        if (
+            siblingIds.size !== orderedIds.length ||
+            orderedIds.some((id) => !siblingIds.has(id))
+        ) {
+            throw new Error('orderedIds must include every sibling exactly once');
+        }
+
+        const client = await db.pool.connect();
+        try {
+            await client.query('BEGIN');
+            for (let i = 0; i < orderedIds.length; i++) {
+                await client.query(
+                    'UPDATE admin_categories SET display_order = $1, updated_at = NOW() WHERE id = $2',
+                    [i, orderedIds[i]]
+                );
+            }
+            await client.query('COMMIT');
+        } catch (err) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw err;
+        } finally {
+            client.release();
+        }
+
+        invalidatePublicCategoryCache();
+        return { ok: true, parentId: parentId || null, orderedIds };
     }
 
     async delete(id) {
@@ -609,7 +666,9 @@ class AdminCategoryService {
             'DELETE FROM admin_categories WHERE id = $1 RETURNING id',
             [id]
         );
-        return result.rowCount > 0;
+        const deleted = result.rowCount > 0;
+        if (deleted) invalidatePublicCategoryCache();
+        return deleted;
     }
 }
 

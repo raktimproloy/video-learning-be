@@ -9,6 +9,15 @@ router.use(verifyAdmin);
 router.get('/', adminCategoryController.list);
 router.get('/tree', adminCategoryController.getTree);
 router.get('/full-tree', adminCategoryController.getFullTree);
+router.put(
+    '/reorder',
+    [
+        check('orderedIds', 'orderedIds must be an array of UUIDs').isArray({ min: 1 }),
+        check('orderedIds.*', 'Each id must be a valid UUID').isUUID(),
+        check('parentId', 'Parent ID must be a valid UUID').optional({ nullable: true }).isUUID(),
+    ],
+    adminCategoryController.reorder
+);
 router.get('/:id', adminCategoryController.getById);
 
 router.post(
@@ -30,7 +39,7 @@ router.put(
         check('name', 'Name must be a non-empty string').optional().trim().notEmpty(),
         check('nameBn', 'Name (Bangla) must be a string').optional().isString(),
         check('description', 'Description must be a string').optional().isString(),
-        check('parentId', 'Parent ID must be a valid UUID').optional().isUUID(),
+        check('parentId', 'Parent ID must be a valid UUID').optional({ nullable: true }).isUUID(),
         check('status', 'Status must be active or inactive').optional().isIn(['active', 'inactive']),
     ],
     adminCategoryController.update

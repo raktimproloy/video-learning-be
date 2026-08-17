@@ -628,7 +628,9 @@ class TeacherInstituteService {
     institute.teachers = await require('./instituteAffiliationService').listInstituteTeachers(row.id);
 
     const allCourses = await courseService.getCoursesByTeacher(row.teacher_id);
-    const activeCourses = (allCourses || []).filter((c) => !c.status || c.status === 'active');
+    const activeCourses = (allCourses || []).filter(
+      (c) => (!c.status || c.status === 'active') && c.course_type !== 'external'
+    );
 
     institute.courses = activeCourses.map((c) => {
       let thumbnail_url = c.thumbnail_url || null;

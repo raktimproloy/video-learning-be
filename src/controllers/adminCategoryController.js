@@ -118,6 +118,32 @@ class AdminCategoryController {
         }
     }
 
+    async reorder(req, res) {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({ errors: errors.array() });
+        }
+        try {
+            const { parentId = null, orderedIds } = req.body || {};
+            const ids = Array.isArray(orderedIds) ? orderedIds.map((id) => String(id)) : [];
+            const result = await adminCategoryService.reorderSiblings(
+                parentId || null,
+                ids
+            );
+            res.json(result);
+        } catch (error) {
+            if (
+                error.message === 'orderedIds must be a non-empty array' ||
+                error.message === 'orderedIds must be unique' ||
+                error.message === 'orderedIds must include every sibling exactly once'
+            ) {
+                return res.status(400).json({ error: error.message });
+            }
+            console.error('Reorder categories error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
     async delete(req, res) {
         try {
             const deleted = await adminCategoryService.delete(req.params.id);

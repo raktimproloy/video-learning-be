@@ -71,8 +71,9 @@ class TeacherProfileController {
                 }
             }
 
-            // Get teacher's courses (only active ones for public profile)
-            const courses = await courseService.getCoursesByTeacher(userId, { onlyActive: true });
+            // Get teacher's courses (only active ones for public profile). Hide URL-only listings.
+            const courses = (await courseService.getCoursesByTeacher(userId, { onlyActive: true }))
+                .filter((c) => c.course_type !== 'external');
             
             // Enrich courses with thumbnail URLs (route is /v1/courses/media/...)
             const apiBase = process.env.BASE_URL || process.env.API_URL || 'http://localhost:5000';

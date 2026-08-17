@@ -335,7 +335,9 @@ class CourseService {
         const studentsTotal = await db.query(
             `SELECT COUNT(*)::int AS c FROM users WHERE role = 'student'`
         );
-        const coursesTotal = await db.query(`SELECT COUNT(*)::int AS c FROM courses`);
+        const coursesTotal = await db.query(
+            `SELECT COUNT(*)::int AS c FROM courses WHERE TRUE${sqlNonExternal('')}`
+        );
         const teachersTotal = await db.query(
             `SELECT COUNT(*)::int AS c FROM users WHERE role = 'teacher'`
         );
@@ -673,7 +675,6 @@ class CourseService {
                 LEFT JOIN teacher_profiles tp ON users.id = tp.user_id
                 LEFT JOIN admin_categories ac ON courses.admin_category_id = ac.id
             `;
-            const activeWhere = `WHERE COALESCE(courses.status, 'active') = 'active'${hideTest}`;
             const activeWhereNonExternal = `WHERE COALESCE(courses.status, 'active') = 'active'${hideTest}${sqlNonExternal()}`;
 
             const parseRow = (row) => ({
@@ -705,7 +706,6 @@ class CourseService {
             const academicParams = liveIds.length > 0 ? [liveIds] : [];
 
             const academicCategoryIds = await adminCategoryService.getCategoryAndDescendantIds('academic');
-            const skillCategoryIds = await adminCategoryService.getCategoryAndDescendantIds('skill-based');
             let academic = [];
             if (academicCategoryIds.length > 0) {
                 const acParamStart = academicParams.length + 1;
@@ -735,33 +735,10 @@ class CourseService {
             );
             const skill = skillResult.rows.map(parseRow);
 
-            const fetchExternalByCategoryIds = async (categoryIds) => {
-                if (!categoryIds.length) return [];
-                const placeholders = categoryIds.map((_, i) => `$${i + 1}`).join(', ');
-                const extParams = categoryIds.map((id) => String(id));
-                const extResult = await db.query(
-                    `SELECT ${baseSelect} ${baseFrom}
-                     ${activeWhere} AND courses.course_type = 'external'
-                     AND (
-                        courses.admin_category_id IN (${placeholders})
-                        OR courses.main_category_id IN (${placeholders})
-                        OR courses.sub_category_id IN (${placeholders})
-                     )
-                     ORDER BY RANDOM()
-                     LIMIT ${limitVal}`,
-                    extParams
-                );
-                return extResult.rows.map(parseRow);
-            };
-
-            const [externalAcademic, externalSkill] = await Promise.all([
-                fetchExternalByCategoryIds(academicCategoryIds),
-                fetchExternalByCategoryIds(skillCategoryIds),
-            ]);
-
-            const external = [...externalAcademic, ...externalSkill]
-                .sort(() => 0.5 - Math.random())
-                .slice(0, limitVal);
+            // Keep API keys for older clients; public home never lists URL-only courses.
+            const external = [];
+            const externalAcademic = [];
+            const externalSkill = [];
 
             homeSectionsCache = { live, academic, skill, external, externalAcademic, externalSkill };
             homeSectionsCacheExpiry = now + HOME_SECTIONS_CACHE_TTL;
@@ -777,6 +754,9 @@ class CourseService {
         });
 
         const cachedSections = clone(homeSectionsCache);
+        cachedSections.external = [];
+        cachedSections.externalAcademic = [];
+        cachedSections.externalSkill = [];
 
         if (userId) {
             const enrollmentsResult = await db.query(
@@ -848,9 +828,10 @@ class CourseService {
             conditions.push(`COALESCE(courses.test_course, false) = false`);
         }
         const categoryFilter = (category && typeof category === 'string') ? category.trim() : '';
-        if (externalOnly === true) {
-            conditions.push(`courses.course_type = 'external'`);
-        }
+        // Public search, category browse, and navbar suggestions never include URL-only listings.
+        // `externalOnly` is ignored so `?external=1` cannot surface them either.
+        void externalOnly;
+        conditions.push(`courses.course_type IS DISTINCT FROM 'external'`);
         if (live === true || live === '1' || live === 1) {
             conditions.push('courses.has_live_class = true');
         }
