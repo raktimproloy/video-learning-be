@@ -53,6 +53,55 @@ class VideoService {
     }
 
     /**
+     * Listing/player stills: custom cover first, then auto first-frame.
+     * Allowed for owners, enrolled students, preview videos, teacher staff,
+     * and anyone viewing a publicly listed (active) course.
+     */
+    async canAccessThumbnail(userId, video) {
+        if (!video) return false;
+        const key = video.custom_thumbnail_r2_key || video.thumbnail_r2_key;
+        if (!key) return false;
+
+        if (userId) {
+            if (await this.isOwnerOrManager(userId, video.id)) return true;
+            if (await this.checkPermission(userId, video.id)) return true;
+        }
+        if (video.is_preview) return true;
+
+        if (!video.lesson_id) return false;
+        const meta = await db.query(
+            `SELECT COALESCE(c.status, 'active') AS course_status,
+                    COALESCE(v.status, 'active') AS video_status,
+                    c.teacher_id
+             FROM videos v
+             JOIN lessons l ON l.id = v.lesson_id
+             JOIN courses c ON c.id = l.course_id
+             WHERE v.id = $1`,
+            [video.id]
+        );
+        const row = meta.rows[0];
+        if (!row) return false;
+
+        if (userId && row.teacher_id) {
+            try {
+                const staff = await db.query(
+                    `SELECT 1 FROM teacher_staff_members
+                     WHERE staff_user_id = $1 AND teacher_id = $2 AND status = 'active'
+                     LIMIT 1`,
+                    [userId, row.teacher_id]
+                );
+                if (staff.rows.length > 0) return true;
+            } catch (_) {
+                // teacher_staff_members may not exist on older databases
+            }
+        }
+
+        const coursePublic = row.course_status === 'active';
+        const videoVisible = row.video_status === 'active' || row.video_status === 'processing';
+        return coursePublic && videoVisible;
+    }
+
+    /**
      * Retrieves video details by ID.
      */
     async getVideoById(videoId) {
@@ -140,6 +189,7 @@ class VideoService {
                 assignments: Array.isArray(assignments) ? assignments : [],
                 hasRequiredAssignment: !!hasRequired,
                 viewCount: row.view_count != null ? parseInt(row.view_count, 10) : 0,
+                has_custom_thumbnail: !!row.custom_thumbnail_r2_key,
                 // Use video status if available, otherwise fall back to processing_status
                 status: row.status || (row.processing_status && row.processing_status !== 'completed' ? 'processing' : 'active'),
             };

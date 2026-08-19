@@ -21,6 +21,25 @@ const upload = multer({ storage: multer.diskStorage({
     }
 }) });
 
+const uploadThumbnail = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype && file.mimetype.startsWith('image/')) cb(null, true);
+        else cb(new Error('Only image files are allowed'));
+    },
+}).single('thumbnail');
+
+function handleThumbnailUpload(req, res, next) {
+    uploadThumbnail(req, res, (err) => {
+        if (!err) return next();
+        if (err.code === 'LIMIT_FILE_SIZE') {
+            return res.status(413).json({ error: 'Thumbnail must be 5MB or less' });
+        }
+        return res.status(400).json({ error: err.message || 'Invalid thumbnail' });
+    });
+}
+
 // All routes below require a valid user token + teacher (or teacher_staff with 'courses' permission)
 router.use(authMiddleware);
 
@@ -108,6 +127,28 @@ router.delete(
     adminController.deleteVideoVersion
 );
 
+
+// --- Custom video thumbnail (cover image; auto first-frame is untouched) ---
+router.post(
+    '/:id/thumbnail',
+    requireTeacherPermission('courses'),
+    handleThumbnailUpload,
+    [check('id', 'Video ID is required').isUUID()],
+    adminController.upsertVideoThumbnail
+);
+router.put(
+    '/:id/thumbnail',
+    requireTeacherPermission('courses'),
+    handleThumbnailUpload,
+    [check('id', 'Video ID is required').isUUID()],
+    adminController.upsertVideoThumbnail
+);
+router.delete(
+    '/:id/thumbnail',
+    requireTeacherPermission('courses'),
+    [check('id', 'Video ID is required').isUUID()],
+    adminController.deleteVideoThumbnail
+);
 
 // --- Retry failed video processing ---
 router.post(

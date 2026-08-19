@@ -123,6 +123,24 @@ async function getEffectiveOwnerId(req, lessonId, courseId = null) {
     return ownerId;
 }
 
+async function assertTeacherVideoAccess(req, video) {
+    let ownerId;
+    try {
+        ownerId = await getEffectiveOwnerId(req, video.lesson_id, null);
+    } catch (err) {
+        const error = new Error(err.message);
+        error.status = 403;
+        throw error;
+    }
+    const effective = req.effectiveTeacherId || ownerId;
+    if (video.owner_id !== ownerId && video.owner_id !== effective) {
+        const error = new Error('Video not found or access denied');
+        error.status = 404;
+        throw error;
+    }
+    return effective;
+}
+
 class AdminController {
 
     async initVideoMultipartUpload(req, res) {
@@ -467,6 +485,7 @@ class AdminController {
             if (result.assignments && typeof result.assignments === 'string') {
                 try { result.assignments = JSON.parse(result.assignments); } catch { result.assignments = []; }
             }
+            result.has_custom_thumbnail = !!result.custom_thumbnail_r2_key;
             res.status(200).json(result);
         } catch (error) {
             console.error('Get Video Error:', error);
@@ -954,6 +973,75 @@ class AdminController {
         } catch (error) {
             console.error('Retry Video Processing Error:', error);
             res.status(500).json({ error: 'Failed to retry processing. Please try again.' });
+        }
+    }
+
+    async upsertVideoThumbnail(req, res) {
+        try {
+            const videoId = req.params.id;
+            const video = await videoService.getVideoById(videoId);
+            if (!video) return res.status(404).json({ error: 'Video not found' });
+
+            try {
+                await assertTeacherVideoAccess(req, video);
+            } catch (err) {
+                return res.status(err.status || 403).json({ error: err.message });
+            }
+
+            if (!req.file) return res.status(400).json({ error: 'No thumbnail image provided' });
+            if (!r2Storage.isConfigured) return res.status(503).json({ error: 'File storage is not configured' });
+
+            const lesson = video.lesson_id ? await lessonService.getLessonById(video.lesson_id) : null;
+            const courseId = lesson?.course_id || 'unknown';
+            const teacherId = video.owner_id;
+            const prefix = r2Storage.getVideoKeyPrefix(teacherId, courseId, video.lesson_id || 'unknown', video.id);
+            const key = `${prefix}/custom-thumbnail.jpg`;
+
+            let buffer = req.file.buffer;
+            if (buffer) {
+                buffer = await compressImage(buffer, 'thumbnail.jpg', true);
+            }
+            if (!buffer) return res.status(400).json({ error: 'Invalid thumbnail image' });
+
+            if (video.custom_thumbnail_r2_key && video.custom_thumbnail_r2_key !== key) {
+                try { await r2Storage.deleteObject(video.custom_thumbnail_r2_key); } catch (_) { /* ignore */ }
+            }
+
+            await r2Storage.uploadFile(key, buffer, 'image/jpeg');
+            await db.query(
+                'UPDATE videos SET custom_thumbnail_r2_key = $1 WHERE id = $2',
+                [key, video.id]
+            );
+            res.json({ success: true, has_custom_thumbnail: true });
+        } catch (error) {
+            console.error('Upsert video thumbnail error:', error);
+            res.status(500).json({ error: 'Internal Server Error' });
+        }
+    }
+
+    async deleteVideoThumbnail(req, res) {
+        try {
+            const videoId = req.params.id;
+            const video = await videoService.getVideoById(videoId);
+            if (!video) return res.status(404).json({ error: 'Video not found' });
+
+            try {
+                await assertTeacherVideoAccess(req, video);
+            } catch (err) {
+                return res.status(err.status || 403).json({ error: err.message });
+            }
+
+            if (video.custom_thumbnail_r2_key) {
+                try { await r2Storage.deleteObject(video.custom_thumbnail_r2_key); } catch (_) { /* ignore */ }
+                await db.query(
+                    'UPDATE videos SET custom_thumbnail_r2_key = NULL WHERE id = $1',
+                    [video.id]
+                );
+            }
+            res.json({ success: true, has_custom_thumbnail: false });
+        } catch (error) {
+            console.error('Delete video thumbnail error:', error);
+            res.status(500).json({ error: 'Internal Server Error' });
         }
     }
 }

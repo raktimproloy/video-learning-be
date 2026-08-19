@@ -37,8 +37,8 @@ router.get('/:videoId/original/download', verifyToken, videoController.downloadO
 // Download original unencrypted video for a specific version (teacher only)
 router.get('/:videoId/versions/:versionId/original/download', verifyToken, videoController.downloadVersionOriginal);
 
-// Serve video thumbnail (first frame JPEG)
-router.get('/:videoId/thumbnail', verifyToken, videoController.getThumbnail);
+// Serve video thumbnail (custom cover, else auto first-frame JPEG)
+router.get('/:videoId/thumbnail', optionalAuth, videoController.getThumbnail);
 
 router.get('/:videoId/exams', verifyToken, examController.listForVideo);
 router.post('/:videoId/exams', verifyToken, requireTeacherPermission('courses'), examController.createForVideo);

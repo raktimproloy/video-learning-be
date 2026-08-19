@@ -364,6 +364,7 @@ class ExamSubmissionService {
             timeLimitMinutes: row.time_limit_minutes,
             totalMarks: row.total_marks,
             createdAt: row.created_at,
+            videoId: row.video_id || null,
             lessonId: row.lesson_id || row.video_lesson_id,
             lessonTitle: row.lesson_title,
             videoTitle: row.video_title,

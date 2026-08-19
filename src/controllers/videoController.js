@@ -11,6 +11,19 @@ function contentTypeForPath(subpath) {
     return 'application/octet-stream';
 }
 
+function buildPublicBaseUrl(req) {
+    let baseUrl = process.env.BASE_URL || process.env.API_URL;
+    if (baseUrl) {
+        return baseUrl.replace(/\/v1\/?$/, '');
+    }
+    let protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    if (typeof protocol === 'string' && protocol.includes(',')) protocol = protocol.split(',')[0].trim();
+    let host = req.headers['x-forwarded-host'] || req.get('host');
+    if (typeof host === 'string' && host.includes(',')) host = host.split(',')[0].trim();
+    if (process.env.NODE_ENV === 'production' && host && !host.includes('localhost')) protocol = 'https';
+    return `${protocol}://${host}`;
+}
+
 class VideoController {
     async getVideoDetails(req, res) {
         try {
@@ -56,7 +69,9 @@ class VideoController {
                     assignments: sanitizeAssignments(rawAssignments, false),
                     isPreview: true,
                     isLocked: false,
-                    thumbnail_url: null,
+                    thumbnail_url: (video.custom_thumbnail_r2_key || video.thumbnail_r2_key)
+                        ? `${buildPublicBaseUrl(req)}/v1/video/${videoId}/thumbnail`
+                        : null,
                 };
                 return res.json(guestResult);
             }
@@ -87,23 +102,14 @@ class VideoController {
                 }
             }
 
-            // Build thumbnail URL
-            let baseUrl = process.env.BASE_URL || process.env.API_URL;
-            if (baseUrl) {
-                baseUrl = baseUrl.replace(/\/v1\/?$/, '');
-            } else {
-                let protocol = req.headers['x-forwarded-proto'] || req.protocol;
-                if (typeof protocol === 'string' && protocol.includes(',')) protocol = protocol.split(',')[0].trim();
-                let host = req.headers['x-forwarded-host'] || req.get('host');
-                if (typeof host === 'string' && host.includes(',')) host = host.split(',')[0].trim();
-                if (process.env.NODE_ENV === 'production' && !host.includes('localhost')) protocol = 'https';
-                baseUrl = `${protocol}://${host}`;
-            }
-            if (video.thumbnail_r2_key) {
+            // Build thumbnail URL (custom cover first, then auto first-frame)
+            const baseUrl = buildPublicBaseUrl(req);
+            if (video.custom_thumbnail_r2_key || video.thumbnail_r2_key) {
                 result.thumbnail_url = `${baseUrl}/v1/video/${videoId}/thumbnail`;
             } else {
                 result.thumbnail_url = null;
             }
+            result.has_custom_thumbnail = !!video.custom_thumbnail_r2_key;
 
             res.json(result);
         } catch (error) {
@@ -451,20 +457,32 @@ class VideoController {
     async getThumbnail(req, res) {
         try {
             const { videoId } = req.params;
-            const userId = req.user.id;
+            const userId = req.user?.id ?? null;
 
             const video = await videoService.getVideoById(videoId);
             if (!video) return res.status(404).send('Not found');
-            if (!video.thumbnail_r2_key) return res.status(404).send('No thumbnail');
 
-            const isOwnerOrManager = await videoService.isOwnerOrManager(userId, videoId);
-            let hasAccess = isOwnerOrManager || await videoService.checkPermission(userId, videoId);
-            if (!hasAccess && video.is_preview) hasAccess = true;
-            if (!hasAccess) return res.status(403).send('Access denied');
+            const thumbKey = video.custom_thumbnail_r2_key || video.thumbnail_r2_key;
+            if (!thumbKey) return res.status(404).send('No thumbnail');
 
-            const stream = await r2Storage.getObjectStream(video.thumbnail_r2_key);
-            res.set('Content-Type', 'image/jpeg');
-            res.set('Cache-Control', 'public, max-age=86400');
+            const allowed = await videoService.canAccessThumbnail(userId, video);
+            if (!allowed) {
+                return userId
+                    ? res.status(403).send('Access denied')
+                    : res.status(401).send('Authentication required');
+            }
+
+            const stream = await r2Storage.getObjectStream(thumbKey);
+            const lower = String(thumbKey).toLowerCase();
+            const contentType = lower.endsWith('.png')
+                ? 'image/png'
+                : lower.endsWith('.webp')
+                    ? 'image/webp'
+                    : lower.endsWith('.gif')
+                        ? 'image/gif'
+                        : 'image/jpeg';
+            res.set('Content-Type', contentType);
+            res.set('Cache-Control', video.custom_thumbnail_r2_key ? 'public, max-age=300' : 'public, max-age=86400');
             stream.pipe(res);
         } catch (error) {
             if (error.name === 'NoSuchKey' || error.$metadata?.httpStatusCode === 404) {
