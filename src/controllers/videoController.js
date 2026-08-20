@@ -482,7 +482,13 @@ class VideoController {
                         ? 'image/gif'
                         : 'image/jpeg';
             res.set('Content-Type', contentType);
-            res.set('Cache-Control', video.custom_thumbnail_r2_key ? 'public, max-age=300' : 'public, max-age=86400');
+            res.set('ETag', `"${Buffer.from(String(thumbKey)).toString('base64url')}"`);
+            res.set(
+                'Cache-Control',
+                video.custom_thumbnail_r2_key
+                    ? 'private, no-cache, must-revalidate'
+                    : 'public, max-age=86400'
+            );
             stream.pipe(res);
         } catch (error) {
             if (error.name === 'NoSuchKey' || error.$metadata?.httpStatusCode === 404) {
