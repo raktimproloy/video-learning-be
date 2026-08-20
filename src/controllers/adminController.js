@@ -1009,7 +1009,7 @@ class AdminController {
 
             await r2Storage.uploadFile(key, buffer, 'image/jpeg');
             await db.query(
-                'UPDATE videos SET custom_thumbnail_r2_key = $1, updated_at = NOW() WHERE id = $2',
+                'UPDATE videos SET custom_thumbnail_r2_key = $1 WHERE id = $2',
                 [key, video.id]
             );
             res.json({ success: true, has_custom_thumbnail: true });
@@ -1034,7 +1034,7 @@ class AdminController {
             if (video.custom_thumbnail_r2_key) {
                 try { await r2Storage.deleteObject(video.custom_thumbnail_r2_key); } catch (_) { /* ignore */ }
                 await db.query(
-                    'UPDATE videos SET custom_thumbnail_r2_key = NULL, updated_at = NOW() WHERE id = $1',
+                    'UPDATE videos SET custom_thumbnail_r2_key = NULL WHERE id = $1',
                     [video.id]
                 );
             }
