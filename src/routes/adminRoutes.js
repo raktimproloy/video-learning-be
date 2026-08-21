@@ -186,4 +186,13 @@ router.get(
     adminController.getAdminExamResults
 );
 
+// Admin offline access routes
+const adminOfflineAccessController = require('../controllers/adminOfflineAccessController');
+router.get('/offline-access', adminOfflineAccessController.listPurchases);
+router.post('/offline-access/:id/accept', adminOfflineAccessController.acceptPurchase);
+router.post('/offline-access/:id/reject', adminOfflineAccessController.rejectPurchase);
+router.patch('/offline-access/:id/toggle-active', adminOfflineAccessController.toggleActive);
+router.patch('/offline-access/:id/limit', adminOfflineAccessController.updateLimit);
+router.get('/offline-access/:id/students', adminOfflineAccessController.listAssignedStudents);
+
 module.exports = router;

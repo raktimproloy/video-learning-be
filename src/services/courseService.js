@@ -1569,6 +1569,23 @@ class CourseService {
         // Always update updated_at
         updates.push(`updated_at = NOW()`);
 
+        if (Object.keys(courseData).length > 0 && await hasColumn('courses', 'extra_data')) {
+            const historyRecord = {
+                timestamp: new Date().toISOString(),
+                updates: {}
+            };
+            const trackableFields = ['title', 'price', 'discountPrice', 'status', 'courseType', 'category'];
+            for (const field of trackableFields) {
+                if (courseData[field] !== undefined) {
+                    historyRecord.updates[field] = courseData[field];
+                }
+            }
+            if (Object.keys(historyRecord.updates).length > 0) {
+                updates.push(`extra_data = jsonb_set(COALESCE(extra_data, '{}'::jsonb), '{course_update_history}', COALESCE(extra_data->'course_update_history', '[]'::jsonb) || $${paramIndex++}::jsonb)`);
+                values.push(JSON.stringify([historyRecord]));
+            }
+        }
+
         values.push(id);
         const idParam = `$${paramIndex}`;
 
@@ -1867,7 +1884,7 @@ class CourseService {
              JOIN course_enrollments ce ON c.id = ce.course_id
              LEFT JOIN users u ON c.teacher_id = u.id
              LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
-             WHERE ce.user_id = $1 AND (COALESCE(c.status, 'active') = 'active')
+             WHERE ce.user_id = $1 AND (COALESCE(c.status, 'active') = 'active') AND COALESCE(ce.is_active, true) = true
              ORDER BY ce.enrolled_at DESC`,
             [userId]
         );
@@ -2018,7 +2035,7 @@ class CourseService {
 
     async isEnrolled(userId, courseId) {
         const result = await db.query(
-            'SELECT 1 FROM course_enrollments WHERE user_id = $1 AND course_id = $2',
+            'SELECT 1 FROM course_enrollments WHERE user_id = $1 AND course_id = $2 AND is_active = true',
             [userId, courseId]
         );
         return result.rowCount > 0;

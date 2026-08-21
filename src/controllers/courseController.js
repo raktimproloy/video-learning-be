@@ -1798,11 +1798,37 @@ class CourseController {
                 try { metadata = JSON.parse(metadata); } catch (e) { metadata = {}; }
             }
 
+            console.log('UddoktaPay verify metadata:', metadata);
+
+            if (metadata.type === 'teacher_offline_access') {
+                try {
+                    const teacherOfflineAccessService = require('../services/teacherOfflineAccessService');
+                    const mappedMethod = (verification.paymentMethod || 'uddoktapay').toLowerCase();
+                    const finalMethod = ['bkash', 'nagad', 'rocket', 'uddoktapay'].includes(mappedMethod) ? mappedMethod : 'uddoktapay';
+                    
+                    await teacherOfflineAccessService.acceptUddoktaPayPurchase(
+                        metadata.purchase_id,
+                        verification.transactionId || invoiceId,
+                        verification.senderNumber || ''
+                    );
+
+                    return res.json({
+                        success: true,
+                        status: 'COMPLETED',
+                        transactionId: verification.transactionId || invoiceId,
+                        senderNumber: verification.senderNumber || null,
+                        paymentMethod: finalMethod,
+                        message: 'Teacher offline access purchase completed successfully.',
+                    });
+                } catch (err) {
+                    console.error('Error accepting teacher offline purchase:', err.message);
+                    return res.status(500).json({ error: 'Failed to process teacher offline access payment' });
+                }
+            }
+
             const requestId = metadata.payment_request_id;
             const courseId = metadata.course_id;
             const userId = metadata.user_id;
-
-            console.log('UddoktaPay verify metadata:', { requestId, courseId, userId, metadata });
 
             if (!requestId && !courseId) {
                 return res.status(400).json({ error: 'Invalid transaction metadata — missing payment_request_id and course_id' });
@@ -1959,11 +1985,28 @@ class CourseController {
                 try { metadata = JSON.parse(metadata); } catch (e) { metadata = {}; }
             }
 
+            console.log('UddoktaPay webhook metadata:', metadata);
+
+            if (metadata.type === 'teacher_offline_access') {
+                try {
+                    const teacherOfflineAccessService = require('../services/teacherOfflineAccessService');
+                    
+                    await teacherOfflineAccessService.acceptUddoktaPayPurchase(
+                        metadata.purchase_id,
+                        verification.transactionId || invoiceId,
+                        verification.senderNumber || ''
+                    );
+
+                    return res.status(200).json({ success: true, message: 'Teacher offline access purchase completed successfully via webhook.' });
+                } catch (err) {
+                    console.error('Error accepting teacher offline purchase via webhook:', err.message);
+                    return res.status(500).json({ error: 'Failed to process teacher offline access payment via webhook' });
+                }
+            }
+
             const requestId = metadata.payment_request_id;
             const courseId = metadata.course_id;
             const userId = metadata.user_id;
-
-            console.log('UddoktaPay webhook metadata:', { requestId, courseId, userId });
 
             if (!requestId && !courseId) {
                 return res.status(400).json({ error: 'Invalid transaction metadata' });

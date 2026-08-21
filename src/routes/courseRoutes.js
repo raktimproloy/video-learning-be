@@ -109,6 +109,13 @@ router.delete('/teacher/payment-methods/:id', authMiddleware, requireTeacherPerm
 router.get('/teacher/withdraw-requests', authMiddleware, requireTeacherPermission('payments'), teacherPaymentController.listWithdrawRequests);
 router.get('/teacher/withdraw-requests/:id', authMiddleware, requireTeacherPermission('payments'), teacherPaymentController.getWithdrawRequest);
 router.post('/teacher/withdraw', authMiddleware, requireTeacherPermission('payments'), courseController.requestWithdraw);
+
+// Teacher offline access routes
+const teacherOfflineAccessController = require('../controllers/teacherOfflineAccessController');
+router.get('/teacher/offline-access/calculate', authMiddleware, requireTeacherPermission('students'), teacherOfflineAccessController.calculateFee);
+router.post('/teacher/offline-access/purchase', authMiddleware, requireTeacherPermission('students'), teacherOfflineAccessController.createPurchase);
+router.get('/teacher/offline-access/purchases', authMiddleware, requireTeacherPermission('students'), teacherOfflineAccessController.getPurchases);
+router.post('/teacher/offline-access/assign', authMiddleware, requireTeacherPermission('students'), teacherOfflineAccessController.assignStudent);
 router.post('/', 
     authMiddleware, 
     requireTeacherPermission('courses'), 
