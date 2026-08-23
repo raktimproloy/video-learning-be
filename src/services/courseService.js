@@ -980,9 +980,11 @@ class CourseService {
                 c.language,
                 c.updated_at,
                 c.course_type,
-                u.name as teacher_name
+                u.name as teacher_name,
+                ti.name as institute_name
              FROM courses c
              LEFT JOIN users u ON c.teacher_id = u.id
+             LEFT JOIN teacher_institutes ti ON u.id = ti.teacher_id
              WHERE c.id = $1 AND COALESCE(c.status, 'active') = 'active'`,
             [id]
         );

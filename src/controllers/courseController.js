@@ -785,6 +785,7 @@ class CourseController {
                 shortDescription: enriched.short_description || enriched.description || '',
                 thumbnailUrl: enriched.thumbnail_url || null,
                 teacherName: enriched.teacher_name || 'Teacher',
+                instituteName: enriched.institute_name || null,
                 price: enriched.price,
                 discountPrice: enriched.discount_price,
                 currency: enriched.currency || 'BDT',
