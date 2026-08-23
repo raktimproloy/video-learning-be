@@ -769,6 +769,47 @@ class CourseController {
         }
     }
 
+    async getCourseMeta(req, res) {
+        try {
+            const course = await courseService.getCourseMeta(req.params.id);
+            if (!course) {
+                return res.status(404).json({ message: 'Course not found' });
+            }
+            
+            // Enrich thumbnail
+            const enriched = enrichCourseMediaUrls([course], req)[0];
+            
+            res.json({
+                id: enriched.id,
+                title: enriched.title,
+                shortDescription: enriched.short_description || enriched.description || '',
+                thumbnailUrl: enriched.thumbnail_url || null,
+                teacherName: enriched.teacher_name || 'Teacher',
+                price: enriched.price,
+                discountPrice: enriched.discount_price,
+                currency: enriched.currency || 'BDT',
+                tags: enriched.tags || [],
+                level: enriched.level,
+                language: enriched.language,
+                updatedAt: enriched.updated_at,
+                courseType: enriched.course_type
+            });
+        } catch (error) {
+            console.error('Error in getCourseMeta:', error);
+            res.status(500).json({ message: 'Error retrieving course metadata', error: error.message });
+        }
+    }
+
+    async getSitemapIndex(req, res) {
+        try {
+            const courses = await courseService.getSitemapIndex();
+            res.json(courses);
+        } catch (error) {
+            console.error('Error in getSitemapIndex:', error);
+            res.status(500).json({ message: 'Error retrieving sitemap index', error: error.message });
+        }
+    }
+
     async getCourseDetails(req, res) {
         try {
             // Pass userId if authenticated to check purchase/ownership status

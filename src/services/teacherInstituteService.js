@@ -15,15 +15,7 @@ const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'S
 const SOCIAL_TYPES = new Set(['facebook', 'instagram', 'website']);
 const SLUG_REGEX = /^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$/;
 
-const RESERVED_SLUGS = new Set([
-  'www', 'api', 'admin', 'app', 'mail', 'ftp', 'cdn', 'static', 'assets', 'media',
-  'auth', 'login', 'signup', 'register', 'teacher', 'teachers', 'student', 'students',
-  'principal', 'support', 'help', 'status', 'blog', 'docs', 'dashboard', 'account',
-  'accounts', 'billing', 'pay', 'payment', 'payments', 'webhook', 'webhooks', 'socket',
-  'ws', 'wss', 'live', 'streaming', 'video', 'videos', 'course', 'courses', 'institute',
-  'institutes', 'lms', 'platform', 'shikkhabhumi', 'www2', 'staging', 'dev', 'test',
-  'preview', 'null', 'undefined',
-]);
+// Reserved slugs are now fetched from the database table `reserved_slugs`
 
 function getApiBase() {
   const apiUrl = process.env.BASE_URL || process.env.API_URL || 'http://localhost:5000';
@@ -39,16 +31,19 @@ function normalizeSlug(raw) {
     .replace(/^-+|-+$/g, '');
 }
 
-function validateSlugFormat(slug) {
+async function validateSlugFormat(slug) {
   if (!slug || slug.length < 3 || slug.length > 63) {
     return 'Subdomain must be 3–63 characters.';
   }
   if (!SLUG_REGEX.test(slug)) {
     return 'Subdomain must use lowercase letters, numbers, and dashes (cannot start/end with a dash).';
   }
-  if (RESERVED_SLUGS.has(slug)) {
+  
+  const result = await db.query('SELECT 1 FROM reserved_slugs WHERE slug = $1 LIMIT 1', [slug]);
+  if (result.rows.length > 0) {
     return 'This subdomain is reserved. Please choose another.';
   }
+  
   return null;
 }
 
@@ -268,7 +263,7 @@ class TeacherInstituteService {
 
   async checkSlugAvailability(teacherId, rawSlug) {
     const slug = normalizeSlug(rawSlug);
-    const formatError = validateSlugFormat(slug);
+    const formatError = await validateSlugFormat(slug);
     if (formatError) {
       return {
         slug,
@@ -304,7 +299,7 @@ class TeacherInstituteService {
 
   async upsertInstitute(teacherId, payload, files = {}) {
     const slug = normalizeSlug(payload.slug);
-    const formatError = validateSlugFormat(slug);
+    const formatError = await validateSlugFormat(slug);
     if (formatError) {
       const err = new Error(formatError);
       err.status = 400;
@@ -588,7 +583,7 @@ class TeacherInstituteService {
 
   async getPublicBySlug(slugRaw) {
     const slug = normalizeSlug(slugRaw);
-    const formatError = validateSlugFormat(slug);
+    const formatError = await validateSlugFormat(slug);
     if (formatError) return null;
 
     const result = await db.query(
@@ -715,5 +710,4 @@ class TeacherInstituteService {
 module.exports = new TeacherInstituteService();
 module.exports.normalizeSlug = normalizeSlug;
 module.exports.validateSlugFormat = validateSlugFormat;
-module.exports.RESERVED_SLUGS = RESERVED_SLUGS;
 module.exports.getMainInstituteFieldExpr = getMainInstituteFieldExpr;

@@ -93,6 +93,12 @@ class ModerationService {
         // was ever warned and later suspended goes straight to re-suspension on any
         // future abuse, without a second grace period.
         await db.query(`UPDATE users SET status = 'active', suspended_reason = NULL, suspended_at = NULL WHERE id = $1`, [userId]);
+        
+        // We MUST archive old sessions to reset their distinct device count without deleting logs.
+        // This ensures they are completely logged out and starting fresh for abuse detection.
+        // We set their status to 'archived' so the system ignores them for future counts.
+        await db.query(`UPDATE user_sessions SET status = 'archived', revoked_reason = COALESCE(revoked_reason, 'Archived on reactivate') WHERE user_id = $1`, [userId]);
+        
         await this.recordEvent(userId, {
             action: 'reactivated',
             reason: 'Reactivated by admin',

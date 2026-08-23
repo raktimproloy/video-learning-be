@@ -18,13 +18,7 @@ class AnalyticsController {
             }
 
             // Detect Client IP
-            let ipAddress = req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.ip || req.socket.remoteAddress || '';
-            if (Array.isArray(ipAddress)) {
-                ipAddress = ipAddress[0];
-            }
-            if (ipAddress.includes(',')) {
-                ipAddress = ipAddress.split(',')[0].trim();
-            }
+            const ipAddress = req.clientIp || '';
 
             // Parse User-Agent details
             const userAgent = req.headers['user-agent'] || '';

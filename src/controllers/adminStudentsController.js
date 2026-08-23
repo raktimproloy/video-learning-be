@@ -6,8 +6,9 @@ class AdminStudentsController {
             const skip = Math.max(0, parseInt(req.query.skip, 10) || 0);
             const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 10));
             const q = req.query.q || null;
+            const searchBy = req.query.searchBy || null;
 
-            const { students, total } = await adminStudentsService.list(skip, limit, q);
+            const { students, total } = await adminStudentsService.list(skip, limit, q, searchBy);
             res.json({ students, total });
         } catch (error) {
             console.error('Admin students list error:', error);

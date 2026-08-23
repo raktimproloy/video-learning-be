@@ -81,11 +81,13 @@ router.get(/^\/media\/(.+)$/, (req, res, next) => {
 
 // Public/Authenticated routes - optionalAuth allows public access but sets req.user if authenticated
 router.get('/', optionalAuth, courseController.getAllCourses);
+router.get('/sitemap-index', courseController.getSitemapIndex);
 router.get('/home-sections', optionalAuth, courseController.getHomeSections);
 router.get('/home-analytics', optionalAuth, courseController.getHomeAnalytics);
 router.get('/popular', optionalAuth, courseController.getPopularCourses);
 router.get('/search', optionalAuth, courseController.searchCourses);
 router.get('/by-invite/:code', courseController.getCourseByInviteCode);
+router.get('/:id/meta', courseController.getCourseMeta);
 router.get('/:id/details', optionalAuth, courseController.getCourseDetails);
 router.post('/:id/external-click', optionalAuth, courseController.recordExternalClick);
 router.post(

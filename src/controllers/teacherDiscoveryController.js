@@ -104,6 +104,16 @@ class TeacherDiscoveryController {
       return res.status(500).json({ error: 'Internal server error' });
     }
   }
+
+  async getSitemapIndex(req, res) {
+    try {
+      const teachers = await teacherDiscoveryService.getSitemapIndex();
+      return res.json(teachers);
+    } catch (error) {
+      console.error('Error in getSitemapIndex:', error);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  }
 }
 
 module.exports = new TeacherDiscoveryController();

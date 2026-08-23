@@ -41,7 +41,7 @@ class SessionService {
         const ua = req.headers['user-agent'] || '';
         const { browser, os, deviceType } = parseUserAgent(ua);
         const label = `${browser} on ${os}`;
-        const ip = req.ip || req.headers['x-forwarded-for'] || null;
+        const ip = req.clientIp || null;
         const result = await db.query(
             `INSERT INTO user_sessions (user_id, jti, device_id, device_label, device_type, user_agent, ip_address, expires_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -121,7 +121,7 @@ class SessionService {
     async countDistinctDevicesSince(userId, sinceDate) {
         const result = await db.query(
             `SELECT COUNT(DISTINCT device_id)::int AS count FROM user_sessions
-             WHERE user_id = $1 AND created_at > $2`,
+             WHERE user_id = $1 AND created_at > $2 AND status != 'archived'`,
             [userId, sinceDate]
         );
         return result.rows[0]?.count || 0;

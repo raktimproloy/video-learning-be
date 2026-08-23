@@ -3,13 +3,26 @@ const adminTeachersService = require('./adminTeachersService');
 const { hasColumn } = require('../utils/dbSchemaCache');
 
 class AdminStudentsService {
-    async list(skip = 0, limit = 10, q = null) {
+    async list(skip = 0, limit = 10, q = null, searchBy = null) {
         let whereClause = "WHERE u.role = 'student'";
         const params = [];
         if (q && String(q).trim()) {
-            const search = `%${String(q).trim().replace(/%/g, '\\%')}%`;
-            whereClause += ' AND (u.email ILIKE $1 OR sp.name ILIKE $1)';
-            params.push(search);
+            const searchStr = String(q).trim().replace(/%/g, '\\%');
+            const searchPattern = `%${searchStr}%`;
+            
+            if (searchBy === 'email') {
+                whereClause += ' AND u.email ILIKE $1';
+                params.push(searchPattern);
+            } else if (searchBy === 'id') {
+                whereClause += ' AND u.id::text ILIKE $1';
+                params.push(searchPattern);
+            } else if (searchBy === 'name') {
+                whereClause += ' AND sp.name ILIKE $1';
+                params.push(searchPattern);
+            } else {
+                whereClause += ' AND (u.email ILIKE $1 OR sp.name ILIKE $1 OR u.id::text ILIKE $1)';
+                params.push(searchPattern);
+            }
         }
         params.push(limit, skip);
 
@@ -239,14 +252,14 @@ class AdminStudentsService {
 
         // 1. Enrollments
         const enrollmentsRes = await db.query(
-            `SELECT ce.created_at as enrolled_at, c.id as course_id, c.title as course_title, 
-                    COALESCE(tp.name, u.email) as teacher_name, ce.price_paid, ce.currency
+            `SELECT ce.enrolled_at as enrolled_at, c.id as course_id, c.title as course_title, 
+                    COALESCE(tp.name, u.email) as teacher_name, ce.amount_paid as price_paid, ce.currency
              FROM course_enrollments ce
              JOIN courses c ON ce.course_id = c.id
              JOIN users u ON c.teacher_id = u.id
              LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
              WHERE ce.user_id = $1
-             ORDER BY ce.created_at DESC`,
+             ORDER BY ce.enrolled_at DESC`,
             [id]
         );
 
@@ -274,7 +287,7 @@ class AdminStudentsService {
         // 2. Payment Requests
         const paymentsRes = await db.query(
             `SELECT id, amount, currency, payment_method, status, created_at, updated_at
-             FROM payment_requests
+             FROM course_payment_requests
              WHERE user_id = $1
              ORDER BY created_at DESC`,
             [id]
@@ -282,7 +295,9 @@ class AdminStudentsService {
 
         // 3. Exam Submissions
         const examsRes = await db.query(
-            `SELECT es.id, es.score, es.percentage, es.time_taken_ms, es.submitted_at, 
+            `SELECT es.id, es.score, 
+                    ROUND((es.score::numeric / NULLIF(es.total_marks, 0)) * 100)::int as percentage, 
+                    es.time_taken_ms, es.submitted_at, 
                     e.title as exam_title, e.total_marks, c.title as course_title
              FROM exam_submissions es
              JOIN exams e ON es.exam_id = e.id

@@ -962,6 +962,55 @@ class CourseService {
         };
     }
 
+    async getCourseMeta(id) {
+        // Fast, lightweight query for SEO metadata
+        const result = await db.query(
+            `SELECT 
+                c.id,
+                c.title,
+                c.short_description,
+                c.description,
+                c.thumbnail_path,
+                c.external_thumbnail_url,
+                c.price,
+                c.discount_price,
+                c.currency,
+                c.tags,
+                c.level,
+                c.language,
+                c.updated_at,
+                c.course_type,
+                u.name as teacher_name
+             FROM courses c
+             LEFT JOIN users u ON c.teacher_id = u.id
+             WHERE c.id = $1 AND COALESCE(c.status, 'active') = 'active'`,
+            [id]
+        );
+        if (result.rows.length === 0) return null;
+        
+        const course = result.rows[0];
+        // Ensure tags is parsed if it's a JSON string
+        if (typeof course.tags === 'string') {
+            try {
+                course.tags = JSON.parse(course.tags);
+            } catch (e) {
+                course.tags = [];
+            }
+        }
+        return course;
+    }
+
+    async getSitemapIndex() {
+        const result = await db.query(
+            `SELECT id, updated_at 
+             FROM courses 
+             WHERE COALESCE(status, 'active') = 'active'
+             ORDER BY updated_at DESC
+             LIMIT 5000`
+        );
+        return result.rows;
+    }
+
     async getCourseDetails(id, userId = null) {
         // Get course with all related data for details page
         const course = await this.getCourseById(id, userId);

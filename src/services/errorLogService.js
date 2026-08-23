@@ -137,10 +137,7 @@ async function logApiError(err, req, statusCode = 500) {
         const cleanPath = urlPath.split('?')[0]; // path only, no query
         const query = req.query || {};
         const body = summarizeBody(req.body);
-        const ipAddress = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
-            || req.headers['x-real-ip']
-            || req.socket?.remoteAddress
-            || null;
+        const ipAddress = req.clientIp || null;
         const userAgent = req.headers['user-agent'] || null;
 
         const userId = req.user?.id || null;

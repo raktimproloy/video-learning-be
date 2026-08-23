@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const path = require('path');
+const requestIp = require('request-ip');
 require('dotenv').config();
 
 const videoRoutes = require('./routes/videoRoutes');
@@ -24,6 +25,7 @@ const adminPaymentRequestsRoutes = require('./routes/adminPaymentRequestsRoutes'
 const adminLiveRequestsRoutes = require('./routes/adminLiveRequestsRoutes');
 const adminLiveSessionsRoutes = require('./routes/adminLiveSessionsRoutes');
 const adminWithdrawRoutes = require('./routes/adminWithdrawRoutes');
+const adminInstitutesRoutes = require('./routes/adminInstitutesRoutes');
 const courseRoutes = require('./routes/courseRoutes');
 const lessonRoutes = require('./routes/lessonRoutes');
 const assignmentRoutes = require('./routes/assignmentRoutes');
@@ -56,6 +58,7 @@ const adminErrorLogRoutes = require('./routes/adminErrorLogRoutes');
 const errorLogService = require('./services/errorLogService');
 
 const app = express();
+app.use(requestIp.mw());
 
 // Process-level error handlers — catch unhandled rejections & exceptions and log to DB
 process.on('unhandledRejection', (reason, promise) => {
@@ -142,6 +145,7 @@ app.use('/v1/admin/live-requests', adminLiveRequestsRoutes);
 app.use('/v1/admin/live-sessions', adminLiveSessionsRoutes);
 app.use('/v1/admin/withdraw-requests', adminWithdrawRoutes);
 app.use('/v1/admin/error-logs', adminErrorLogRoutes);
+app.use('/v1/admin/institutes', adminInstitutesRoutes);
 app.use('/v1/admin', adminRoutes);
 app.use('/v1/courses', courseRoutes);
 app.use('/v1/lessons', lessonRoutes);

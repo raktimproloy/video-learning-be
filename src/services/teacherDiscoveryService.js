@@ -325,6 +325,19 @@ class TeacherDiscoveryService {
       hasMore,
     };
   }
+
+  async getSitemapIndex() {
+    const result = await db.query(
+        `SELECT DISTINCT u.id as user_id, u.created_at as updated_at
+         FROM users u
+         JOIN courses c ON u.id = c.teacher_id
+         WHERE (u.role = 'teacher' OR EXISTS (SELECT 1 FROM teacher_profiles tp WHERE tp.user_id = u.id))
+         AND COALESCE(c.status, 'active') = 'active'
+         ORDER BY u.created_at DESC
+         LIMIT 5000`
+    );
+    return result.rows;
+  }
 }
 
 module.exports = new TeacherDiscoveryService();
