@@ -667,6 +667,7 @@ class CourseService {
                 (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = courses.id) as purchase_count,
                 (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id) as total_lessons,
                 (SELECT COUNT(*)::int FROM videos v JOIN lessons l ON v.lesson_id = l.id WHERE l.course_id = courses.id) as total_videos,
+                (SELECT COUNT(*)::int FROM course_books cb WHERE cb.course_id = courses.id) as total_books,
                 ${sqlActiveInstituteSlug()} as institute_slug
             `;
             const baseFrom = `
@@ -689,6 +690,7 @@ class CourseService {
                 purchase_count: row.purchase_count || 0,
                 total_lessons: row.total_lessons || 0,
                 total_videos: row.total_videos || 0,
+                total_books: row.total_books || 0,
                 category_slug: row.category_slug || null,
                 category_name: row.category_name || null,
                 category_name_bn: row.category_name_bn || null,
@@ -918,6 +920,7 @@ class CourseService {
                 (SELECT COUNT(*)::int FROM videos v 
                  JOIN lessons l ON v.lesson_id = l.id 
                  WHERE l.course_id = courses.id) as total_videos,
+                (SELECT COUNT(*)::int FROM course_books cb WHERE cb.course_id = courses.id) as total_books,
                 COALESCE(ac.slug, LOWER(REPLACE(TRIM(COALESCE(courses.category, '')), ' ', '-'))) as category_slug,
                 ac.name as category_name,
                 ac.name_bn as category_name_bn,
@@ -944,6 +947,7 @@ class CourseService {
             purchase_count: row.purchase_count || 0,
             total_lessons: row.total_lessons || 0,
             total_videos: row.total_videos || 0,
+            total_books: row.total_books || 0,
             category_slug: row.category_slug || null,
             category_name: row.category_name || null,
             category_name_bn: row.category_name_bn || null,
