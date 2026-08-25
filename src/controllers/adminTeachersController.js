@@ -84,6 +84,19 @@ class AdminTeachersController {
             res.status(500).json({ error: 'Internal server error' });
         }
     }
+
+    async updateBookPercentage(req, res) {
+        try {
+            const { id } = req.params;
+            const { customBookPercent } = req.body;
+            const adminId = req.user?.id || req.admin?.id;
+            const updated = await adminTeachersService.updateBookPercentage(id, customBookPercent, adminId);
+            res.json(updated);
+        } catch (error) {
+            console.error('Admin update teacher book percentage error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
 }
 
 module.exports = new AdminTeachersController();

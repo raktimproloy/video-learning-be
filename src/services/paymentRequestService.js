@@ -18,13 +18,23 @@ async function createPaymentRequest(data) {
         currency,
         couponCode,
         inviteCode,
+        purchaseType = 'course_only',
+        bookItems = [],
+        courseAmount = null,
+        bookAmount = null,
     } = data;
+
+    const safePurchaseType = ['course_only', 'course_with_books', 'book_addon'].includes(purchaseType)
+        ? purchaseType
+        : 'course_only';
+    const safeBookItems = Array.isArray(bookItems) ? bookItems : [];
 
     const result = await db.query(
         `INSERT INTO course_payment_requests (
             course_id, user_id, payment_method, sender_phone, transaction_id,
-            amount, currency, coupon_code, invite_code
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            amount, currency, coupon_code, invite_code,
+            purchase_type, book_items, course_amount, book_amount
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING *`,
         [
             courseId,
@@ -36,6 +46,10 @@ async function createPaymentRequest(data) {
             currency || 'BDT',
             couponCode || null,
             inviteCode || null,
+            safePurchaseType,
+            JSON.stringify(safeBookItems),
+            courseAmount != null ? parseFloat(courseAmount) : null,
+            bookAmount != null ? parseFloat(bookAmount) : null,
         ]
     );
 
@@ -179,7 +193,7 @@ async function acceptPaymentRequest(requestId, adminUserId, accessReason = null)
     const request = await db.query(
         `SELECT pr.*, c.title AS course_title FROM course_payment_requests pr
          JOIN courses c ON c.id = pr.course_id
-         WHERE pr.id = $1 AND pr.status IN ('pending', 'rejected')`,
+         WHERE pr.id = $1`,
         [requestId]
     );
     if (!request.rows[0]) {
@@ -187,6 +201,21 @@ async function acceptPaymentRequest(requestId, adminUserId, accessReason = null)
     }
     const row = request.rows[0];
     const courseTitle = row.course_title || 'Course';
+
+    // Already accepted — still ensure book entitlements (idempotent repair)
+    if (row.status === 'accepted') {
+        try {
+            const bookEntitlementService = require('./bookEntitlementService');
+            await bookEntitlementService.grantFromPayment(row);
+        } catch (bookErr) {
+            console.error('Book entitlement re-grant failed:', bookErr.message);
+        }
+        return { accepted: true, alreadyAccepted: true, requestId };
+    }
+
+    if (row.status !== 'pending' && row.status !== 'rejected') {
+        return null;
+    }
 
     // Type-3 flow: if the request was previously rejected, admin must provide an access reason.
     if (row.status === 'rejected' && (!accessReason || !String(accessReason).trim())) {
@@ -197,8 +226,9 @@ async function acceptPaymentRequest(requestId, adminUserId, accessReason = null)
         const courseService = require('./courseService');
 
         // Enroll only once (in case the same request was previously processed incorrectly).
+        // book_addon payments do not create/alter course enrollment.
         const alreadyEnrolled = await courseService.isEnrolled(row.user_id, row.course_id);
-        if (!alreadyEnrolled) {
+        if (row.purchase_type !== 'book_addon' && !alreadyEnrolled) {
             if (row.coupon_code) {
                 const couponApplyService = require('./couponApplyService');
                 await couponApplyService.applyCoupon(row.coupon_code, row.user_id, row.course_id);
@@ -210,11 +240,36 @@ async function acceptPaymentRequest(requestId, adminUserId, accessReason = null)
                     : null;
             const currency = (row.currency && String(row.currency).trim()) || null;
 
+            // For book_addon, amount_paid on enrollment should not inflate course revenue
+            const enrollAmount =
+                row.course_amount != null
+                    ? parseFloat(row.course_amount)
+                    : amountPaid;
+
             await courseService.enrollUser(row.user_id, row.course_id, {
                 inviteCode: row.invite_code || undefined,
-                amountPaid: amountPaid ?? undefined,
+                amountPaid: enrollAmount ?? undefined,
                 currency: currency || undefined,
             });
+        }
+
+        // Grant book entitlements when payment includes books (no-op if book_items empty)
+        try {
+            if (row.purchase_type === 'book_addon') {
+                const enrolledForBooks = await courseService.isEnrolled(row.user_id, row.course_id);
+                if (!enrolledForBooks) {
+                    throw Object.assign(new Error('Student must be enrolled to receive book add-on'), {
+                        status: 400,
+                    });
+                }
+            }
+            const bookEntitlementService = require('./bookEntitlementService');
+            await bookEntitlementService.grantFromPayment(row);
+        } catch (bookErr) {
+            console.error('Book entitlement grant failed (payment still accepted):', bookErr.message);
+            if (row.purchase_type === 'book_addon' && bookErr.status === 400) {
+                throw bookErr;
+            }
         }
 
         await db.query(
@@ -230,10 +285,16 @@ async function acceptPaymentRequest(requestId, adminUserId, accessReason = null)
 
         // Create notification for student
         const userNotificationService = require('./userNotificationService');
+        const bookNote =
+            row.purchase_type === 'book_addon'
+                ? ' Your book access has been unlocked.'
+                : row.purchase_type === 'course_with_books'
+                  ? ' Course and book access unlocked.'
+                  : '';
         await userNotificationService.create(row.user_id, {
             type: 'payment_accepted',
             title: 'Payment accepted',
-            body: `Your payment for "${courseTitle}" has been accepted. You now have access to the course.`,
+            body: `Your payment for "${courseTitle}" has been accepted. You now have access to the course.${bookNote}`,
             courseId: row.course_id,
         });
 
@@ -400,11 +461,24 @@ async function rejectPaymentRequest(requestId, adminUserId, reason = null) {
     return { rejected: true, requestId };
 }
 
+/**
+ * Idempotent: grant book entitlements for an accepted/pending payment request.
+ */
+async function ensureBookEntitlements(requestId) {
+    if (!requestId) return [];
+    const result = await db.query(`SELECT * FROM course_payment_requests WHERE id = $1`, [requestId]);
+    const row = result.rows[0];
+    if (!row) return [];
+    const bookEntitlementService = require('./bookEntitlementService');
+    return bookEntitlementService.grantFromPayment(row);
+}
+
 module.exports = {
     createPaymentRequest,
     listPaymentRequests,
     acceptPaymentRequest,
     rejectPaymentRequest,
     getByStudent,
+    ensureBookEntitlements,
     getByIdForStudent,
 };

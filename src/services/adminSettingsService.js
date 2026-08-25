@@ -21,12 +21,24 @@ class AdminSettingsService {
             liveCoursesPercent: parseFloat(row.live_courses_percent) || 0,
             referencePercent: parseFloat(row.reference_percent) || 0,
             referenceTeacherPercent: parseFloat(row.reference_teacher_percent) || 0,
+            bookPlatformPercent: row.book_platform_percent != null ? parseFloat(row.book_platform_percent) : 0,
+            bookMaxPreviewPages: row.book_max_preview_pages != null ? parseInt(row.book_max_preview_pages, 10) : 3,
+            bookMaxUploadMb: row.book_max_upload_mb != null ? parseInt(row.book_max_upload_mb, 10) : 500,
         };
     }
 
     /** Update share percentages. Admin ID saved for audit. */
     async updateShareSettings(adminId, data) {
-        const { ourStudentPercent, teacherStudentPercent, liveCoursesPercent, referencePercent, referenceTeacherPercent } = data;
+        const {
+            ourStudentPercent,
+            teacherStudentPercent,
+            liveCoursesPercent,
+            referencePercent,
+            referenceTeacherPercent,
+            bookPlatformPercent,
+            bookMaxPreviewPages,
+            bookMaxUploadMb,
+        } = data;
         const result = await db.query(
             `UPDATE admin_share_settings SET
                 our_student_percent = COALESCE($1, our_student_percent),
@@ -34,9 +46,12 @@ class AdminSettingsService {
                 live_courses_percent = COALESCE($3, live_courses_percent),
                 reference_percent = COALESCE($4, reference_percent),
                 reference_teacher_percent = COALESCE($5, reference_teacher_percent),
-                updated_by_admin_id = $6,
+                book_platform_percent = COALESCE($6, book_platform_percent),
+                book_max_preview_pages = COALESCE($7, book_max_preview_pages),
+                book_max_upload_mb = COALESCE($8, book_max_upload_mb),
+                updated_by_admin_id = $9,
                 updated_at = NOW()
-             WHERE id = $7
+             WHERE id = $10
              RETURNING *`,
             [
                 ourStudentPercent != null ? parseFloat(ourStudentPercent) : null,
@@ -44,6 +59,9 @@ class AdminSettingsService {
                 liveCoursesPercent != null ? parseFloat(liveCoursesPercent) : null,
                 referencePercent != null ? parseFloat(referencePercent) : null,
                 referenceTeacherPercent != null ? parseFloat(referenceTeacherPercent) : null,
+                bookPlatformPercent != null ? parseFloat(bookPlatformPercent) : null,
+                bookMaxPreviewPages != null ? parseInt(bookMaxPreviewPages, 10) : null,
+                bookMaxUploadMb != null ? parseInt(bookMaxUploadMb, 10) : null,
                 adminId,
                 ROW_ID,
             ]
@@ -55,7 +73,27 @@ class AdminSettingsService {
             liveCoursesPercent: parseFloat(row.live_courses_percent) || 0,
             referencePercent: parseFloat(row.reference_percent) || 0,
             referenceTeacherPercent: parseFloat(row.reference_teacher_percent) || 0,
+            bookPlatformPercent: row.book_platform_percent != null ? parseFloat(row.book_platform_percent) : 0,
+            bookMaxPreviewPages: row.book_max_preview_pages != null ? parseInt(row.book_max_preview_pages, 10) : 3,
+            bookMaxUploadMb: row.book_max_upload_mb != null ? parseInt(row.book_max_upload_mb, 10) : 500,
         } : null;
+    }
+
+    async getBookShareSettings() {
+        const s = await this.getShareSettings();
+        return {
+            bookPlatformPercent: s?.bookPlatformPercent ?? 0,
+            bookMaxPreviewPages: s?.bookMaxPreviewPages ?? 3,
+            bookMaxUploadMb: s?.bookMaxUploadMb ?? 500,
+        };
+    }
+
+    async updateBookShareSettings(adminId, data) {
+        return this.updateShareSettings(adminId, {
+            bookPlatformPercent: data.bookPlatformPercent,
+            bookMaxPreviewPages: data.bookMaxPreviewPages,
+            bookMaxUploadMb: data.bookMaxUploadMb,
+        });
     }
 
     /** List admin coupons */

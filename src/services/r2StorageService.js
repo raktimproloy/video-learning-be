@@ -206,6 +206,14 @@ function getExamMediaKeyPrefix(teacherId, courseId, examId, type) {
 }
 
 /**
+ * R2 key prefix for course book master PDF and page images.
+ * Example: teachers/{teacherId}/courses/{courseId}/books/{bookId}
+ */
+function getBookKeyPrefix(teacherId, courseId, bookId) {
+  return `teachers/${teacherId}/courses/${courseId}/books/${bookId}`;
+}
+
+/**
  * Upload an exam image (question/passage/option/solution) to R2.
  */
 async function uploadExamMedia(teacherId, courseId, examId, fileBuffer, originalFilename, type = 'images') {
@@ -467,6 +475,7 @@ module.exports = {
   getLessonMediaKeyPrefix,
   getVideoMediaKeyPrefix,
   getExamMediaKeyPrefix,
+  getBookKeyPrefix,
   uploadLessonMedia,
   uploadVideoMedia,
   uploadExamMedia,

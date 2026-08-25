@@ -9,6 +9,10 @@ router.use(verifyAdmin);
 router.get('/share', adminSettingsController.getShareSettings);
 router.put('/share', adminSettingsController.updateShareSettings);
 
+// Book share / limits
+router.get('/book-share', adminSettingsController.getBookShareSettings);
+router.put('/book-share', adminSettingsController.updateBookShareSettings);
+
 // Live settings (master switch + per-provider; includes usage stats)
 router.get('/live', adminSettingsController.getLiveSettings);
 router.put('/live', adminSettingsController.updateLiveSettings);

@@ -54,6 +54,8 @@ const certificateRoutes = require('./routes/certificateRoutes');
 const referenceRoutes = require('./routes/referenceRoutes');
 const teacherVideoRoutes = require('./routes/teacherVideoRoutes');
 const adminErrorLogRoutes = require('./routes/adminErrorLogRoutes');
+const bookRoutes = require('./routes/bookRoutes');
+const adminBookRoutes = require('./routes/adminBookRoutes');
 
 const errorLogService = require('./services/errorLogService');
 
@@ -146,8 +148,10 @@ app.use('/v1/admin/live-sessions', adminLiveSessionsRoutes);
 app.use('/v1/admin/withdraw-requests', adminWithdrawRoutes);
 app.use('/v1/admin/error-logs', adminErrorLogRoutes);
 app.use('/v1/admin/institutes', adminInstitutesRoutes);
+app.use('/v1/admin', adminBookRoutes);
 app.use('/v1/admin', adminRoutes);
 app.use('/v1/courses', courseRoutes);
+app.use('/v1', bookRoutes);
 app.use('/v1/lessons', lessonRoutes);
 app.use('/v1/assignments', assignmentRoutes);
 app.use('/v1/teacher/videos', teacherVideoRoutes);

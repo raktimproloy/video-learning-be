@@ -811,6 +811,48 @@ class CourseController {
         }
     }
 
+    async quotePurchase(req, res) {
+        try {
+            const courseId = req.params.id;
+            const userId = req.user?.id || null;
+            const {
+                includeAllBooks = false,
+                bookIds = [],
+                coupon_code: couponCode,
+            } = req.body || {};
+
+            const course = await courseService.getCourseByIdSimple(courseId);
+            if (!course) {
+                return res.status(404).json({ error: 'Course not found' });
+            }
+            if (course.course_type === 'external') {
+                return res.status(400).json({ error: 'External courses cannot be purchased here.' });
+            }
+            if (course.status && course.status !== 'active') {
+                return res.status(400).json({ error: 'This course is not available for purchase' });
+            }
+
+            const bookService = require('../services/bookService');
+            const quote = await bookService.quotePurchase({
+                course,
+                userId,
+                includeAllBooks: !!includeAllBooks,
+                bookIds: Array.isArray(bookIds) ? bookIds : [],
+                couponCode: couponCode || null,
+                consumeCoupon: false,
+            });
+            return res.json(quote);
+        } catch (error) {
+            const status = error.status || 400;
+            if (status >= 500) console.error('Quote purchase error:', error);
+            return res.status(status).json({
+                error: error.message || 'Unable to price this purchase',
+                bookId: error.bookId,
+                purchaseBlocked: error.purchaseBlocked,
+            });
+        }
+    }
+
     async getCourseDetails(req, res) {
         try {
             // Pass userId if authenticated to check purchase/ownership status
@@ -895,6 +937,8 @@ class CourseController {
                 reviews: enrichedReviews,
                 bundles: details.bundles || [],
                 pendingPaymentRequestId: details.pendingPaymentRequestId || null,
+                books: details.books || [],
+                bookPricing: details.bookPricing || null,
             });
         } catch (error) {
             console.error('Get course details error:', error);
@@ -1425,10 +1469,10 @@ class CourseController {
                 payment_method: paymentMethod,
                 sender_phone: senderPhone,
                 transaction_id: transactionId,
-                amount,
-                currency,
                 coupon_code: couponCode,
                 invite_code: inviteCode,
+                includeAllBooks = false,
+                bookIds = [],
             } = req.body || {};
 
             if (!paymentMethod || !transactionId) {
@@ -1456,8 +1500,24 @@ class CourseController {
                 return res.status(400).json({ error: 'You are already enrolled in this course' });
             }
 
-            const finalAmount = amount != null ? parseFloat(amount) : (course.discount_price ?? course.price);
-            const finalCurrency = currency || course.currency || 'BDT';
+            const bookService = require('../services/bookService');
+            let quote;
+            try {
+                quote = await bookService.quotePurchase({
+                    course,
+                    userId,
+                    includeAllBooks: !!includeAllBooks,
+                    bookIds: Array.isArray(bookIds) ? bookIds : [],
+                    couponCode: couponCode || null,
+                    consumeCoupon: true,
+                });
+            } catch (err) {
+                return res.status(err.status || 400).json({
+                    error: err.message || 'Unable to price this purchase',
+                    bookId: err.bookId,
+                    purchaseBlocked: err.purchaseBlocked,
+                });
+            }
 
             const paymentRequestService = require('../services/paymentRequestService');
             const request = await paymentRequestService.createPaymentRequest({
@@ -1466,10 +1526,14 @@ class CourseController {
                 paymentMethod,
                 senderPhone: senderPhone || '',
                 transactionId: String(transactionId).trim(),
-                amount: finalAmount,
-                currency: finalCurrency,
+                amount: quote.totalAmount,
+                currency: quote.currency,
                 couponCode: couponCode || null,
                 inviteCode: inviteCode || null,
+                purchaseType: quote.purchaseType,
+                bookItems: quote.bookItems,
+                courseAmount: quote.courseAmount,
+                bookAmount: quote.bookAmount,
             });
 
             res.status(201).json({
@@ -1641,7 +1705,12 @@ class CourseController {
             const db = require('../../db');
             const courseId = req.params.id;
             const userId = req.user.id;
-            const { coupon_code: couponCode, invite_code: inviteCode } = req.body || {};
+            const {
+                coupon_code: couponCode,
+                invite_code: inviteCode,
+                includeAllBooks = false,
+                bookIds = [],
+            } = req.body || {};
 
             const course = await courseService.getCourseByIdSimple(courseId);
             if (!course) {
@@ -1675,24 +1744,34 @@ class CourseController {
                 });
             }
 
-            let finalAmount = course.discount_price != null ? parseFloat(course.discount_price) : parseFloat(course.price) || 0;
-            const finalCurrency = course.currency || 'BDT';
-
-            if (couponCode) {
-                const couponApplyService = require('../services/couponApplyService');
-                try {
-                    const applied = await couponApplyService.applyCoupon(couponCode, userId, courseId);
-                    if (applied.type === 'original') {
-                        finalAmount = 0;
-                    } else if (applied.discountType === 'percentage' && applied.discountAmount != null) {
-                        finalAmount = Math.max(0, finalAmount * (1 - Number(applied.discountAmount) / 100));
-                    } else if (applied.discountType === 'amount' && applied.discountAmount != null) {
-                        finalAmount = Math.max(0, finalAmount - Number(applied.discountAmount));
-                    }
-                } catch (err) {
-                    return res.status(400).json({ error: err.message || 'Invalid coupon' });
-                }
+            // Course + optional books: amount is always computed on the server.
+            const bookService = require('../services/bookService');
+            let quote;
+            try {
+                quote = await bookService.quotePurchase({
+                    course,
+                    userId,
+                    includeAllBooks: !!includeAllBooks,
+                    bookIds: Array.isArray(bookIds) ? bookIds : [],
+                    couponCode: couponCode || null,
+                    consumeCoupon: true,
+                });
+            } catch (err) {
+                return res.status(err.status || 400).json({
+                    error: err.message || 'Unable to price this purchase',
+                    bookId: err.bookId,
+                    purchaseBlocked: err.purchaseBlocked,
+                });
             }
+
+            const {
+                totalAmount: finalAmount,
+                currency: finalCurrency,
+                purchaseType,
+                bookItems,
+                courseAmount,
+                bookAmount,
+            } = quote;
 
             // Create the pending payment request
             const paymentRequestService = require('../services/paymentRequestService');
@@ -1706,6 +1785,10 @@ class CourseController {
                 currency: finalCurrency,
                 couponCode: couponCode || null,
                 inviteCode: inviteCode || null,
+                purchaseType,
+                bookItems,
+                courseAmount,
+                bookAmount,
             });
 
             // Fetch user info for UddoktaPay
@@ -1938,8 +2021,9 @@ class CourseController {
                         enrollmentDone = true;
                     }
 
-                    // Mark payment request as accepted if we have a requestId
+                    // Always grant books from the payment request (idempotent)
                     if (requestId) {
+                        await paymentRequestService.ensureBookEntitlements(requestId);
                         await db.query(
                             `UPDATE course_payment_requests
                              SET status = 'accepted', reviewed_at = NOW(), acceptance_reason = $1, updated_at = NOW()
@@ -2119,6 +2203,7 @@ class CourseController {
                         console.log('UddoktaPay webhook: fallback direct enrollment done');
                     }
                     if (requestId) {
+                        await paymentRequestService.ensureBookEntitlements(requestId);
                         await db.query(
                             `UPDATE course_payment_requests
                              SET status = 'accepted', reviewed_at = NOW(), acceptance_reason = $1, updated_at = NOW()

@@ -91,7 +91,8 @@ class AdminTeachersService {
                 (SELECT COUNT(*)::int FROM courses c WHERE c.teacher_id = u.id) as course_count,
                 (SELECT COUNT(DISTINCT ce.user_id)::int FROM course_enrollments ce
                  JOIN courses c ON ce.course_id = c.id WHERE c.teacher_id = u.id) as student_count,
-                c.custom_percent
+                c.custom_percent,
+                c.custom_book_percent
              FROM users u
              LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
              LEFT JOIN custom_user_percentages c ON c.user_id = u.id AND c.user_type = 'teacher'
@@ -128,6 +129,7 @@ class AdminTeachersService {
             rating: avgRating,
             reviewCount,
             customPercent: row.custom_percent !== null ? parseFloat(row.custom_percent) : null,
+            customBookPercent: row.custom_book_percent != null ? parseFloat(row.custom_book_percent) : null,
             joinedAt: row.created_at,
         };
     }
@@ -418,6 +420,54 @@ class AdminTeachersService {
                     payload.linkedinUrl === undefined ? null : (payload.linkedinUrl === '' ? null : payload.linkedinUrl),
                     payload.displayOrder === undefined ? null : (payload.displayOrder === '' ? null : parseInt(payload.displayOrder, 10)),
                 ]
+            );
+        }
+        return this.getById(id);
+    }
+
+    async updatePercentage(id, customPercent, adminId) {
+        if (customPercent === null || customPercent === undefined || customPercent === '') {
+            await db.query(
+                `DELETE FROM custom_user_percentages WHERE user_id = $1 AND user_type = 'teacher'`,
+                [id]
+            );
+        } else {
+            await db.query(
+                `INSERT INTO custom_user_percentages (user_type, user_id, custom_percent, set_by_admin_id, updated_at)
+                 VALUES ('teacher', $1, $2, $3, NOW())
+                 ON CONFLICT (user_type, user_id) DO UPDATE SET
+                    custom_percent = EXCLUDED.custom_percent,
+                    set_by_admin_id = EXCLUDED.set_by_admin_id,
+                    updated_at = EXCLUDED.updated_at`,
+                [id, customPercent, adminId]
+            );
+        }
+        return this.getById(id);
+    }
+
+    async updateBookPercentage(id, customBookPercent, adminId) {
+        const existing = await db.query(
+            `SELECT id FROM custom_user_percentages WHERE user_id = $1 AND user_type = 'teacher'`,
+            [id]
+        );
+        if (customBookPercent === null || customBookPercent === undefined || customBookPercent === '') {
+            if (existing.rows[0]) {
+                await db.query(
+                    `UPDATE custom_user_percentages
+                     SET custom_book_percent = NULL, set_by_admin_id = $2, updated_at = NOW()
+                     WHERE user_id = $1 AND user_type = 'teacher'`,
+                    [id, adminId]
+                );
+            }
+        } else {
+            await db.query(
+                `INSERT INTO custom_user_percentages (user_type, user_id, custom_percent, custom_book_percent, set_by_admin_id, updated_at)
+                 VALUES ('teacher', $1, 0, $2, $3, NOW())
+                 ON CONFLICT (user_type, user_id) DO UPDATE SET
+                    custom_book_percent = EXCLUDED.custom_book_percent,
+                    set_by_admin_id = EXCLUDED.set_by_admin_id,
+                    updated_at = EXCLUDED.updated_at`,
+                [id, customBookPercent, adminId]
             );
         }
         return this.getById(id);

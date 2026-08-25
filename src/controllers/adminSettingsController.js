@@ -19,17 +19,50 @@ module.exports = {
     async updateShareSettings(req, res) {
         try {
             const adminId = getAdminId(req);
-            const { ourStudentPercent, teacherStudentPercent, liveCoursesPercent, referencePercent, referenceTeacherPercent } = req.body || {};
+            const {
+                ourStudentPercent,
+                teacherStudentPercent,
+                liveCoursesPercent,
+                referencePercent,
+                referenceTeacherPercent,
+                bookPlatformPercent,
+                bookMaxPreviewPages,
+                bookMaxUploadMb,
+            } = req.body || {};
             const settings = await adminSettingsService.updateShareSettings(adminId, {
                 ourStudentPercent,
                 teacherStudentPercent,
                 liveCoursesPercent,
                 referencePercent,
                 referenceTeacherPercent,
+                bookPlatformPercent,
+                bookMaxPreviewPages,
+                bookMaxUploadMb,
             });
             res.json(settings);
         } catch (error) {
             console.error('Update share settings error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    },
+
+    async getBookShareSettings(req, res) {
+        try {
+            const settings = await adminSettingsService.getBookShareSettings();
+            res.json(settings);
+        } catch (error) {
+            console.error('Get book share settings error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    },
+
+    async updateBookShareSettings(req, res) {
+        try {
+            const adminId = getAdminId(req);
+            const settings = await adminSettingsService.updateBookShareSettings(adminId, req.body || {});
+            res.json(settings);
+        } catch (error) {
+            console.error('Update book share settings error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     },

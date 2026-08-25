@@ -2,6 +2,8 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 const db = require('../../db');
 const videoProcessor = require('./videoProcessor');
+const bookProcessor = require('./bookProcessor');
+const bookProcessingService = require('../services/bookProcessingService');
 const errorLogService = require('../services/errorLogService');
 
 // Worker runs in the same process as the API. videoProcessor uses a fast FFmpeg preset
@@ -28,7 +30,6 @@ async function resetStuckTasks() {
         `);
         if (result.rows.length > 0) {
             console.log(`[Worker #${workerIndex}] [Watchdog] Reset ${result.rows.length} stuck task(s):`, result.rows.map(r => r.id).join(', '));
-            // Log each stuck task failure to error logs
             for (const row of result.rows) {
                 await errorLogService.logSystemError(
                     `Video Processing: Stuck Task Reset`,
@@ -40,8 +41,6 @@ async function resetStuckTasks() {
             console.log(`[Worker #${workerIndex}] [Watchdog] No stuck tasks found.`);
         }
 
-        // Also handle tasks stuck WITHOUT started_at (status=processing but started_at is null)
-        // These were picked up by an old worker before started_at column existed
         const oldResult = await db.query(`
             UPDATE video_processing_tasks
             SET status = 'failed',
@@ -56,24 +55,27 @@ async function resetStuckTasks() {
         if (oldResult.rows.length > 0) {
             console.log(`[Worker #${workerIndex}] [Watchdog] Reset ${oldResult.rows.length} legacy stuck task(s)`);
         }
+
+        const bookStuck = await bookProcessingService.resetStuckTasks().catch(() => 0);
+        if (bookStuck > 0) {
+            console.log(`[Worker #${workerIndex}] [Watchdog] Reset ${bookStuck} stuck book task(s)`);
+        }
     } catch (err) {
         console.error(`[Worker #${workerIndex}] [Watchdog] Error resetting stuck tasks:`, err.message);
     }
 }
 
 async function startWorker() {
-    console.log(`Video Processing Worker #${workerIndex} started...`);
+    console.log(`Video/Book Processing Worker #${workerIndex} started...`);
 
-    // Run watchdog on startup to clean up any tasks stuck from previous runs
     await resetStuckTasks();
 
     while (true) {
         try {
-            // Yield to event loop so API can handle requests (worker runs in same process as server)
             await new Promise(r => setImmediate(r));
 
-            // 1. Fetch pending task
-            // Use FOR UPDATE SKIP LOCKED to allow multiple workers
+            let didWork = false;
+
             const result = await db.query(
                 `UPDATE video_processing_tasks 
                  SET status = 'processing', updated_at = NOW() 
@@ -88,12 +90,12 @@ async function startWorker() {
             );
 
             if (result.rows.length > 0) {
+                didWork = true;
                 const task = result.rows[0];
-                console.log(`[Worker #${workerIndex}] Picked up task ${task.id}`);
+                console.log(`[Worker #${workerIndex}] Picked up video task ${task.id}`);
                 try {
                     await videoProcessor.processTask(task);
                 } catch (taskErr) {
-                    // If processTask throws (shouldn't happen — it has its own catch), mark task failed
                     console.error(`[Worker #${workerIndex}] Unexpected error processing task ${task.id}:`, taskErr.message);
                     await db.query(
                         `UPDATE video_processing_tasks
@@ -107,10 +109,24 @@ async function startWorker() {
                         stage: 'worker-loop',
                     }).catch(() => {});
                 }
-                // Yield after heavy work so API can process any queued requests
                 await new Promise(r => setImmediate(r));
-            } else {
-                // Sleep for 5 seconds if no tasks
+            }
+
+            try {
+                const bookTask = await bookProcessingService.pickNextTask();
+                if (bookTask) {
+                    didWork = true;
+                    console.log(`[Worker #${workerIndex}] Picked up book task ${bookTask.id}`);
+                    await bookProcessor.processTask(bookTask);
+                    await new Promise(r => setImmediate(r));
+                }
+            } catch (bookLoopErr) {
+                if (!/relation .* does not exist/i.test(bookLoopErr.message || '')) {
+                    console.error('[Worker] Book task loop error:', bookLoopErr.message);
+                }
+            }
+
+            if (!didWork) {
                 await new Promise(resolve => setTimeout(resolve, 5000));
             }
         } catch (error) {
@@ -120,7 +136,6 @@ async function startWorker() {
     }
 }
 
-// Handle graceful shutdown
 process.on('SIGTERM', () => {
     console.log('Worker received SIGTERM, shutting down...');
     process.exit(0);

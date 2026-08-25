@@ -1268,6 +1268,18 @@ class CourseService {
             }
         }
 
+        // Additive book meta — empty when course has no books (backward compatible)
+        let books = [];
+        let bookPricing = null;
+        try {
+            const bookService = require('./bookService');
+            const bookMeta = await bookService.getPublicMetaForCourse(id, userId);
+            books = bookMeta.books || [];
+            bookPricing = bookMeta.bookPricing || null;
+        } catch (e) {
+            console.warn('Course book meta skipped:', e.message);
+        }
+
         return {
             course: courseWithMeta,
             pendingPaymentRequestId,
@@ -1288,7 +1300,9 @@ class CourseService {
             videos,
             otherCourses,
             reviews,
-            bundles: bundles || []
+            bundles: bundles || [],
+            books,
+            bookPricing,
         };
     }
 
@@ -1782,6 +1796,25 @@ class CourseService {
             this.sendCoursePurchaseAlertEmail(userId, courseId, amount, curr).catch((err) => {
                 console.error('Failed to send purchase alert email to teacher:', err.message);
             });
+
+            // Grant all 'included' books for this course
+            try {
+                const bookEntitlementService = require('./bookEntitlementService');
+                const includedBooks = await db.query(
+                    `SELECT id FROM course_books WHERE course_id = $1 AND pricing_mode = 'included' AND status != 'draft'`,
+                    [courseId]
+                );
+                for (const row of includedBooks.rows) {
+                    await bookEntitlementService.grant({
+                        userId,
+                        courseId,
+                        courseBookId: row.id,
+                        source: isInvited ? 'gift' : 'purchase'
+                    }).catch(console.error);
+                }
+            } catch (err) {
+                console.error('Failed to grant included books:', err.message);
+            }
         }
 
         return result.rows[0];
