@@ -1,1 +1,40 @@
-const { Client } = require('pg'); require('dotenv').config(); const client = new Client({ connectionString: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/encryption_learning' }); client.connect().then(() => client.query('SELECT id, title, status, processing_status, lesson_id, owner_id FROM videos WHERE lesson_id = ''ceb57368-f627-48fd-bf14-acbcb19cb783''')).then(res => { console.log(JSON.stringify(res.rows, null, 2)); process.exit(0); }).catch(console.error);
+require('dotenv').config();
+const db = require('./db');
+async function test() {
+  try {
+    const query = `
+      SELECT c.*,
+      (
+          SELECT jsonb_agg(
+              jsonb_build_object(
+                  'id', be.id,
+                  'book_id', cb.id,
+                  'title', cb.title,
+                  'total_pages', cb.total_pages,
+                  'progress_percent', CASE 
+                      WHEN cb.total_pages > 0 AND brp.last_page IS NOT NULL 
+                      THEN LEAST(100, ROUND((brp.last_page::numeric / cb.total_pages) * 100))
+                      ELSE 0 END,
+                  'has_pdf', be.has_pdf,
+                  'has_courier', be.has_courier,
+                  'courier_status', bco.status
+              )
+          )
+          FROM book_entitlements be
+          JOIN course_books cb ON be.course_book_id = cb.id
+          LEFT JOIN book_reading_progress brp ON brp.course_book_id = cb.id AND brp.user_id = $1
+          LEFT JOIN book_courier_orders bco ON bco.entitlement_id = be.id
+          WHERE be.course_id = c.id AND be.user_id = $1 AND be.revoked_at IS NULL
+      ) as student_books
+      FROM courses c
+      JOIN course_enrollments ce ON c.id = ce.course_id
+      WHERE ce.user_id = $1
+    `;
+    await db.query(query, ['7601a8f2-f6d9-419d-980c-1de07f85ccef']);
+    console.log('success');
+  } catch (e) {
+    console.log('ERROR:', e.message);
+  }
+  process.exit(0);
+}
+test();

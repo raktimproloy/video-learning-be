@@ -36,6 +36,7 @@ class AdminTeachersService {
                 tp.bio,
                 tp.institute_name,
                 (SELECT COUNT(*)::int FROM courses c WHERE c.teacher_id = u.id) as course_count,
+                (SELECT COUNT(*)::int FROM course_books cb WHERE cb.teacher_id = u.id) as book_count,
                 (SELECT COUNT(DISTINCT ce.user_id)::int FROM course_enrollments ce
                  JOIN courses c ON ce.course_id = c.id WHERE c.teacher_id = u.id) as student_count,
                 ${avgRatingQuery} as avg_rating
@@ -63,6 +64,7 @@ class AdminTeachersService {
             instituteName: row.institute_name || null,
             status: row.status || 'active',
             courses: parseInt(row.course_count, 10) || 0,
+            books: parseInt(row.book_count, 10) || 0,
             students: parseInt(row.student_count, 10) || 0,
             rating: parseFloat(row.avg_rating) || 0,
             joinedAt: row.created_at,
@@ -89,6 +91,7 @@ class AdminTeachersService {
                 tp.youtube_url,
                 tp.linkedin_url,
                 (SELECT COUNT(*)::int FROM courses c WHERE c.teacher_id = u.id) as course_count,
+                (SELECT COUNT(*)::int FROM course_books cb WHERE cb.teacher_id = u.id) as book_count,
                 (SELECT COUNT(DISTINCT ce.user_id)::int FROM course_enrollments ce
                  JOIN courses c ON ce.course_id = c.id WHERE c.teacher_id = u.id) as student_count,
                 c.custom_percent,
@@ -125,6 +128,7 @@ class AdminTeachersService {
             youtubeUrl: row.youtube_url || null,
             linkedinUrl: row.linkedin_url || null,
             courses: parseInt(row.course_count, 10) || 0,
+            books: parseInt(row.book_count, 10) || 0,
             students: parseInt(row.student_count, 10) || 0,
             rating: avgRating,
             reviewCount,
@@ -142,6 +146,30 @@ class AdminTeachersService {
     async getFullReport(teacherId) {
         const teacher = await this.getById(teacherId);
         if (!teacher) return null;
+
+        const booksResult = await db.query(
+            `SELECT cb.*, c.title AS course_title,
+                    (SELECT COUNT(*)::int FROM book_entitlements be WHERE be.course_book_id = cb.id AND be.revoked_at IS NULL) AS recipient_count
+             FROM course_books cb
+             LEFT JOIN courses c ON c.id = cb.course_id
+             WHERE cb.teacher_id = $1
+             ORDER BY cb.created_at DESC`,
+            [teacherId]
+        );
+
+        const authoredBooks = booksResult.rows.map((b) => ({
+            id: b.id,
+            title: b.title,
+            subtitle: b.subtitle,
+            courseId: b.course_id,
+            courseTitle: b.course_title,
+            status: b.status,
+            deliveryMode: b.delivery_mode,
+            pricingMode: b.pricing_mode,
+            addonPrice: b.addon_price != null ? parseFloat(b.addon_price) : 0,
+            recipientCount: parseInt(b.recipient_count, 10) || 0,
+            createdAt: b.created_at,
+        }));
 
         const reviewsCheck = await db.query(`
             SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'reviews')
@@ -188,6 +216,7 @@ class AdminTeachersService {
             return {
                 ...teacher,
                 courseStatusSummary,
+                books: authoredBooks,
                 aggregates: {
                     totalCourses: 0,
                     totalLessons: 0,
@@ -366,6 +395,7 @@ class AdminTeachersService {
         return {
             ...teacher,
             courseStatusSummary,
+            books: authoredBooks,
             aggregates,
             courseBreakdown,
         };

@@ -1967,7 +1967,41 @@ class CourseService {
                         WHERE assignment->>'id' = asub.assignment_id 
                         AND (assignment->>'isRequired')::boolean = true
                     )
-                ) completed) as completed_required_assignments
+                ) completed),
+                -- Books for this student
+                (
+                    SELECT jsonb_agg(
+                        jsonb_build_object(
+                            'id', be.id,
+                            'book_id', cb.id,
+                            'title', cb.title,
+                            'cover_path', cb.cover_path,
+                            'total_pages', cb.total_pages,
+                            'progress_percent', CASE 
+                                WHEN cb.total_pages > 0 AND brp.last_page IS NOT NULL 
+                                THEN LEAST(100, ROUND((brp.last_page::numeric / cb.total_pages) * 100))
+                                ELSE 0 END,
+                            'has_pdf', be.has_pdf,
+                            'has_courier', be.has_courier,
+                            'courier_status', bco.status,
+                            'courier_payment_status', bco.payment_status,
+                            'courier_quantity', bco.quantity,
+                            'courier_ordered_at', bco.created_at
+                        )
+                    )
+                    FROM book_entitlements be
+                    JOIN course_books cb ON be.course_book_id = cb.id
+                    LEFT JOIN book_reading_progress brp ON brp.course_book_id = cb.id AND brp.user_id = $1
+                    LEFT JOIN LATERAL (
+                        SELECT *
+                        FROM book_courier_orders o
+                        WHERE o.entitlement_id = be.id
+                          AND o.status NOT IN ('delivered', 'cancelled')
+                        ORDER BY o.created_at DESC
+                        LIMIT 1
+                    ) bco ON true
+                    WHERE be.course_id = c.id AND be.user_id = $1 AND be.revoked_at IS NULL
+                ) as student_books
              FROM courses c
              JOIN course_enrollments ce ON c.id = ce.course_id
              LEFT JOIN users u ON c.teacher_id = u.id
@@ -1998,6 +2032,13 @@ class CourseService {
 
             // Completion percentage from progress: sum(effective watch time) / sum(video duration), anti-cheat applied
             const completionPercentage = progress ? progress.completionPercentage : 0;
+            
+            let studentBooks = [];
+            try {
+                studentBooks = typeof row.student_books === 'string' ? JSON.parse(row.student_books) : (row.student_books || []);
+            } catch (e) {
+                studentBooks = [];
+            }
 
             // Format duration
             const totalDurationSeconds = parseFloat(row.total_duration_seconds) || 0;
@@ -2023,6 +2064,7 @@ class CourseService {
                 assignments_submitted: assignmentsSubmitted,
                 assignments_total: assignmentsTotal,
                 assignments_unsubmitted: assignmentsUnsubmitted,
+                student_books: studentBooks,
                 completed_required_assignments: parseInt(row.completed_required_assignments) || 0,
                 completion_percentage: Math.min(100, completionPercentage),
                 percent_videos_completed: progress ? progress.percentVideosCompleted : 0,
@@ -2148,10 +2190,12 @@ class CourseService {
      */
     async getTeacherRevenueDetailed(teacherId) {
         const adminSettingsService = require('./adminSettingsService');
+        const bookCommissionService = require('./bookCommissionService');
         const share = await adminSettingsService.getShareSettings();
         const ourPercent = share != null && share.ourStudentPercent != null ? Number(share.ourStudentPercent) : 50;
         const teacherPercent = share != null && share.teacherStudentPercent != null ? Number(share.teacherStudentPercent) : 3;
         const livePercent = share != null && share.liveCoursesPercent != null ? Number(share.liveCoursesPercent) : 10;
+        const bookPlatformPercent = await bookCommissionService.getPlatformPercent(teacherId);
 
         const result = await db.query(
             `SELECT 
@@ -2211,6 +2255,20 @@ class CourseService {
             totalPlatformFee += platformFee;
         }
 
+        const bookStats = await bookCommissionService.getTeacherRevenueStats(teacherId, startOfMonth);
+        const bookGross = parseFloat(bookStats.total_gross) || 0;
+        const bookGrossMonth = parseFloat(bookStats.gross_this_month) || 0;
+        const bookPlatformFee = parseFloat(bookStats.total_platform) || 0;
+        const bookPlatformFeeMonth = parseFloat(bookStats.platform_this_month) || 0;
+        const bookSaleCount = parseInt(bookStats.sale_count, 10) || 0;
+        const bookSaleCountMonth = parseInt(bookStats.sale_count_this_month, 10) || 0;
+
+        totalEarn += bookGross;
+        totalEarnThisMonth += bookGrossMonth;
+        totalPlatformFee += bookPlatformFee;
+        totalPurchases += bookSaleCount;
+        totalPurchasesThisMonth += bookSaleCountMonth;
+
         const teacherWithdrawRequestService = require('./teacherWithdrawRequestService');
         const acceptedWithdrawTotal = await teacherWithdrawRequestService.getAcceptedWithdrawTotal(teacherId);
         const withdrawable = Math.max(0, totalEarn - totalPlatformFee - acceptedWithdrawTotal);
@@ -2221,6 +2279,7 @@ class CourseService {
                 ourStudentPercent: ourPercent,
                 teacherStudentPercent: teacherPercent,
                 liveCoursesPercent: livePercent,
+                bookPlatformPercent,
             },
             totalPurchases,
             totalPurchasesThisMonth,
@@ -2233,50 +2292,88 @@ class CourseService {
                 fromSiteCount,
                 liveCourseStudents,
                 normalCourseStudents,
+                bookPurchases: bookSaleCount,
+                bookPurchasesThisMonth: bookSaleCountMonth,
+                bookPlatformFee,
+                bookPlatformFeeThisMonth: bookPlatformFeeMonth,
             },
         };
     }
 
-    /** Teacher purchase history: paginated enrollments for teacher's courses. */
+    /** Teacher purchase history: course enrollments + book sales merged by date. */
     async getTeacherPurchaseHistory(teacherId, limit = 10, offset = 0) {
         const countResult = await db.query(
-            `SELECT COUNT(*)::int as total
-             FROM course_enrollments ce
-             JOIN courses c ON ce.course_id = c.id AND c.teacher_id = $1`,
+            `SELECT (
+                (SELECT COUNT(*)::int FROM course_enrollments ce
+                 JOIN courses c ON ce.course_id = c.id AND c.teacher_id = $1)
+                +
+                (SELECT COUNT(*)::int FROM book_commissions WHERE teacher_id = $1)
+             ) AS total`,
             [teacherId]
         );
         const total = countResult.rows[0]?.total || 0;
 
         const result = await db.query(
-            `SELECT 
-                ce.user_id,
-                ce.course_id,
-                ce.enrolled_at,
-                COALESCE(ce.is_invited, false) as is_invited,
-                c.title as course_title,
-                COALESCE(ce.amount_paid, c.discount_price, c.price, 0)::float as amount,
-                COALESCE(ce.currency, c.currency) as currency,
-                u.email as student_email,
-                COALESCE(sp.name, u.email) as student_name
-             FROM course_enrollments ce
-             JOIN courses c ON ce.course_id = c.id AND c.teacher_id = $1
-             JOIN users u ON ce.user_id = u.id
-             LEFT JOIN student_profiles sp ON u.id = sp.user_id
-             ORDER BY ce.enrolled_at DESC
-             LIMIT $2 OFFSET $3`,
+            `SELECT * FROM (
+                SELECT
+                    ce.enrolled_at AS purchased_at,
+                    'course'::text AS purchase_type,
+                    ce.user_id,
+                    ce.course_id AS ref_id,
+                    c.title AS title,
+                    COALESCE(ce.amount_paid, c.discount_price, c.price, 0)::float AS amount,
+                    COALESCE(ce.currency, c.currency) AS currency,
+                    COALESCE(ce.is_invited, false) AS is_invited,
+                    u.email AS student_email,
+                    COALESCE(sp.name, u.email) AS student_name,
+                    NULL::float AS platform_amount,
+                    NULL::float AS teacher_net
+                FROM course_enrollments ce
+                JOIN courses c ON ce.course_id = c.id AND c.teacher_id = $1
+                JOIN users u ON ce.user_id = u.id
+                LEFT JOIN student_profiles sp ON u.id = sp.user_id
+
+                UNION ALL
+
+                SELECT
+                    bc.created_at AS purchased_at,
+                    'book'::text AS purchase_type,
+                    bc.student_id AS user_id,
+                    bc.course_book_id AS ref_id,
+                    cb.title AS title,
+                    bc.book_amount::float AS amount,
+                    bc.currency,
+                    false AS is_invited,
+                    u.email AS student_email,
+                    COALESCE(sp.name, u.email) AS student_name,
+                    bc.platform_amount::float AS platform_amount,
+                    bc.teacher_amount::float AS teacher_net
+                FROM book_commissions bc
+                JOIN course_books cb ON cb.id = bc.course_book_id
+                JOIN users u ON bc.student_id = u.id
+                LEFT JOIN student_profiles sp ON u.id = sp.user_id
+                WHERE bc.teacher_id = $1
+            ) combined
+            ORDER BY purchased_at DESC
+            LIMIT $2 OFFSET $3`,
             [teacherId, limit, offset]
         );
 
-        const purchases = result.rows.map(row => ({
+        const purchases = result.rows.map((row) => ({
             userId: row.user_id,
-            courseId: row.course_id,
-            enrolledAt: row.enrolled_at,
-            isInvited: !!row.is_invited,
-            courseTitle: row.course_title,
+            courseId: row.purchase_type === 'course' ? row.ref_id : undefined,
+            bookId: row.purchase_type === 'book' ? row.ref_id : undefined,
+            enrolledAt: row.purchased_at,
+            purchaseType: row.purchase_type,
+            courseTitle: row.title,
+            bookTitle: row.purchase_type === 'book' ? row.title : undefined,
             amount: row.amount,
+            platformAmount: row.platform_amount != null ? parseFloat(row.platform_amount) : null,
+            teacherNet: row.teacher_net != null ? parseFloat(row.teacher_net) : null,
             currency: row.currency || 'USD',
             studentEmail: row.student_email,
             studentName: row.student_name || row.student_email,
+            isInvited: !!row.is_invited,
         }));
 
         return { purchases, total };

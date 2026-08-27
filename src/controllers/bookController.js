@@ -222,6 +222,191 @@ const bookController = {
         }
     },
 
+    async getPurchaseInfo(req, res) {
+        try {
+            const info = await bookCourierService.getEligibility(req.params.bookId, req.user.id);
+            return res.json(info);
+        } catch (err) {
+            return handleError(res, err);
+        }
+    },
+
+    async listStudentBookOrders(req, res) {
+        try {
+            const activeOnly =
+                req.query.active === '1' ||
+                req.query.active === 'true' ||
+                req.query.activeOnly === '1';
+            const orders = await bookCourierService.listForStudent(req.user.id, {
+                activeOnly,
+                limit: Math.min(100, parseInt(req.query.limit, 10) || 50),
+            });
+            return res.json({ orders });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    },
+
+    async buyPdf(req, res) {
+        try {
+            const bookId = req.params.bookId;
+            const body = req.body || {};
+            const result = await bookCourierService.createPdfPurchase(bookId, req.user.id);
+
+            if (result.free) {
+                return res.json({ granted: true, free: true });
+            }
+
+            const paymentRequestService = require('../services/paymentRequestService');
+            const uddoktapayService = require('../services/uddoktapayService');
+
+            const pr = await paymentRequestService.createPaymentRequest({
+                courseId: result.courseId,
+                userId: req.user.id,
+                paymentMethod: body.paymentMethod || 'uddoktapay',
+                senderPhone: body.senderPhone || body.phone || '',
+                transactionId: body.transactionId || `book-pdf-${Date.now()}`,
+                amount: result.totalAmount,
+                currency: 'BDT',
+                purchaseType: 'book_addon',
+                bookItems: result.bookItems,
+                courseAmount: 0,
+                bookAmount: result.totalAmount,
+            });
+
+            if (body.paymentMethod && body.paymentMethod !== 'uddoktapay' && body.paymentMethod !== 'bkash') {
+                return res.status(201).json({
+                    paymentRequestId: pr.id,
+                    amount: result.totalAmount,
+                    purchaseType: 'book_addon',
+                });
+            }
+
+            const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+            const host = req.headers.host;
+            const baseUrl = `${protocol}://${host}`;
+            const frontendUrl = process.env.FRONTEND_URL || baseUrl.replace(/:\d+$/, ':3000');
+
+            const initRes = await uddoktapayService.initiatePayment({
+                fullName: body.fullName || req.user.name || 'Student',
+                email: req.user.email,
+                amount: result.totalAmount,
+                metadata: {
+                    type: 'book_addon',
+                    payment_request_id: pr.id,
+                    requestId: pr.id,
+                    course_id: result.courseId,
+                    bookId,
+                },
+                redirectUrl: `${frontendUrl}/uddoktapay-redirect?bookId=${bookId}&type=book_addon`,
+                cancelUrl: `${frontendUrl}/student/books/${bookId}/checkout?intent=pdf&status=cancelled&courseId=${result.courseId}`,
+                webhookUrl: `${baseUrl}/v1/courses/uddoktapay/webhook`,
+            });
+
+            if (!initRes.success || !initRes.paymentUrl) {
+                return res.status(500).json({ error: initRes.message || 'Payment initiation failed' });
+            }
+
+            return res.status(201).json({
+                paymentRequestId: pr.id,
+                paymentUrl: initRes.paymentUrl,
+                amount: result.totalAmount,
+                purchaseType: 'book_addon',
+            });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    },
+
+    async checkoutBook(req, res) {
+        try {
+            const bookId = req.params.bookId;
+            const body = req.body || {};
+            const result = await bookCourierService.createCheckout(bookId, req.user.id, body);
+
+            if (result.free) {
+                return res.json({
+                    granted: true,
+                    free: true,
+                    order: result.order,
+                });
+            }
+
+            const paymentRequestService = require('../services/paymentRequestService');
+            const uddoktapayService = require('../services/uddoktapayService');
+
+            const pr = await paymentRequestService.createPaymentRequest({
+                courseId: result.courseId,
+                userId: req.user.id,
+                paymentMethod: body.paymentMethod || 'uddoktapay',
+                senderPhone: body.phone || body.senderPhone || '',
+                transactionId: body.transactionId || `book-courier-${Date.now()}`,
+                amount: result.totalAmount,
+                currency: 'BDT',
+                purchaseType: result.bookPriceAmount > 0 ? 'book_courier' : 'courier_fee',
+                bookItems: result.bookItems,
+                courseAmount: 0,
+                bookAmount: result.totalAmount,
+            });
+
+            const db = require('../../db');
+            await bookCourierService.linkPaymentRequest(result.order.id, pr.id, {
+                amount: result.totalAmount,
+                purchaseType: result.bookPriceAmount > 0 ? 'book_courier' : 'courier_fee',
+            });
+
+            // Manual / offline payment request — no gateway redirect
+            if (body.paymentMethod && body.paymentMethod !== 'uddoktapay' && body.paymentMethod !== 'bkash') {
+                return res.status(201).json({
+                    paymentRequestId: pr.id,
+                    amount: result.totalAmount,
+                    purchaseType: 'book_courier',
+                    order: { ...result.order, paymentRequestId: pr.id },
+                    quantity: result.quantity,
+                });
+            }
+
+            const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+            const host = req.headers.host;
+            const baseUrl = `${protocol}://${host}`;
+            const frontendUrl = process.env.FRONTEND_URL || baseUrl.replace(/:\d+$/, ':3000');
+
+            const initRes = await uddoktapayService.initiatePayment({
+                fullName: body.fullName || req.user.name || 'Student',
+                email: req.user.email,
+                amount: result.totalAmount,
+                metadata: {
+                    type: 'book_courier',
+                    courierOrderId: result.order.id,
+                    payment_request_id: pr.id,
+                    requestId: pr.id,
+                    course_id: result.courseId,
+                    bookId,
+                },
+                redirectUrl: `${frontendUrl}/uddoktapay-redirect?bookId=${bookId}&type=book_courier`,
+                cancelUrl: `${frontendUrl}/student/books/${bookId}/checkout?status=cancelled&courseId=${result.courseId}`,
+                webhookUrl: `${baseUrl}/v1/courses/uddoktapay/webhook`,
+            });
+
+            if (!initRes.success || !initRes.paymentUrl) {
+                return res.status(500).json({ error: initRes.message || 'Payment initiation failed' });
+            }
+
+            return res.status(201).json({
+                paymentRequestId: pr.id,
+                paymentUrl: initRes.paymentUrl,
+                amount: result.totalAmount,
+                purchaseType: 'book_courier',
+                order: { ...result.order, paymentRequestId: pr.id },
+                quantity: result.quantity,
+                bookPriceAmount: result.bookPriceAmount,
+                courierFeeAmount: result.courierFeeAmount,
+            });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    },
+
     async teacherEarnings(req, res) {
         try {
             const earnings = await bookCommissionService.getTeacherEarnings(ownerId(req));
@@ -281,7 +466,7 @@ const bookController = {
 
     async myBooks(req, res) {
         try {
-            const books = await bookEntitlementService.listForUser(req.user.id);
+            const books = await bookEntitlementService.listForUserWithEligibility(req.user.id);
             return res.json({ books });
         } catch (err) {
             return handleError(res, err);
@@ -319,14 +504,9 @@ const bookController = {
                     return res.status(400).json({ error: `Invalid book: ${bookId}` });
                 }
                 let price = book.pricingMode === 'free_with_course' ? 0 : book.addonPrice || 0;
+                // Courier fee is now charged separately when the student provides their address.
                 let courierFee = 0;
-                if (
-                    (book.deliveryMode === 'courier_only' || book.deliveryMode === 'both') &&
-                    book.courierFeePaidBy === 'student'
-                ) {
-                    courierFee = book.courierFee || 0;
-                }
-                bookAmount += price + courierFee;
+                bookAmount += price;
                 bookItems.push({
                     bookId: book.id,
                     title: book.title,
@@ -376,12 +556,72 @@ const bookController = {
 
     async saveCourierAddress(req, res) {
         try {
-            const order = await bookCourierService.upsertAddress(
+            const result = await bookCourierService.upsertAddress(
                 req.params.bookId,
                 req.user.id,
                 req.body || {}
             );
-            return res.json(order);
+
+            let paymentRequestId = null;
+            let paymentUrl = null;
+
+            if (result.paymentRequired) {
+                const paymentRequestService = require('../services/paymentRequestService');
+                const uddoktapayService = require('../services/uddoktapayService');
+                
+                const pr = await paymentRequestService.createPaymentRequest({
+                    courseId: result.courseId,
+                    userId: req.user.id,
+                    paymentMethod: 'uddoktapay',
+                    senderPhone: req.body.phone || '',
+                    transactionId: `courier-${Date.now()}`,
+                    amount: result.courierFeeAmount,
+                    currency: 'BDT',
+                    purchaseType: 'courier_fee',
+                    bookItems: [{ bookId: req.params.bookId, courierFee: result.courierFeeAmount }],
+                    courseAmount: 0,
+                    bookAmount: result.courierFeeAmount,
+                });
+                
+                paymentRequestId = pr.id;
+
+                // Update the courier order to reference this payment request
+                await bookCourierService.linkPaymentRequest(result.order.id, paymentRequestId, {
+                    amount: result.courierFeeAmount,
+                    purchaseType: 'courier_fee',
+                });
+
+                const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+                const host = req.headers.host;
+                let baseUrl = `${protocol}://${host}`;
+                // Optional: determine frontend url from env for redirects
+                const frontendUrl = process.env.FRONTEND_URL || baseUrl.replace(/:\d+$/, ':3000');
+
+                const initRes = await uddoktapayService.initiatePayment({
+                    fullName: req.body.fullName || req.user.name || 'Student',
+                    email: req.user.email,
+                    amount: result.courierFeeAmount,
+                    metadata: {
+                        type: 'courier_fee',
+                        courierOrderId: result.order.id,
+                        payment_request_id: paymentRequestId,
+                        requestId: paymentRequestId,
+                        course_id: result.courseId,
+                        bookId: req.params.bookId,
+                    },
+                    redirectUrl: `${frontendUrl}/uddoktapay-redirect?bookId=${req.params.bookId}&type=courier_fee`,
+                    cancelUrl: `${frontendUrl}/student/books/${req.params.bookId}/courier?status=cancelled`,
+                    webhookUrl: `${baseUrl}/v1/courses/uddoktapay/webhook`,
+                });
+
+                if (initRes.success && initRes.paymentUrl) {
+                    paymentUrl = initRes.paymentUrl;
+                } else {
+                    return res.status(500).json({ error: initRes.message || 'Payment initiation failed' });
+                }
+            }
+
+            return res.json({ order: result.order, paymentUrl, paymentRequestId });
         } catch (err) {
             return handleError(res, err);
         }
@@ -489,11 +729,79 @@ const bookController = {
         }
     },
 
+    async adminGetBook(req, res) {
+        try {
+            const book = await bookService.adminGetById(req.params.bookId);
+            if (!book) return res.status(404).json({ error: 'Book not found' });
+            return res.json(book);
+        } catch (err) {
+            return handleError(res, err);
+        }
+    },
+
+    async adminUpdateBook(req, res) {
+        try {
+            const book = await bookService.adminUpdate(req.params.bookId, req.body || {});
+            return res.json(book);
+        } catch (err) {
+            return handleError(res, err);
+        }
+    },
+
+    async adminDeleteBook(req, res) {
+        try {
+            const result = await bookService.adminDelete(req.params.bookId);
+            return res.json(result);
+        } catch (err) {
+            return handleError(res, err);
+        }
+    },
+
     async adminSetBookStatus(req, res) {
         try {
             const { status } = req.body || {};
             const book = await bookService.adminSetStatus(req.params.bookId, status);
             return res.json(book);
+        } catch (err) {
+            return handleError(res, err);
+        }
+    },
+
+    async adminGetRecipients(req, res) {
+        try {
+            const data = await bookEntitlementService.listRecipientsForBook(req.params.bookId);
+            return res.json(data);
+        } catch (err) {
+            return handleError(res, err);
+        }
+    },
+
+    async adminManualGrant(req, res) {
+        try {
+            const { emailOrUserId, studentEmail, studentId, studentUserId, hasPdf = true, hasCourier = false, note } = req.body || {};
+            const target = emailOrUserId || studentEmail || studentUserId || studentId;
+            if (!target) return res.status(400).json({ error: 'Student email or ID is required' });
+            const ent = await bookEntitlementService.adminManualGrant({
+                bookId: req.params.bookId,
+                emailOrUserId: target,
+                hasPdf,
+                hasCourier,
+                note,
+            });
+            return res.json({ ok: true, entitlement: ent });
+        } catch (err) {
+            return handleError(res, err);
+        }
+    },
+
+    async adminRevokeGrant(req, res) {
+        try {
+            const { entitlementId } = req.body || {};
+            if (!entitlementId) return res.status(400).json({ error: 'entitlementId is required' });
+            const result = await bookEntitlementService.adminRevokeGrant({
+                entitlementId,
+            });
+            return res.json(result);
         } catch (err) {
             return handleError(res, err);
         }
@@ -508,6 +816,33 @@ const bookController = {
                 search: req.query.search || null,
             });
             return res.json(data);
+        } catch (err) {
+            return handleError(res, err);
+        }
+    },
+
+    async adminGetOrder(req, res) {
+        try {
+            const order = await bookCourierService.adminGet(req.params.orderId);
+            return res.json(order);
+        } catch (err) {
+            return handleError(res, err);
+        }
+    },
+
+    async adminUpdateOrder(req, res) {
+        try {
+            const order = await bookCourierService.adminUpdate(req.params.orderId, req.body);
+            return res.json(order);
+        } catch (err) {
+            return handleError(res, err);
+        }
+    },
+
+    async adminDeleteOrder(req, res) {
+        try {
+            const result = await bookCourierService.adminDelete(req.params.orderId);
+            return res.json(result);
         } catch (err) {
             return handleError(res, err);
         }

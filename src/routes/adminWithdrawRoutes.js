@@ -1,27 +1,37 @@
 const express = require('express');
+const path = require('path');
+const fs = require('fs');
 const router = express.Router();
 const adminWithdrawController = require('../controllers/adminWithdrawController');
-const verifyToken = require('../middleware/authMiddleware');
+const verifyAdmin = require('../middleware/verifyAdminMiddleware');
 const multer = require('multer');
 
-// Simple memory storage for receipt upload before saving to disk
-const storage = multer.memoryStorage();
-const upload = multer({
-    storage: storage,
-    limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+const WITHDRAW_RECEIPTS_DIR = path.resolve(__dirname, '../../uploads/withdraw-receipts');
+
+function ensureDir(dir) {
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+}
+
+function safeExt(originalname) {
+    const ext = path.extname(originalname || '') || '';
+    return ext.replace(/[^a-zA-Z0-9.]/g, '').slice(0, 16);
+}
+
+const storage = multer.diskStorage({
+    destination(_req, _file, cb) {
+        ensureDir(WITHDRAW_RECEIPTS_DIR);
+        cb(null, WITHDRAW_RECEIPTS_DIR);
+    },
+    filename(req, file, cb) {
+        cb(null, `${req.params.id}${safeExt(file.originalname)}`);
+    },
 });
 
-// Protect all routes with JWT and admin role check
-const restrictTo = (role) => {
-    return (req, res, next) => {
-        if (!req.user || req.user.role !== role) {
-            return res.status(403).json({ error: 'Forbidden' });
-        }
-        next();
-    };
-};
+const upload = multer({ storage });
 
-router.use(verifyToken, restrictTo('admin'));
+router.use(verifyAdmin);
 
 router.get('/', adminWithdrawController.list);
 router.patch('/:id/accept', upload.single('receipt'), adminWithdrawController.accept);

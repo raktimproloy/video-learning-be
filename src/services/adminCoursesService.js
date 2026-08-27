@@ -93,6 +93,7 @@ class AdminCoursesService {
                 users.email as teacher_email,
                 COALESCE(tp.name, users.email) as teacher_name,
                 (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = c.id) as purchase_count,
+                (SELECT COUNT(*)::int FROM course_books cb WHERE cb.course_id = c.id) as book_count,
                 (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = c.id) as lesson_count,
                 (SELECT COUNT(*)::int FROM videos v 
                  JOIN lessons l ON v.lesson_id = l.id WHERE l.course_id = c.id) as video_count,
@@ -108,30 +109,35 @@ class AdminCoursesService {
             params
         );
 
-        const courses = result.rows.map((row) => ({
-            id: row.id,
-            title: row.title,
-            description: row.description || row.short_description || '',
-            price: parseFloat(row.price) || 0,
-            discountPrice: row.discount_price ? parseFloat(row.discount_price) : null,
-            currency: row.currency || 'USD',
-            level: row.level || null,
-            language: row.language || null,
-            courseType: row.course_type || null,
-            status: row.status || 'active',
-            teacherId: row.teacher_id,
-            teacherName: row.teacher_id
-                ? row.teacher_name || row.teacher_email || 'Unknown'
-                : '—',
-            teacherEmail: row.teacher_id ? row.teacher_email : null,
-            category: row.category_name || row.category || null,
-            students: parseInt(row.purchase_count, 10) || 0,
-            lessons: parseInt(row.lesson_count, 10) || 0,
-            videos: parseInt(row.video_count, 10) || 0,
-            rating: parseFloat(row.rating) || 0,
-            reviewCount: parseInt(row.review_count, 10) || 0,
-            createdAt: row.created_at,
-        }));
+        const courses = result.rows.map((row) => {
+            const bCount = parseInt(row.book_count, 10) || 0;
+            return {
+                id: row.id,
+                title: row.title,
+                description: row.description || row.short_description || '',
+                price: parseFloat(row.price) || 0,
+                discountPrice: row.discount_price ? parseFloat(row.discount_price) : null,
+                currency: row.currency || 'USD',
+                level: row.level || null,
+                language: row.language || null,
+                courseType: row.course_type || null,
+                status: row.status || 'active',
+                teacherId: row.teacher_id,
+                teacherName: row.teacher_id
+                    ? row.teacher_name || row.teacher_email || 'Unknown'
+                    : '—',
+                teacherEmail: row.teacher_id ? row.teacher_email : null,
+                category: row.category_name || row.category || null,
+                students: parseInt(row.purchase_count, 10) || 0,
+                lessons: parseInt(row.lesson_count, 10) || 0,
+                videos: parseInt(row.video_count, 10) || 0,
+                bookCount: bCount,
+                hasBook: bCount > 0,
+                rating: parseFloat(row.rating) || 0,
+                reviewCount: parseInt(row.review_count, 10) || 0,
+                createdAt: row.created_at,
+            };
+        });
 
         return { courses, total };
     }
@@ -177,6 +183,35 @@ class AdminCoursesService {
             tags = [];
         }
 
+        const booksResult = await db.query(
+            `SELECT cb.*,
+                    (SELECT COUNT(*)::int FROM book_entitlements be WHERE be.course_book_id = cb.id AND be.revoked_at IS NULL) AS recipient_count
+             FROM course_books cb
+             WHERE cb.course_id = $1
+             ORDER BY cb.sort_order ASC, cb.created_at ASC`,
+            [id]
+        );
+
+        const attachedBooks = booksResult.rows.map((b) => ({
+            id: b.id,
+            title: b.title,
+            subtitle: b.subtitle,
+            description: b.description,
+            coverPath: b.cover_path,
+            deliveryMode: b.delivery_mode,
+            pricingMode: b.pricing_mode,
+            addonPrice: b.addon_price != null ? parseFloat(b.addon_price) : 0,
+            courierFee: b.courier_fee != null ? parseFloat(b.courier_fee) : 0,
+            courierFeePaidBy: b.courier_fee_paid_by,
+            stockLimit: b.stock_limit,
+            stockRemaining: b.stock_remaining,
+            status: b.status,
+            processingStatus: b.processing_status,
+            totalPages: b.total_pages || 0,
+            recipientCount: parseInt(b.recipient_count, 10) || 0,
+            createdAt: b.created_at,
+        }));
+
         return {
             id: row.id,
             title: row.title,
@@ -206,6 +241,8 @@ class AdminCoursesService {
             videos: parseInt(row.video_count, 10) || 0,
             rating: parseFloat(row.rating) || 0,
             reviewCount: parseInt(row.review_count, 10) || 0,
+            books: attachedBooks,
+            hasBook: attachedBooks.length > 0,
             thumbnailPath: row.thumbnail_path,
             createdAt: row.created_at,
             updatedAt: row.updated_at,

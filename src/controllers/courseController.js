@@ -1496,7 +1496,9 @@ class CourseController {
             }
 
             const alreadyEnrolled = await courseService.isEnrolled(userId, courseId);
-            if (alreadyEnrolled) {
+            const wantBooks = !!includeAllBooks || (Array.isArray(bookIds) && bookIds.length > 0);
+
+            if (alreadyEnrolled && !wantBooks) {
                 return res.status(400).json({ error: 'You are already enrolled in this course' });
             }
 
@@ -1726,7 +1728,9 @@ class CourseController {
             }
 
             const alreadyEnrolled = await courseService.isEnrolled(userId, courseId);
-            if (alreadyEnrolled) {
+            const wantBooks = !!includeAllBooks || (Array.isArray(bookIds) && bookIds.length > 0);
+
+            if (alreadyEnrolled && !wantBooks) {
                 return res.status(400).json({ error: 'You are already enrolled in this course' });
             }
 
@@ -1951,7 +1955,7 @@ class CourseController {
                 }
             }
 
-            const requestId = metadata.payment_request_id;
+            const requestId = metadata.payment_request_id || metadata.requestId;
             const courseId = metadata.course_id;
             const userId = metadata.user_id;
 
@@ -1980,7 +1984,35 @@ class CourseController {
 
             // Try to accept via the payment request service (handles enrollment + status update)
             const paymentRequestService = require('../services/paymentRequestService');
-            let enrollmentDone = false;
+            let fulfillmentDone = false;
+            let purchaseType = metadata.type === 'book_courier'
+                ? 'book_courier'
+                : metadata.type === 'courier_fee'
+                  ? 'courier_fee'
+                  : null;
+            let bookItems = null;
+            let paymentAmount = verification.amount;
+            let paymentCurrency = 'BDT';
+
+            if (requestId) {
+                try {
+                    const reqRow = await db.query(
+                        `SELECT purchase_type, book_items, amount, currency, book_amount, course_amount
+                         FROM course_payment_requests WHERE id = $1`,
+                        [requestId]
+                    );
+                    if (reqRow.rows[0]) {
+                        purchaseType = paymentRequestService.resolvePurchaseType(reqRow.rows[0]);
+                        bookItems = reqRow.rows[0].book_items;
+                        paymentAmount = reqRow.rows[0].amount ?? paymentAmount;
+                        paymentCurrency = reqRow.rows[0].currency || paymentCurrency;
+                    }
+                } catch (e) {
+                    // non-fatal
+                }
+            }
+
+            const bookOnly = paymentRequestService.isBookOnlyPurchaseType(purchaseType);
 
             if (requestId) {
                 const acceptResult = await paymentRequestService.acceptPaymentRequest(
@@ -1995,16 +2027,22 @@ class CourseController {
                 }
 
                 if (acceptResult && acceptResult.accepted) {
-                    enrollmentDone = true;
-                    console.log('UddoktaPay: enrollment completed via acceptPaymentRequest');
+                    fulfillmentDone = true;
+                    console.log(
+                        bookOnly
+                            ? 'UddoktaPay: book payment completed via acceptPaymentRequest'
+                            : 'UddoktaPay: enrollment completed via acceptPaymentRequest'
+                    );
                 } else {
-                    console.warn('UddoktaPay: acceptPaymentRequest returned null — will fallback to direct enrollment. requestId:', requestId);
+                    console.warn(
+                        'UddoktaPay: acceptPaymentRequest returned null — will fallback if course purchase. requestId:',
+                        requestId
+                    );
                 }
             }
 
-            // Fallback: if payment service didn't enroll (e.g. request not found or already accepted),
-            // directly enroll the user to guarantee access
-            if (!enrollmentDone && courseId && userId) {
+            // Fallback: course purchases only — never enroll on book-only payments
+            if (!fulfillmentDone && !bookOnly && courseId && userId) {
                 try {
                     const amountPaid = verification.amount ? parseFloat(String(verification.amount)) : undefined;
                     const courseService = require('../services/courseService');
@@ -2015,13 +2053,12 @@ class CourseController {
                             currency: 'BDT',
                         });
                         console.log('UddoktaPay: fallback direct enrollment done for user', userId, 'course', courseId);
-                        enrollmentDone = true;
+                        fulfillmentDone = true;
                     } else {
                         console.log('UddoktaPay: user already enrolled, marking as done');
-                        enrollmentDone = true;
+                        fulfillmentDone = true;
                     }
 
-                    // Always grant books from the payment request (idempotent)
                     if (requestId) {
                         await paymentRequestService.ensureBookEntitlements(requestId);
                         await db.query(
@@ -2036,14 +2073,17 @@ class CourseController {
                 }
             }
 
-            if (!enrollmentDone) {
-                return res.status(500).json({ error: 'Payment verified but enrollment could not be completed. Please contact support.' });
+            if (!fulfillmentDone) {
+                return res.status(500).json({
+                    error: bookOnly
+                        ? 'Payment verified but book order could not be completed. Please contact support.'
+                        : 'Payment verified but enrollment could not be completed. Please contact support.',
+                });
             }
 
-            // Fetch course title for invoice display
             let courseTitle = null;
-            let amount = verification.amount;
-            let currency = 'BDT';
+            let amount = paymentAmount ?? verification.amount;
+            let currency = paymentCurrency || 'BDT';
             if (courseId) {
                 try {
                     const courseRow = await db.query(
@@ -2052,7 +2092,7 @@ class CourseController {
                     );
                     if (courseRow.rows[0]) {
                         courseTitle = courseRow.rows[0].title;
-                        currency = courseRow.rows[0].currency || 'BDT';
+                        currency = courseRow.rows[0].currency || currency;
                         if (!amount) {
                             amount = courseRow.rows[0].discount_price ?? courseRow.rows[0].price;
                         }
@@ -2062,17 +2102,25 @@ class CourseController {
                 }
             }
 
+            const displayTitle = bookOnly
+                ? paymentRequestService.bookTitleFromItems(bookItems)
+                : courseTitle;
+
             res.json({
                 success: true,
                 status: 'COMPLETED',
                 courseId,
-                courseTitle,
+                courseTitle: displayTitle,
                 amount,
                 currency,
+                purchaseType,
+                bookItems,
                 transactionId: verification.transactionId || invoiceId,
                 senderNumber: verification.senderNumber || null,
                 paymentMethod: finalMethod,
-                message: 'Payment verified and enrollment completed successfully.',
+                message: bookOnly
+                    ? 'Book payment verified and order completed successfully.'
+                    : 'Payment verified and enrollment completed successfully.',
             });
         } catch (error) {
             console.error('Verify UddoktaPay error:', error);
@@ -2130,7 +2178,7 @@ class CourseController {
                 }
             }
 
-            const requestId = metadata.payment_request_id;
+            const requestId = metadata.payment_request_id || metadata.requestId;
             const courseId = metadata.course_id;
             const userId = metadata.user_id;
 
@@ -2168,7 +2216,29 @@ class CourseController {
             }
 
             const paymentRequestService = require('../services/paymentRequestService');
-            let enrollmentDone = false;
+            let fulfillmentDone = false;
+            let purchaseType = metadata.type === 'book_courier'
+                ? 'book_courier'
+                : metadata.type === 'courier_fee'
+                  ? 'courier_fee'
+                  : null;
+
+            if (requestId) {
+                try {
+                    const reqRow = await db.query(
+                        `SELECT purchase_type, book_amount, course_amount, book_items
+                         FROM course_payment_requests WHERE id = $1`,
+                        [requestId]
+                    );
+                    if (reqRow.rows[0]) {
+                        purchaseType = paymentRequestService.resolvePurchaseType(reqRow.rows[0]);
+                    }
+                } catch (e) {
+                    // non-fatal
+                }
+            }
+
+            const bookOnly = paymentRequestService.isBookOnlyPurchaseType(purchaseType);
 
             if (requestId) {
                 const acceptResult = await paymentRequestService.acceptPaymentRequest(
@@ -2182,15 +2252,22 @@ class CourseController {
                 }
 
                 if (acceptResult && acceptResult.accepted) {
-                    enrollmentDone = true;
-                    console.log('UddoktaPay webhook: enrollment done via acceptPaymentRequest');
+                    fulfillmentDone = true;
+                    console.log(
+                        bookOnly
+                            ? 'UddoktaPay webhook: book payment done via acceptPaymentRequest'
+                            : 'UddoktaPay webhook: enrollment done via acceptPaymentRequest'
+                    );
                 } else {
-                    console.warn('UddoktaPay webhook: acceptPaymentRequest returned null, trying direct enrollment. requestId:', requestId);
+                    console.warn(
+                        'UddoktaPay webhook: acceptPaymentRequest returned null, trying direct enrollment. requestId:',
+                        requestId
+                    );
                 }
             }
 
-            // Fallback: direct enrollment
-            if (!enrollmentDone && courseId && userId) {
+            // Fallback: course purchases only
+            if (!fulfillmentDone && !bookOnly && courseId && userId) {
                 try {
                     const courseService = require('../services/courseService');
                     const alreadyEnrolled = await courseService.isEnrolled(userId, courseId);
@@ -2211,13 +2288,13 @@ class CourseController {
                             ['UddoktaPay webhook auto-verification (fallback)', requestId]
                         );
                     }
-                    enrollmentDone = true;
+                    fulfillmentDone = true;
                 } catch (enrollErr) {
                     console.error('UddoktaPay webhook direct enrollment fallback failed:', enrollErr);
                 }
             }
 
-            return res.status(200).json({ success: true, enrolled: enrollmentDone });
+            return res.status(200).json({ success: true, fulfilled: fulfillmentDone, bookOnly });
         } catch (error) {
             console.error('UddoktaPay webhook error:', error);
             return res.status(500).json({ error: 'Internal server error' });

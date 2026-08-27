@@ -44,4 +44,10 @@ router.post('/verify-phone-otp', studentProfileController.verifyPhoneOtp);
 // Change password
 router.post('/change-password', studentProfileController.changePassword);
 
+// Address Book routes
+router.get('/addresses', studentProfileController.getAddresses);
+router.post('/addresses', studentProfileController.createAddress);
+router.put('/addresses/:id', studentProfileController.updateAddress);
+router.delete('/addresses/:id', studentProfileController.deleteAddress);
+
 module.exports = router;

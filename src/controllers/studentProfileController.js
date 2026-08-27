@@ -1,4 +1,5 @@
 const studentProfileService = require('../services/studentProfileService');
+const userAddressService = require('../services/userAddressService');
 const r2Storage = require('../services/r2StorageService');
 const { getAllowedOrigin } = require('../config/cors');
 const multer = require('multer');
@@ -285,6 +286,75 @@ class StudentProfileController {
             stream.pipe(res);
         } catch (error) {
             console.error('Stream profile image error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+    /**
+     * Get user addresses
+     */
+    async getAddresses(req, res) {
+        try {
+            if (req.user.role !== 'student') {
+                return res.status(403).json({ error: 'Access denied. Students only.' });
+            }
+            const addresses = await userAddressService.getUserAddresses(req.user.id);
+            res.json(addresses);
+        } catch (error) {
+            console.error('Get addresses error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    /**
+     * Create user address
+     */
+    async createAddress(req, res) {
+        try {
+            if (req.user.role !== 'student') {
+                return res.status(403).json({ error: 'Access denied. Students only.' });
+            }
+            const address = await userAddressService.createAddress(req.user.id, req.body);
+            res.status(201).json(address);
+        } catch (error) {
+            console.error('Create address error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    /**
+     * Update user address
+     */
+    async updateAddress(req, res) {
+        try {
+            if (req.user.role !== 'student') {
+                return res.status(403).json({ error: 'Access denied. Students only.' });
+            }
+            const address = await userAddressService.updateAddress(req.params.id, req.user.id, req.body);
+            if (!address) {
+                return res.status(404).json({ error: 'Address not found' });
+            }
+            res.json(address);
+        } catch (error) {
+            console.error('Update address error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    /**
+     * Delete user address
+     */
+    async deleteAddress(req, res) {
+        try {
+            if (req.user.role !== 'student') {
+                return res.status(403).json({ error: 'Access denied. Students only.' });
+            }
+            const success = await userAddressService.deleteAddress(req.params.id, req.user.id);
+            if (!success) {
+                return res.status(404).json({ error: 'Address not found' });
+            }
+            res.json({ success: true });
+        } catch (error) {
+            console.error('Delete address error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     }

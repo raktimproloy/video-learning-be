@@ -5,12 +5,6 @@ const marketerWithdrawRequestService = require('../services/marketerWithdrawRequ
 
 const WITHDRAW_RECEIPTS_DIR = path.resolve(__dirname, '../../uploads/withdraw-receipts');
 
-function ensureDir(dir) {
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-    }
-}
-
 async function list(req, res) {
     try {
         const { status, limit, offset } = req.query || {};
@@ -55,17 +49,17 @@ async function accept(req, res) {
         const adminUserId = req.user?.id;
         const file = req.file;
         
-        if (!file || !file.buffer) {
-            return res.status(400).json({ error: 'Receipt image is required. Upload an image file.' });
+        if (!file) {
+            return res.status(400).json({ error: 'Receipt file is required.' });
         }
-        ensureDir(WITHDRAW_RECEIPTS_DIR);
-        const ext = path.extname(file.originalname || '') || (file.mimetype?.startsWith('image/') ? '.jpg' : '.jpg');
-        const safeExt = ['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext.toLowerCase()) ? ext : '.jpg';
-        const filename = `${requestId}${safeExt}`;
-        const filePath = path.join(WITHDRAW_RECEIPTS_DIR, filename);
-        fs.writeFileSync(filePath, file.buffer);
-        const receiptImagePath = `withdraw-receipts/${filename}`;
-        
+        const receiptImagePath = file.filename
+            ? `withdraw-receipts/${file.filename}`
+            : null;
+        if (!receiptImagePath) {
+            return res.status(400).json({ error: 'Receipt file is required.' });
+        }
+        const filePath = file.path || path.join(WITHDRAW_RECEIPTS_DIR, file.filename);
+
         let updated;
         if (userType === 'teacher') {
             updated = await teacherWithdrawRequestService.accept(requestId, adminUserId, receiptImagePath);

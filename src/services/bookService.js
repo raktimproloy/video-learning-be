@@ -19,6 +19,8 @@ function mapBook(row) {
         pricingMode: row.pricing_mode,
         addonPrice: row.addon_price != null ? parseFloat(row.addon_price) : 0,
         courierFee: row.courier_fee != null ? parseFloat(row.courier_fee) : 0,
+        courierFees: Array.isArray(row.courier_fees) ? row.courier_fees : [],
+        maxCourierOrdersPerStudent: row.max_courier_orders_per_student != null ? parseInt(row.max_courier_orders_per_student, 10) : 1,
         courierFeePaidBy: row.courier_fee_paid_by || 'student',
         stockLimit: row.stock_limit,
         stockRemaining: row.stock_remaining,
@@ -31,6 +33,7 @@ function mapBook(row) {
         updatedAt: row.updated_at,
         courseTitle: row.course_title || undefined,
         teacherName: row.teacher_name || undefined,
+        recipientCount: row.recipient_count != null ? parseInt(row.recipient_count, 10) : undefined,
     };
 }
 
@@ -124,40 +127,130 @@ class BookService {
             }));
         }
 
-        const publicBooks = books.map((b) => {
-            const ent = entitlements.find((e) => e.bookId === b.id);
-            const isOwned = !!ent || isTeacher || (isEnrolled && (b.pricingMode === 'free_with_course' || b.pricingMode === 'included'));
-            const effectiveEntitlement = ent || (isOwned ? {
-                bookId: b.id,
-                source: isTeacher ? 'teacher' : 'course_enrollment',
-                hasPdf: b.deliveryMode === 'pdf_only' || b.deliveryMode === 'both',
-                hasCourier: false,
-                purchaseBlocked: true,
-            } : null);
+        const publicBooks = await Promise.all(
+            books.map(async (b) => {
+                const ent = entitlements.find((e) => e.bookId === b.id);
+                const isOwned =
+                    !!ent ||
+                    isTeacher ||
+                    (isEnrolled &&
+                        (b.pricingMode === 'free_with_course' || b.pricingMode === 'included'));
+                const effectiveEntitlement = ent || (isOwned
+                    ? {
+                          bookId: b.id,
+                          source: isTeacher ? 'teacher' : 'course_enrollment',
+                          hasPdf: b.deliveryMode === 'pdf_only' || b.deliveryMode === 'both',
+                          hasCourier: false,
+                          purchaseBlocked: true,
+                      }
+                    : null);
 
-            return {
-                id: b.id,
-                title: b.title,
-                subtitle: b.subtitle,
-                description: b.description,
-                coverPath: b.coverPath,
-                totalPages: b.totalPages,
-                previewPageCount: b.previewPageCount,
-                deliveryMode: b.deliveryMode,
-                pricingMode: b.pricingMode,
-                addonPrice: b.addonPrice,
-                courierFee: b.courierFee,
-                courierFeePaidBy: b.courierFeePaidBy,
-                stockRemaining: b.stockRemaining,
-                stockLimit: b.stockLimit,
-                currency: b.currency,
-                processingStatus: b.processingStatus,
-                status: b.status,
-                owned: isOwned,
-                purchaseBlocked: isOwned || ent?.purchaseBlocked || false,
-                entitlement: effectiveEntitlement,
-            };
-        });
+                let remaining = null;
+                let canOrder = false;
+                let alreadyPurchased = false;
+                let hasActiveOrder = false;
+                let activeOrder = null;
+
+                if (
+                    userId &&
+                    !isTeacher &&
+                    (b.deliveryMode === 'courier_only' || b.deliveryMode === 'both' || b.pricingMode === 'addon')
+                ) {
+                    try {
+                        const bookCourierService = require('./bookCourierService');
+                        const elig = await bookCourierService.getEligibility(b.id, userId);
+                        remaining = elig.remaining;
+                        canOrder = elig.canOrder;
+                        alreadyPurchased = elig.alreadyPurchased;
+                        hasActiveOrder = elig.hasActiveOrder;
+                        activeOrder = elig.activeOrder
+                            ? {
+                                  id: elig.activeOrder.id,
+                                  status: elig.activeOrder.status,
+                                  paymentStatus: elig.activeOrder.paymentStatus,
+                                  quantity: elig.activeOrder.quantity,
+                              }
+                            : null;
+                        return {
+                            id: b.id,
+                            title: b.title,
+                            subtitle: b.subtitle,
+                            description: b.description,
+                            coverPath: b.coverPath,
+                            totalPages: b.totalPages,
+                            previewPageCount: b.previewPageCount,
+                            deliveryMode: b.deliveryMode,
+                            pricingMode: b.pricingMode,
+                            addonPrice: b.addonPrice,
+                            courierFee: b.courierFee,
+                            courierFees: b.courierFees,
+                            maxCourierOrdersPerStudent: b.maxCourierOrdersPerStudent,
+                            courierFeePaidBy: b.courierFeePaidBy,
+                            stockRemaining: b.stockRemaining,
+                            stockLimit: b.stockLimit,
+                            currency: b.currency,
+                            processingStatus: b.processingStatus,
+                            status: b.status,
+                            owned: isOwned || elig.pdfOwned,
+                            pdfOwned: elig.pdfOwned,
+                            canBuyPdf: elig.canBuyPdf,
+                            unitBookPrice: elig.unitBookPrice,
+                            purchaseBlocked:
+                                elig.alreadyPurchased ||
+                                elig.hasActiveOrder ||
+                                (elig.pdfOwned && b.deliveryMode === 'pdf_only'),
+                            remainingOrders: remaining,
+                            canOrder,
+                            alreadyPurchased,
+                            hasActiveOrder,
+                            activeOrder,
+                            entitlement: effectiveEntitlement,
+                        };
+                    } catch {
+                        /* fall through to default mapping */
+                    }
+                } else if (b.deliveryMode === 'pdf_only') {
+                    alreadyPurchased = isOwned;
+                    canOrder = !isOwned && b.pricingMode === 'addon';
+                }
+
+                return {
+                    id: b.id,
+                    title: b.title,
+                    subtitle: b.subtitle,
+                    description: b.description,
+                    coverPath: b.coverPath,
+                    totalPages: b.totalPages,
+                    previewPageCount: b.previewPageCount,
+                    deliveryMode: b.deliveryMode,
+                    pricingMode: b.pricingMode,
+                    addonPrice: b.addonPrice,
+                    courierFee: b.courierFee,
+                    courierFees: b.courierFees,
+                    maxCourierOrdersPerStudent: b.maxCourierOrdersPerStudent,
+                    courierFeePaidBy: b.courierFeePaidBy,
+                    stockRemaining: b.stockRemaining,
+                    stockLimit: b.stockLimit,
+                    currency: b.currency,
+                    processingStatus: b.processingStatus,
+                    status: b.status,
+                    owned: isOwned,
+                    pdfOwned: isOwned && (b.deliveryMode === 'pdf_only' || b.deliveryMode === 'both'),
+                    canBuyPdf: !isOwned && b.pricingMode === 'addon' && (b.deliveryMode === 'pdf_only' || b.deliveryMode === 'both'),
+                    purchaseBlocked:
+                        alreadyPurchased ||
+                        hasActiveOrder ||
+                        (isOwned && b.deliveryMode === 'pdf_only') ||
+                        false,
+                    remainingOrders: remaining,
+                    canOrder,
+                    alreadyPurchased,
+                    hasActiveOrder,
+                    activeOrder,
+                    entitlement: effectiveEntitlement,
+                };
+            })
+        );
 
         return { books: publicBooks, bookPricing: pricing };
     }
@@ -172,6 +265,8 @@ class BookService {
             pricingMode = 'included',
             addonPrice = 0,
             courierFee = 0,
+            courierFees = [],
+            maxCourierOrdersPerStudent = 1,
             courierFeePaidBy = 'student',
             previewPageCount = 3,
             stockLimit = null,
@@ -188,9 +283,9 @@ class BookService {
         const result = await db.query(
             `INSERT INTO course_books (
                 course_id, teacher_id, title, subtitle, description,
-                delivery_mode, pricing_mode, addon_price, courier_fee, courier_fee_paid_by,
+                delivery_mode, pricing_mode, addon_price, courier_fee, courier_fees, max_courier_orders_per_student, courier_fee_paid_by,
                 preview_page_count, stock_limit, stock_remaining, currency, sort_order, status
-             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12,$13,$14,'draft')
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14,$15,$16,'draft')
              RETURNING *`,
             [
                 courseId,
@@ -202,6 +297,8 @@ class BookService {
                 pricingMode,
                 parseFloat(addonPrice) || 0,
                 parseFloat(courierFee) || 0,
+                JSON.stringify(Array.isArray(courierFees) ? courierFees : []),
+                parseInt(maxCourierOrdersPerStudent, 10) || 1,
                 courierFeePaidBy,
                 Math.min(5, Math.max(0, parseInt(previewPageCount, 10) || 3)),
                 stockLimit != null ? parseInt(stockLimit, 10) : null,
@@ -237,6 +334,8 @@ class BookService {
             pricingMode: 'pricing_mode',
             addonPrice: 'addon_price',
             courierFee: 'courier_fee',
+            courierFees: 'courier_fees',
+            maxCourierOrdersPerStudent: 'max_courier_orders_per_student',
             courierFeePaidBy: 'courier_fee_paid_by',
             previewPageCount: 'preview_page_count',
             stockLimit: 'stock_limit',
@@ -249,9 +348,10 @@ class BookService {
         for (const [key, col] of Object.entries(map)) {
             if (data[key] !== undefined) {
                 let val = data[key];
+                if (key === 'courierFees') val = JSON.stringify(Array.isArray(val) ? val : []);
                 if (key === 'addonPrice' || key === 'courierFee') val = parseFloat(val) || 0;
                 if (key === 'previewPageCount') val = Math.min(5, Math.max(0, parseInt(val, 10) || 3));
-                if (key === 'stockLimit' || key === 'stockRemaining' || key === 'sortOrder') {
+                if (key === 'stockLimit' || key === 'stockRemaining' || key === 'sortOrder' || key === 'maxCourierOrdersPerStudent') {
                     val = val == null || val === '' ? null : parseInt(val, 10);
                 }
                 if (key === 'status' && !['draft', 'published', 'suspended'].includes(val)) continue;
@@ -472,7 +572,8 @@ class BookService {
         );
         params.push(limit, skip);
         const listRes = await db.query(
-            `SELECT cb.*, c.title AS course_title, COALESCE(tp.name, u.email) AS teacher_name
+            `SELECT cb.*, c.title AS course_title, COALESCE(tp.name, u.email) AS teacher_name,
+                    (SELECT COUNT(*)::int FROM book_entitlements be WHERE be.course_book_id = cb.id AND be.revoked_at IS NULL) AS recipient_count
              FROM course_books cb
              JOIN courses c ON c.id = cb.course_id
              JOIN users u ON u.id = cb.teacher_id
@@ -486,6 +587,104 @@ class BookService {
             total: countRes.rows[0]?.total || 0,
             items: listRes.rows.map(mapBook),
         };
+    }
+
+    async adminGetById(bookId) {
+        const result = await db.query(
+            `SELECT cb.*, c.title AS course_title, COALESCE(tp.name, u.email) AS teacher_name, u.email AS teacher_email,
+                    (SELECT COUNT(*)::int FROM book_entitlements be WHERE be.course_book_id = cb.id AND be.revoked_at IS NULL) AS recipient_count,
+                    (SELECT COUNT(*)::int FROM book_courier_orders bco WHERE bco.course_book_id = cb.id) AS courier_orders_count
+             FROM course_books cb
+             JOIN courses c ON c.id = cb.course_id
+             JOIN users u ON u.id = cb.teacher_id
+             LEFT JOIN teacher_profiles tp ON tp.user_id = u.id
+             WHERE cb.id = $1`,
+            [bookId]
+        );
+        if (!result.rows[0]) return null;
+        const row = result.rows[0];
+        const mapped = mapBook(row);
+        mapped.teacherEmail = row.teacher_email || undefined;
+        mapped.courierOrdersCount = row.courier_orders_count != null ? parseInt(row.courier_orders_count, 10) : 0;
+        return mapped;
+    }
+
+    async adminUpdate(bookId, data) {
+        const book = await this.getById(bookId);
+        if (!book) {
+            const err = new Error('Book not found');
+            err.status = 404;
+            throw err;
+        }
+
+        const fields = [];
+        const params = [];
+        let i = 1;
+        const map = {
+            courseId: 'course_id',
+            teacherId: 'teacher_id',
+            title: 'title',
+            subtitle: 'subtitle',
+            description: 'description',
+            coverPath: 'cover_path',
+            deliveryMode: 'delivery_mode',
+            pricingMode: 'pricing_mode',
+            addonPrice: 'addon_price',
+            courierFee: 'courier_fee',
+            courierFees: 'courier_fees',
+            maxCourierOrdersPerStudent: 'max_courier_orders_per_student',
+            courierFeePaidBy: 'courier_fee_paid_by',
+            previewPageCount: 'preview_page_count',
+            stockLimit: 'stock_limit',
+            stockRemaining: 'stock_remaining',
+            sortOrder: 'sort_order',
+            status: 'status',
+            currency: 'currency',
+        };
+
+        for (const [key, col] of Object.entries(map)) {
+            if (data[key] !== undefined) {
+                let val = data[key];
+                if (key === 'courierFees') val = JSON.stringify(Array.isArray(val) ? val : []);
+                if (key === 'addonPrice' || key === 'courierFee') val = parseFloat(val) || 0;
+                if (key === 'previewPageCount') val = Math.min(5, Math.max(0, parseInt(val, 10) || 3));
+                if (key === 'stockLimit' || key === 'stockRemaining' || key === 'sortOrder' || key === 'maxCourierOrdersPerStudent') {
+                    val = val == null || val === '' ? null : parseInt(val, 10);
+                }
+                if (key === 'status' && !['draft', 'published', 'suspended'].includes(val)) continue;
+                fields.push(`${col} = $${i++}`);
+                params.push(val);
+            }
+        }
+
+        if (fields.length === 0) return this.adminGetById(bookId);
+
+        params.push(bookId);
+        await db.query(
+            `UPDATE course_books SET ${fields.join(', ')}, updated_at = NOW()
+             WHERE id = $${i}`,
+            params
+        );
+        return this.adminGetById(bookId);
+    }
+
+    async adminDelete(bookId) {
+        const book = await this.getById(bookId);
+        if (!book) {
+            const err = new Error('Book not found');
+            err.status = 404;
+            throw err;
+        }
+        if (book.masterPdfR2Key && r2Storage.isConfigured) {
+            try {
+                const prefix = r2Storage.getBookKeyPrefix(book.teacherId, book.courseId, book.id);
+                await r2Storage.deletePrefix(prefix);
+            } catch (e) {
+                console.warn('Failed to delete book R2 prefix:', e.message);
+            }
+        }
+        await db.query(`DELETE FROM course_books WHERE id = $1`, [bookId]);
+        return { deleted: true };
     }
 
     async adminSetStatus(bookId, status) {
@@ -527,10 +726,13 @@ class BookService {
         const listPrice = this.roundMoney(course.price);
         const salePrice =
             course.discount_price != null ? this.roundMoney(course.discount_price) : listPrice;
-        let courseAmount = salePrice;
+        const courseService = require('./courseService');
+        const isEnrolled = userId ? await courseService.isEnrolled(userId, courseId) : false;
+
+        let courseAmount = isEnrolled ? 0 : salePrice;
         let bookAmount = 0;
         const bookItems = [];
-        let purchaseType = 'course_only';
+        let purchaseType = isEnrolled ? 'book_addon' : 'course_only';
 
         const requestedIds = Array.isArray(bookIds)
             ? [...new Set(bookIds.map((id) => String(id)).filter(Boolean))]
@@ -538,7 +740,7 @@ class BookService {
         const wantBooks = !!includeAllBooks || requestedIds.length > 0;
 
         if (wantBooks) {
-            purchaseType = 'course_with_books';
+            purchaseType = isEnrolled ? 'book_addon' : 'course_with_books';
             let ids = requestedIds;
             if (!ids.length && includeAllBooks) {
                 const published = await this.listByCourse(courseId, { includeDrafts: false });
@@ -562,12 +764,9 @@ class BookService {
                     throw err;
                 }
                 const price = book.pricingMode === 'addon' ? this.roundMoney(book.addonPrice) : 0;
-                const courierFee =
-                    book.courierFeePaidBy === 'student' &&
-                    (book.deliveryMode === 'courier_only' || book.deliveryMode === 'both')
-                        ? this.roundMoney(book.courierFee)
-                        : 0;
-                bookAmount = this.roundMoney(bookAmount + price + courierFee);
+                // Courier fee is now charged separately when the student provides their address.
+                const courierFee = 0;
+                bookAmount = this.roundMoney(bookAmount + price);
                 bookItems.push({
                     bookId: book.id,
                     title: book.title,

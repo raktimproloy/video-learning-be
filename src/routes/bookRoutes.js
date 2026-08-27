@@ -21,6 +21,30 @@ router.get(
     requireRole(['student', 'teacher']),
     bookController.myBooks
 );
+router.get(
+    '/student/book-orders',
+    authMiddleware,
+    requireRole(['student', 'teacher']),
+    bookController.listStudentBookOrders
+);
+router.get(
+    '/student/books/:bookId/purchase-info',
+    authMiddleware,
+    requireRole(['student', 'teacher']),
+    bookController.getPurchaseInfo
+);
+router.post(
+    '/student/books/:bookId/buy-pdf',
+    authMiddleware,
+    requireRole(['student', 'teacher']),
+    bookController.buyPdf
+);
+router.post(
+    '/student/books/:bookId/checkout',
+    authMiddleware,
+    requireRole(['student', 'teacher']),
+    bookController.checkoutBook
+);
 router.post(
     '/courses/:courseId/book-purchase',
     authMiddleware,

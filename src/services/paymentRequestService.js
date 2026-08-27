@@ -3,6 +3,55 @@ const smsService = require('../utils/smsService');
 const ADMIN_NEW_PAYMENT_ALERT_PHONE =
     process.env.ADMIN_NEW_PAYMENT_ALERT_PHONE || '01303644935';
 
+const BOOK_ONLY_PURCHASE_TYPES = new Set(['book_addon', 'book_courier', 'courier_fee']);
+
+function parseBookItems(raw) {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === 'string') {
+        try {
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    }
+    return [];
+}
+
+function isBookOnlyPurchaseType(purchaseType) {
+    return BOOK_ONLY_PURCHASE_TYPES.has(purchaseType);
+}
+
+/**
+ * Normalize legacy/wrong purchase_type values (e.g. books_only stored as course_only).
+ */
+function resolvePurchaseType(row) {
+    if (!row) return 'course_only';
+    let type = row.purchase_type || 'course_only';
+    if (type === 'books_only') type = 'book_addon';
+
+    const bookItems = parseBookItems(row.book_items);
+    const bookAmt = row.book_amount != null ? parseFloat(row.book_amount) : 0;
+    const courseAmt = row.course_amount != null ? parseFloat(row.course_amount) : null;
+
+    if (
+        type === 'course_only' &&
+        bookItems.length > 0 &&
+        bookAmt > 0 &&
+        (courseAmt == null || courseAmt === 0)
+    ) {
+        return 'book_addon';
+    }
+
+    return type;
+}
+
+function bookTitleFromItems(bookItems) {
+    const items = parseBookItems(bookItems);
+    return items[0]?.title || 'Book order';
+}
+
 /**
  * Create a payment request (student checkout). Does not enroll; enrollment happens on admin accept.
  * Sends an SMS to sender_phone if provided: "Your order is on pending. Please wait some time."
@@ -24,8 +73,13 @@ async function createPaymentRequest(data) {
         bookAmount = null,
     } = data;
 
-    const safePurchaseType = ['course_only', 'course_with_books', 'book_addon'].includes(purchaseType)
-        ? purchaseType
+    let normalizedPurchaseType = purchaseType;
+    if (purchaseType === 'books_only') normalizedPurchaseType = 'book_addon';
+
+    const safePurchaseType = ['course_only', 'course_with_books', 'book_addon', 'courier_fee', 'book_courier'].includes(
+        normalizedPurchaseType
+    )
+        ? normalizedPurchaseType
         : 'course_only';
     const safeBookItems = Array.isArray(bookItems) ? bookItems : [];
 
@@ -127,6 +181,10 @@ async function listPaymentRequests(options = {}) {
             pr.reviewed_at,
             pr.rejection_reason,
             pr.acceptance_reason,
+            pr.purchase_type,
+            pr.book_items,
+            pr.course_amount,
+            pr.book_amount,
             pr.created_at,
             c.title AS course_title,
             c.price AS course_price,
@@ -158,29 +216,46 @@ async function listPaymentRequests(options = {}) {
     const total = countResult.rows[0]?.total || 0;
 
     return {
-        requests: result.rows.map((row) => ({
-            id: row.id,
-            courseId: row.course_id,
-            userId: row.user_id,
-            paymentMethod: row.payment_method,
-            senderPhone: row.sender_phone,
-            transactionId: row.transaction_id,
-            amount: parseFloat(row.amount),
-            currency: row.currency,
-            status: row.status,
-            couponCode: row.coupon_code,
-            inviteCode: row.invite_code,
-            reviewedAt: row.reviewed_at,
-            rejectionReason: row.rejection_reason,
-            acceptanceReason: row.acceptance_reason,
-            createdAt: row.created_at,
-            courseTitle: row.course_title,
-            coursePrice: row.course_price ? parseFloat(row.course_price) : null,
-            courseDiscountPrice: row.course_discount_price ? parseFloat(row.course_discount_price) : null,
-            courseCurrency: row.course_currency,
-            userEmail: row.user_email,
-            userName: row.user_name,
-        })),
+        requests: result.rows.map((row) => {
+            let parsedBookItems = [];
+            if (typeof row.book_items === 'string') {
+                try {
+                    parsedBookItems = JSON.parse(row.book_items);
+                } catch {
+                    parsedBookItems = [];
+                }
+            } else if (Array.isArray(row.book_items)) {
+                parsedBookItems = row.book_items;
+            }
+
+            return {
+                id: row.id,
+                courseId: row.course_id,
+                userId: row.user_id,
+                paymentMethod: row.payment_method,
+                senderPhone: row.sender_phone,
+                transactionId: row.transaction_id,
+                amount: parseFloat(row.amount),
+                currency: row.currency,
+                status: row.status,
+                couponCode: row.coupon_code,
+                inviteCode: row.invite_code,
+                reviewedAt: row.reviewed_at,
+                rejectionReason: row.rejection_reason,
+                acceptanceReason: row.acceptance_reason,
+                purchaseType: row.purchase_type || 'course_only',
+                bookItems: parsedBookItems,
+                courseAmount: row.course_amount != null ? parseFloat(row.course_amount) : null,
+                bookAmount: row.book_amount != null ? parseFloat(row.book_amount) : null,
+                createdAt: row.created_at,
+                courseTitle: row.course_title,
+                coursePrice: row.course_price ? parseFloat(row.course_price) : null,
+                courseDiscountPrice: row.course_discount_price ? parseFloat(row.course_discount_price) : null,
+                courseCurrency: row.course_currency,
+                userEmail: row.user_email,
+                userName: row.user_name,
+            };
+        }),
         total,
     };
 }
@@ -200,6 +275,7 @@ async function acceptPaymentRequest(requestId, adminUserId, accessReason = null)
         return null;
     }
     const row = request.rows[0];
+    const purchaseType = resolvePurchaseType(row);
     const courseTitle = row.course_title || 'Course';
 
     // Already accepted — still ensure book entitlements (idempotent repair)
@@ -209,6 +285,22 @@ async function acceptPaymentRequest(requestId, adminUserId, accessReason = null)
             await bookEntitlementService.grantFromPayment(row);
         } catch (bookErr) {
             console.error('Book entitlement re-grant failed:', bookErr.message);
+        }
+        try {
+            const bookCommissionService = require('./bookCommissionService');
+            await bookCommissionService.recordFromPaymentRequest(row);
+        } catch (commErr) {
+            console.error('Book commission re-record failed:', commErr.message);
+        }
+        if (purchaseType === 'courier_fee' || purchaseType === 'book_courier') {
+            try {
+                const bookCourierService = require('./bookCourierService');
+                await bookCourierService.markPaidByPaymentRequest(requestId, {
+                    decrementStock: false,
+                });
+            } catch (courierErr) {
+                console.error('Courier mark-paid re-apply failed:', courierErr.message);
+            }
         }
         return { accepted: true, alreadyAccepted: true, requestId };
     }
@@ -225,10 +317,10 @@ async function acceptPaymentRequest(requestId, adminUserId, accessReason = null)
     try {
         const courseService = require('./courseService');
 
-        // Enroll only once (in case the same request was previously processed incorrectly).
-        // book_addon payments do not create/alter course enrollment.
         const alreadyEnrolled = await courseService.isEnrolled(row.user_id, row.course_id);
-        if (row.purchase_type !== 'book_addon' && !alreadyEnrolled) {
+
+        // Book-only payments must never create course enrollment.
+        if (!isBookOnlyPurchaseType(purchaseType) && !alreadyEnrolled) {
             if (row.coupon_code) {
                 const couponApplyService = require('./couponApplyService');
                 await couponApplyService.applyCoupon(row.coupon_code, row.user_id, row.course_id);
@@ -240,7 +332,6 @@ async function acceptPaymentRequest(requestId, adminUserId, accessReason = null)
                     : null;
             const currency = (row.currency && String(row.currency).trim()) || null;
 
-            // For book_addon, amount_paid on enrollment should not inflate course revenue
             const enrollAmount =
                 row.course_amount != null
                     ? parseFloat(row.course_amount)
@@ -255,9 +346,9 @@ async function acceptPaymentRequest(requestId, adminUserId, accessReason = null)
 
         // Grant book entitlements when payment includes books (no-op if book_items empty)
         try {
-            if (row.purchase_type === 'book_addon') {
+            if (purchaseType === 'book_addon' || purchaseType === 'book_courier') {
                 const enrolledForBooks = await courseService.isEnrolled(row.user_id, row.course_id);
-                if (!enrolledForBooks) {
+                if (!enrolledForBooks && purchaseType === 'book_addon') {
                     throw Object.assign(new Error('Student must be enrolled to receive book add-on'), {
                         status: 400,
                     });
@@ -267,7 +358,7 @@ async function acceptPaymentRequest(requestId, adminUserId, accessReason = null)
             await bookEntitlementService.grantFromPayment(row);
         } catch (bookErr) {
             console.error('Book entitlement grant failed (payment still accepted):', bookErr.message);
-            if (row.purchase_type === 'book_addon' && bookErr.status === 400) {
+            if ((purchaseType === 'book_addon' || purchaseType === 'book_courier') && bookErr.status === 400) {
                 throw bookErr;
             }
         }
@@ -283,30 +374,65 @@ async function acceptPaymentRequest(requestId, adminUserId, accessReason = null)
             [adminUserId, accessReason || null, requestId]
         );
 
-        // Create notification for student
+        if (purchaseType === 'courier_fee' || purchaseType === 'book_courier') {
+            const bookCourierService = require('./bookCourierService');
+            await bookCourierService.markPaidByPaymentRequest(requestId, {
+                decrementStock: purchaseType === 'book_courier',
+            });
+        }
+
+        try {
+            const bookCommissionService = require('./bookCommissionService');
+            await bookCommissionService.recordFromPaymentRequest(row);
+        } catch (commErr) {
+            console.error('Book commission record from payment failed:', commErr.message);
+        }
+
         const userNotificationService = require('./userNotificationService');
+        const bookOnly = isBookOnlyPurchaseType(purchaseType);
+        const bookLabel = bookTitleFromItems(row.book_items);
         const bookNote =
-            row.purchase_type === 'book_addon'
+            purchaseType === 'book_addon'
                 ? ' Your book access has been unlocked.'
-                : row.purchase_type === 'course_with_books'
+                : purchaseType === 'course_with_books'
                   ? ' Course and book access unlocked.'
+                  : purchaseType === 'courier_fee'
+                  ? ' Your courier fee payment was successful.'
+                  : purchaseType === 'book_courier'
+                  ? ' Your book order payment was successful.'
                   : '';
+        const bookItemsParsed = parseBookItems(row.book_items);
+        const notifyLink =
+            purchaseType === 'book_courier' || purchaseType === 'courier_fee'
+                ? (() => {
+                      const bid = bookItemsParsed[0]?.bookId;
+                      return bid ? `/student/books/${bid}/courier` : null;
+                  })()
+                : purchaseType === 'book_addon'
+                  ? (() => {
+                        const bid = bookItemsParsed[0]?.bookId;
+                        return bid ? `/student/books/${bid}/read` : null;
+                    })()
+                  : null;
+
         await userNotificationService.create(row.user_id, {
-            type: 'payment_accepted',
-            title: 'Payment accepted',
-            body: `Your payment for "${courseTitle}" has been accepted. You now have access to the course.${bookNote}`,
+            type: bookOnly ? 'book_payment_accepted' : 'payment_accepted',
+            title: bookOnly ? 'Book payment accepted' : 'Payment accepted',
+            body: bookOnly
+                ? `Your payment for "${bookLabel}" has been accepted.${bookNote}`
+                : `Your payment for "${courseTitle}" has been accepted. You now have access to the course.${bookNote}`,
             courseId: row.course_id,
+            link: notifyLink,
         });
 
-        // Optional: send payment-accepted SMS to the number provided at checkout (fire-and-forget)
         const senderPhone = row.sender_phone && String(row.sender_phone).trim() ? String(row.sender_phone).trim() : null;
         if (senderPhone) {
-            smsService.sendPaymentAcceptedSms(senderPhone, courseTitle).catch((err) => {
+            smsService.sendPaymentAcceptedSms(senderPhone, bookOnly ? bookLabel : courseTitle).catch((err) => {
                 console.error('Payment accepted SMS failed:', err.message);
             });
         }
 
-        return { accepted: true, requestId };
+        return { accepted: true, requestId, purchaseType, bookOnly: bookOnly };
     } catch (err) {
         console.error('Error in acceptPaymentRequest:', err);
         throw err;
@@ -331,10 +457,11 @@ async function getByStudent(userId, options = {}) {
         `SELECT pr.id, pr.course_id, pr.user_id, pr.payment_method, pr.sender_phone,
                 pr.transaction_id, pr.amount, pr.currency, pr.status, pr.coupon_code, pr.invite_code,
                 pr.reviewed_at, pr.rejection_reason, pr.acceptance_reason, pr.created_at,
+                pr.purchase_type, pr.book_items, pr.book_amount, pr.course_amount,
                 c.title AS course_title, c.thumbnail_path, c.price, c.discount_price, c.currency AS course_currency,
                 COALESCE(tp.name, u.email) AS teacher_name
          FROM course_payment_requests pr
-         JOIN courses c ON c.id = pr.course_id
+         LEFT JOIN courses c ON c.id = pr.course_id
          LEFT JOIN users u ON c.teacher_id = u.id
          LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
          WHERE ${whereClause}
@@ -342,29 +469,44 @@ async function getByStudent(userId, options = {}) {
          LIMIT $${paramIndex}`,
         params
     );
-    return result.rows.map((row) => ({
-        id: row.id,
-        courseId: row.course_id,
-        userId: row.user_id,
-        paymentMethod: row.payment_method,
-        senderPhone: row.sender_phone,
-        transactionId: row.transaction_id,
-        amount: parseFloat(row.amount),
-        currency: row.currency,
-        status: row.status,
-        couponCode: row.coupon_code,
-        inviteCode: row.invite_code,
-        reviewedAt: row.reviewed_at,
-        rejectionReason: row.rejection_reason,
-        acceptanceReason: row.acceptance_reason,
-        createdAt: row.created_at,
-        courseTitle: row.course_title,
-        thumbnailPath: row.thumbnail_path,
-        coursePrice: row.price ? parseFloat(row.price) : null,
-        courseDiscountPrice: row.discount_price ? parseFloat(row.discount_price) : null,
-        courseCurrency: row.course_currency,
-        teacherName: row.teacher_name,
-    }));
+    return result.rows.map((row) => {
+        let parsedBookItems = null;
+        if (row.book_items) {
+            try {
+                parsedBookItems = typeof row.book_items === 'string' ? JSON.parse(row.book_items) : row.book_items;
+            } catch (e) {}
+        }
+        const purchaseType = resolvePurchaseType(row);
+        const bookOnly = isBookOnlyPurchaseType(purchaseType);
+        return {
+            id: row.id,
+            courseId: row.course_id,
+            userId: row.user_id,
+            paymentMethod: row.payment_method,
+            senderPhone: row.sender_phone,
+            transactionId: row.transaction_id,
+            amount: parseFloat(row.amount),
+            currency: row.currency,
+            status: row.status,
+            couponCode: row.coupon_code,
+            inviteCode: row.invite_code,
+            reviewedAt: row.reviewed_at,
+            rejectionReason: row.rejection_reason,
+            acceptanceReason: row.acceptance_reason,
+            createdAt: row.created_at,
+            courseTitle: row.course_title,
+            thumbnailPath: row.thumbnail_path,
+            coursePrice: row.price ? parseFloat(row.price) : null,
+            courseDiscountPrice: row.discount_price ? parseFloat(row.discount_price) : null,
+            courseCurrency: row.course_currency,
+            teacherName: row.teacher_name,
+            purchaseType,
+            isBookOnly: bookOnly,
+            bookAmount: row.book_amount != null ? parseFloat(row.book_amount) : null,
+            courseAmount: row.course_amount != null ? parseFloat(row.course_amount) : null,
+            bookItems: parsedBookItems,
+        };
+    });
 }
 
 /**
@@ -375,10 +517,11 @@ async function getByIdForStudent(requestId, userId) {
         `SELECT pr.id, pr.course_id, pr.user_id, pr.payment_method, pr.sender_phone,
                 pr.transaction_id, pr.amount, pr.currency, pr.status, pr.coupon_code, pr.invite_code,
                 pr.reviewed_at, pr.rejection_reason, pr.acceptance_reason, pr.created_at,
+                pr.purchase_type, pr.book_items,
                 c.title AS course_title, c.price, c.discount_price, c.currency AS course_currency,
                 COALESCE(tp.name, u.email) AS teacher_name, u.email AS teacher_email
          FROM course_payment_requests pr
-         JOIN courses c ON c.id = pr.course_id
+         LEFT JOIN courses c ON c.id = pr.course_id
          LEFT JOIN users u ON c.teacher_id = u.id
          LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
          WHERE pr.id = $1 AND pr.user_id = $2`,
@@ -386,6 +529,12 @@ async function getByIdForStudent(requestId, userId) {
     );
     const row = result.rows[0];
     if (!row) return null;
+    let parsedBookItems = null;
+    if (row.book_items) {
+        try {
+            parsedBookItems = typeof row.book_items === 'string' ? JSON.parse(row.book_items) : row.book_items;
+        } catch (e) {}
+    }
     const price = parseFloat(row.price) || 0;
     const discountPrice = row.discount_price ? parseFloat(row.discount_price) : null;
     return {
@@ -410,6 +559,8 @@ async function getByIdForStudent(requestId, userId) {
         courseCurrency: row.course_currency,
         teacherName: row.teacher_name,
         teacherEmail: row.teacher_email,
+        purchaseType: row.purchase_type,
+        bookItems: parsedBookItems,
     };
 }
 
@@ -481,4 +632,8 @@ module.exports = {
     getByStudent,
     ensureBookEntitlements,
     getByIdForStudent,
+    isBookOnlyPurchaseType,
+    resolvePurchaseType,
+    parseBookItems,
+    bookTitleFromItems,
 };

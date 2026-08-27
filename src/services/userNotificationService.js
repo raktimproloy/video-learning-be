@@ -1,18 +1,19 @@
 const db = require('../../db');
 
-async function create(userId, { type = 'info', title, body, courseId = null }) {
+async function create(userId, { type = 'info', title, body, courseId = null, link = null }) {
     const result = await db.query(
-        `INSERT INTO user_notifications (user_id, type, title, body, course_id)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO user_notifications (user_id, type, title, body, course_id, link)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING *`,
-        [userId, type, title || '', body || null, courseId]
+        [userId, type, title || '', body || null, courseId, link]
     );
     return result.rows[0];
 }
 
 async function listByUser(userId, limit = 50, offset = 0) {
     const result = await db.query(
-        `SELECT un.id, un.user_id, un.type, un.title, un.body, un.course_id, un.read_at, un.created_at, c.title AS course_title
+        `SELECT un.id, un.user_id, un.type, un.title, un.body, un.course_id, un.link,
+                un.read_at, un.created_at, c.title AS course_title
          FROM user_notifications un
          LEFT JOIN courses c ON c.id = un.course_id
          WHERE un.user_id = $1
@@ -27,6 +28,7 @@ async function listByUser(userId, limit = 50, offset = 0) {
         body: row.body,
         courseId: row.course_id,
         courseTitle: row.course_title,
+        link: row.link || null,
         createdAt: row.created_at,
         read: !!row.read_at,
     }));
