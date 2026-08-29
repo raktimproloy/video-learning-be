@@ -138,23 +138,6 @@ const getDirSize = (dirPath) => {
     return size;
 };
 
-async function uploadDirToR2(localDir, r2KeyPrefix) {
-    const entries = fs.readdirSync(localDir, { withFileTypes: true });
-    for (const e of entries) {
-        const localPath = path.join(localDir, e.name);
-        const relativePath = path.relative(localDir, localPath).split(path.sep).join('/');
-        const r2Key = r2KeyPrefix ? `${r2KeyPrefix}/${relativePath}` : relativePath;
-        if (e.isDirectory()) {
-            await uploadDirToR2(localPath, r2KeyPrefix ? `${r2KeyPrefix}/${e.name}` : e.name);
-        } else {
-            const ext = path.extname(e.name).toLowerCase();
-            const contentType = ext === '.m3u8' ? 'application/vnd.apple.mpegurl' : ext === '.ts' ? 'video/mp2t' : 'application/octet-stream';
-            console.log(`[VideoProcessor] [R2] Uploading: ${r2Key}`);
-            await r2Storage.uploadFromPath(localPath, r2Key, contentType);
-        }
-    }
-}
-
 class VideoProcessor {
     async processTask(task) {
         const log = (msg, ...args) => console.log(`[VideoProcessor] [Task ${task.id}] ${msg}`, ...args);
@@ -429,16 +412,38 @@ class VideoProcessor {
                 );
 
                 const processingPrefix = `${video.r2_key}/.processing/${task.id}`;
-                logStep('R2', 'Uploading encrypted HLS to staging prefix: %s', processingPrefix);
-                await uploadDirToR2(outputDir, processingPrefix);
-
                 const variantNames = targetResolutions.map((r) => r.name);
-                logStep('R2', 'Promoting staging output to live prefix: %s', video.r2_key);
-                await r2Storage.promoteProcessingPrefix(processingPrefix, video.r2_key, variantNames);
-                logStep('R2', 'Promote complete.');
 
-                // Thumbnail (skip overwrite on re-encode if custom thumbnail set)
-                if (sourcePath && fs.existsSync(sourcePath) && r2Storage.isConfigured && !video.custom_thumbnail_r2_key) {
+                try {
+                    logStep('R2', 'Uploading encrypted HLS to staging prefix: %s (parallel)', processingPrefix);
+                    await r2Storage.uploadDirectory(outputDir, processingPrefix, {
+                        onProgress: ({ uploaded, total, r2Key }) => {
+                            if (uploaded === total || uploaded % 50 === 0) {
+                                logStep('R2', 'Upload progress: %s/%s (%s)', uploaded, total, r2Key);
+                            }
+                        },
+                    });
+
+                    logStep('R2', 'Promoting staging output to live prefix: %s (parallel)', video.r2_key);
+                    await r2Storage.promoteProcessingPrefix(processingPrefix, video.r2_key, variantNames);
+
+                    logStep('R2', 'Verifying promoted HLS assets...');
+                    const verified = await r2Storage.verifyHlsAtPrefix(video.r2_key, variantNames);
+                    logStep('R2', 'HLS verified: master=%s, variant=%s', verified.masterKey, verified.variantPlaylistKey);
+                } catch (storeErr) {
+                    try {
+                        await r2Storage.deletePrefix(processingPrefix);
+                        logStep('R2', 'Cleaned up failed processing prefix: %s', processingPrefix);
+                    } catch (cleanupErr) {
+                        console.warn('[VideoProcessor] [Task %s] Failed to cleanup processing prefix:', task.id, cleanupErr.message);
+                    }
+                    throw storeErr;
+                }
+
+                const uploadThumbnail = async () => {
+                    if (!sourcePath || !fs.existsSync(sourcePath) || !r2Storage.isConfigured || video.custom_thumbnail_r2_key) {
+                        return;
+                    }
                     try {
                         logStep('Thumbnail', 'Generating thumbnail from first frame...');
                         const thumbPath = path.join(outputDir, 'thumbnail.jpg');
@@ -461,16 +466,18 @@ class VideoProcessor {
                     } catch (thumbErr) {
                         console.warn('[VideoProcessor] [Task %s] Thumbnail generation failed (non-fatal):', task.id, thumbErr.message);
                     }
-                }
+                };
 
-                // Original source — only on initial encode (not re-encode from original)
-                if (
-                    sourcePath &&
-                    fs.existsSync(sourcePath) &&
-                    r2Storage.isConfigured &&
-                    !sourceFromOriginal &&
-                    !isReencode
-                ) {
+                const uploadOriginal = async () => {
+                    if (
+                        !sourcePath ||
+                        !fs.existsSync(sourcePath) ||
+                        !r2Storage.isConfigured ||
+                        sourceFromOriginal ||
+                        isReencode
+                    ) {
+                        return;
+                    }
                     try {
                         logStep('Original', 'Uploading original unencrypted video...');
                         const ext = path.extname(sourcePath) || '.mp4';
@@ -480,9 +487,11 @@ class VideoProcessor {
                         await db.query('UPDATE videos SET original_r2_key = $1 WHERE id = $2', [originalR2Key, task.video_id]);
                         logStep('Original', 'Original uploaded: %s', originalR2Key);
                     } catch (origErr) {
-                        console.warn('[VideoProcessor] [Task %s] Original video upload failed:', task.id, origErr.message);
+                        console.warn('[VideoProcessor] [Task %s] Original video upload failed (non-fatal):', task.id, origErr.message);
                     }
-                }
+                };
+
+                await Promise.all([uploadThumbnail(), uploadOriginal()]);
 
                 if (workDir && fs.existsSync(workDir)) {
                     fs.rmSync(workDir, { recursive: true, force: true });
@@ -512,11 +521,13 @@ class VideoProcessor {
                 [task.id]
             );
             const durationSeconds = metadata.format?.duration != null ? Math.round(Number(metadata.format.duration) * 100) / 100 : null;
+            const playbackResolutions = targetResolutions.map((r) => r.name);
             await db.query(
-                'UPDATE videos SET size_bytes = $1, duration_seconds = COALESCE(duration_seconds, $2), status = $3 WHERE id = $4',
-                [totalSize, durationSeconds, 'active', task.video_id]
+                `UPDATE videos SET size_bytes = $1, duration_seconds = COALESCE(duration_seconds, $2),
+                 status = $3, playback_resolutions = $4 WHERE id = $5`,
+                [totalSize, durationSeconds, 'active', playbackResolutions, task.video_id]
             );
-            logStep('DB', 'Video updated: size=%s, duration=%s, status=active', totalSize, durationSeconds ?? 'N/A');
+            logStep('DB', 'Video updated: size=%s, duration=%s, status=active, playback=%s', totalSize, durationSeconds ?? 'N/A', playbackResolutions.join(','));
 
             log('Completed successfully. Duration=%ss', durationSeconds ?? 'N/A');
 

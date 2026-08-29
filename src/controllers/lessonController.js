@@ -217,7 +217,7 @@ class LessonController {
             const course = await courseService.getCourseByIdSimple(lesson.course_id);
             const isOwner = course && req.user?.id && course.teacher_id === workspaceTeacherId(req);
             const userId = req.user?.role === 'student' ? req.user.id : null;
-            const videos = await videoService.getVideosByLesson(lessonId, userId, false, isOwner);
+            const videos = await videoService.getVideosByLesson(lessonId, userId, false, isOwner, { enrichPlayback: true });
             res.json(videos);
         } catch (error) {
             console.error('Get lesson videos error:', error);

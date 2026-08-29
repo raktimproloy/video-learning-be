@@ -22,7 +22,10 @@
     "docker:logs": "docker compose logs -f api",
     "docker:migrate": "docker compose run --rm --no-deps api node run_migrations.js",
     "docker:deploy": "bash scripts/vps-deploy.sh",
-    "docker:update": "bash scripts/vps-update.sh"
+    "docker:update": "bash scripts/vps-update.sh",
+    "r2:preflight": "node scripts/r2-preflight-smoke.js",
+    "r2:orphan-audit": "node scripts/r2-orphan-audit.js",
+    "r2:reencode-audit": "node scripts/video-reencode-audit.js"
   },
   "keywords": [],
   "author": "",

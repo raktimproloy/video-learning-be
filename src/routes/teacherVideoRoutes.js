@@ -23,7 +23,6 @@ const upload = multer({ storage: multer.diskStorage({
 
 const uploadThumbnail = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 5 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
         if (file.mimetype && file.mimetype.startsWith('image/')) cb(null, true);
         else cb(new Error('Only image files are allowed'));
@@ -33,9 +32,6 @@ const uploadThumbnail = multer({
 function handleThumbnailUpload(req, res, next) {
     uploadThumbnail(req, res, (err) => {
         if (!err) return next();
-        if (err.code === 'LIMIT_FILE_SIZE') {
-            return res.status(413).json({ error: 'Thumbnail must be 5MB or less' });
-        }
         return res.status(400).json({ error: err.message || 'Invalid thumbnail' });
     });
 }

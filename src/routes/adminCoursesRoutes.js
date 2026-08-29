@@ -19,7 +19,6 @@ const storage = multer.diskStorage({
 });
 const upload = multer({
     storage,
-    limits: { fileSize: 20 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
         if (file.fieldname !== 'thumbnail') {
             return cb(new Error('Unexpected file field'));

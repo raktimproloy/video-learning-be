@@ -5,6 +5,7 @@ const verifyToken = require('../middleware/authMiddleware');
 
 router.post('/video', verifyToken, progressController.saveVideoProgress);
 router.get('/video/:videoId', verifyToken, progressController.getVideoProgress);
+router.get('/lesson/:lessonId', verifyToken, progressController.getLessonVideoProgress);
 router.get('/course/:courseId', verifyToken, progressController.getCourseProgress);
 router.get('/recent', verifyToken, progressController.getRecentActivity);
 router.get('/activity-by-day', verifyToken, progressController.getActivityByDay);

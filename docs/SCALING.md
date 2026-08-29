@@ -48,6 +48,17 @@ Includes `100_perf_indexes.sql` for heartbeat/progress paths.
 | API + Socket.io | `RUN_WORKER=0` | `npm start` or PM2 `api` |
 | FFmpeg worker | — | `npm run worker` or PM2 `worker` |
 
+**Parallel R2 storing (worker only):**
+
+```env
+R2_UPLOAD_CONCURRENCY=12   # parallel HLS segment PUTs (1–32)
+R2_COPY_CONCURRENCY=12     # parallel server-side copy on promote
+R2_UPLOAD_QUEUE_SIZE=4     # multipart queue for large stream uploads
+R2_UPLOAD_PART_SIZE_MB=10  # multipart part size
+```
+
+Worker uploads HLS in parallel, promotes with parallel `CopyObject`, verifies `master.m3u8` + a variant playlist before marking the video active. On failure, the `.processing/{taskId}` prefix is cleaned up automatically.
+
 **PM2 (recommended on VPS):**
 
 ```bash
@@ -138,28 +149,33 @@ Set any to `0` to disable batching for that path.
 
 ## P3 — CDN for HLS (Cloudflare + R2)
 
-Video segments are on R2. To scale off VPS:
+Video segments are on R2. To scale off VPS and reduce R2 Class B costs:
 
 1. Cloudflare dashboard → R2 bucket → **Connect Custom Domain** (e.g. `media.yoursite.com`)
-2. Cache rule: `.ts` → TTL 1 hour; `.m3u8` → bypass cache
+2. Cache rules on `media.yoursite.com`: `.ts` → TTL 1 hour; `.m3u8` → bypass cache
 3. Set env on API:
    ```env
-   CDN_SEGMENT_DELIVERY=presign   # off | presign | cdn
+   CDN_SEGMENT_DELIVERY=cdn          # production (off | presign | cdn)
    R2_CDN_PUBLIC_URL=https://media.yoursite.com
    HLS_SEGMENT_PRESIGN_TTL=120
    HLS_LADDER_ENABLED=true
    HLS_SEGMENT_SECONDS=2
    ```
 4. **Security:** `/v1/video/get-key` stays on API (JWT). Segments remain AES-128 encrypted in R2/CDN.
-5. **Rollback:** set `CDN_SEGMENT_DELIVERY=off` — instant revert to API proxy.
+5. **Rollback:** set `CDN_SEGMENT_DELIVERY=presign` or `off` — restart API only.
+
+**Full cost optimization runbook:** [R2-COST-OPTIMIZATION.md](./R2-COST-OPTIMIZATION.md) (lifecycle rules, orphan audit, monitoring).
+
+**Dashboard checklist:** [cloudflare-dashboard-checklist.md](./cloudflare-dashboard-checklist.md)
 
 ### Rollout checklist
 
 - [ ] Run migration `134_video_playback_optimization.sql`
-- [ ] Deploy with `CDN_SEGMENT_DELIVERY=off` (verify no regression)
-- [ ] Staging: `CDN_SEGMENT_DELIVERY=presign`, run `tester_bot/k6/video-watch.js`
-- [ ] Production: enable presign, monitor `[VideoMetrics]` logs for TTFF
-- [ ] Optional: `CDN_SEGMENT_DELIVERY=cdn` when Cloudflare cache hit rate is good
+- [ ] `npm run r2:preflight` — verify custom domain + oldest/newest video paths
+- [ ] Apply Cloudflare cache rules (see R2-COST-OPTIMIZATION.md Phase 1)
+- [ ] Production: `CDN_SEGMENT_DELIVERY=cdn`, restart API, run `tester_bot/k6/video-watch.js`
+- [ ] Apply R2 lifecycle rules (Phase 2 in R2-COST-OPTIMIZATION.md)
+- [ ] Weekly: R2 metrics + cache hit rate on `media.*`
 
 ### Re-encode existing videos (multi-quality ladder)
 

@@ -3,6 +3,7 @@ const { isImage, compressImage } = require('../utils/imageCompress');
 const lessonService = require('../services/lessonService');
 const videoService = require('../services/videoService');
 const r2Storage = require('../services/r2StorageService');
+const playbackResolutionService = require('../services/playbackResolutionService');
 const { validationResult } = require('express-validator');
 const fs = require('fs');
 const path = require('path');
@@ -965,6 +966,22 @@ class AdminController {
             );
             if (pendingRes.rows.length > 0) {
                 return res.status(400).json({ error: 'Video is already being processed. Please wait.' });
+            }
+
+            const playbackResolutions = playbackResolutionService.normalizePlaybackResolutions(
+                video.playback_resolutions
+            );
+            if (!video.playback_resolutions?.length && video.r2_key && r2Storage.isConfigured) {
+                const detected = await playbackResolutionService.probeR2Variants(video.r2_key);
+                await playbackResolutionService.cachePlaybackResolutions(video.id, detected);
+                playbackResolutions.splice(0, playbackResolutions.length, ...detected);
+            }
+            if (playbackResolutionService.hasAdaptivePlayback(playbackResolutions)) {
+                return res.status(400).json({
+                    error: 'This video already has adaptive quality (multi-resolution playback).',
+                    alreadyAdaptive: true,
+                    playbackResolutions,
+                });
             }
 
             const {

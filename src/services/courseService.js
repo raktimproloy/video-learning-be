@@ -1121,6 +1121,7 @@ class CourseService {
             return {
                 course: courseWithMeta,
                 pendingPaymentRequestId: null,
+                isEnrolled: false,
                 teacher: teacher
                     ? {
                           id: teacher.id,
@@ -1148,13 +1149,13 @@ class CourseService {
         const lessonService = require('./lessonService');
         const lessons = await lessonService.getLessonsByCourse(course.id, userId, course.teacher_id);
 
-        // Get all videos for all lessons
+        // Get all videos for this course (single query — was N+1 per lesson)
         const videoService = require('./videoService');
-        const videos = [];
-        const isOwner = userId && course.teacher_id === userId;
-        for (const lesson of lessons) {
-            const lessonVideos = await videoService.getVideosByLesson(lesson.id, userId, lesson.isLocked || false, isOwner);
-            videos.push(...lessonVideos);
+        const videos = await videoService.getCourseCatalogVideos(course.id, userId, course.teacher_id);
+
+        let isEnrolled = false;
+        if (userId) {
+            isEnrolled = await this.isEnrolled(userId, course.id);
         }
 
         // Check if reviews table exists
@@ -1287,6 +1288,7 @@ class CourseService {
         return {
             course: courseWithMeta,
             pendingPaymentRequestId,
+            isEnrolled,
             teacher: teacher ? {
                 id: teacher.id,
                 email: teacher.email,

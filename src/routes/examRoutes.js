@@ -8,13 +8,11 @@ const examAnalyticsController = require('../controllers/examAnalyticsController'
 
 const uploadImage = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 5 * 1024 * 1024 },
     fileFilter: (req, file, cb) => cb(null, file.mimetype.startsWith('image/')),
 }).single('image');
 
 const uploadTemplate = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 20 * 1024 * 1024 },
 }).single('template');
 
 // Exam media (question/passage/option/solution images) from R2 - public, unauthenticated (unguessable keys)

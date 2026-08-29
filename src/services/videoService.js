@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const r2Storage = require('./r2StorageService');
 const keyStorage = require('./keyStorageService');
+const playbackResolutionService = require('./playbackResolutionService');
 
 class VideoService {
     /**
@@ -160,7 +161,8 @@ class VideoService {
         return result.rows;
     }
 
-    async getVideosByLesson(lessonId, userId = null, lessonIsLocked = false, isOwner = false) {
+    async getVideosByLesson(lessonId, userId = null, lessonIsLocked = false, isOwner = false, options = {}) {
+        const { enrichPlayback = false } = options;
         const statusFilter = isOwner ? '' : `AND (v.status IS NULL OR v.status = 'active' OR v.status = 'processing')`;
         const query = `
             SELECT 
@@ -171,17 +173,30 @@ class VideoService {
                     WHERE video_id = v.id 
                     ORDER BY created_at DESC 
                     LIMIT 1
-                ) as processing_status
+                ) as processing_status,
+                (
+                    SELECT task_type
+                    FROM video_processing_tasks
+                    WHERE video_id = v.id
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                ) as last_task_type
             FROM videos v
             WHERE v.lesson_id = $1 ${statusFilter}
             ORDER BY v."order" ASC, v.created_at ASC
         `;
         const result = await db.query(query, [lessonId]);
-        const videos = result.rows.map((row) => {
+        let videos = result.rows.map((row) => {
             const notes = row.notes ? (typeof row.notes === 'string' ? JSON.parse(row.notes) : row.notes) : [];
             const assignments = row.assignments ? (typeof row.assignments === 'string' ? JSON.parse(row.assignments) : row.assignments) : [];
             const hasRequired = Array.isArray(assignments) && assignments.some((a) => a && a.isRequired === true);
-            return {
+            const processingInFlight = ['pending', 'processing'].includes(row.processing_status);
+            const videoStatus = row.status || (row.processing_status && row.processing_status !== 'completed' ? 'processing' : 'active');
+            const playbackResolutions = playbackResolutionService.normalizePlaybackResolutions(
+                row.playback_resolutions
+            );
+            const hasAdaptivePlayback = playbackResolutionService.hasAdaptivePlayback(playbackResolutions);
+            const base = {
                 ...row,
                 isPreview: row.is_preview ?? false,
                 source_type: row.source_type || 'upload',
@@ -190,10 +205,81 @@ class VideoService {
                 hasRequiredAssignment: !!hasRequired,
                 viewCount: row.view_count != null ? parseInt(row.view_count, 10) : 0,
                 has_custom_thumbnail: !!row.custom_thumbnail_r2_key,
-                // Use video status if available, otherwise fall back to processing_status
-                status: row.status || (row.processing_status && row.processing_status !== 'completed' ? 'processing' : 'active'),
+                status: videoStatus,
             };
+            if (isOwner) {
+                const hasOriginalSource = !!row.original_r2_key;
+                const isReencoding = row.last_task_type === 'reencode' && processingInFlight;
+                const canReencode =
+                    videoStatus === 'active' &&
+                    hasOriginalSource &&
+                    !processingInFlight &&
+                    !hasAdaptivePlayback;
+                let reencodeBlockedReason = null;
+                if (hasAdaptivePlayback) {
+                    reencodeBlockedReason = 'already_adaptive';
+                } else if (!hasOriginalSource) {
+                    reencodeBlockedReason = 'no_original';
+                } else if (processingInFlight) {
+                    reencodeBlockedReason = 'processing';
+                } else if (videoStatus !== 'active') {
+                    reencodeBlockedReason = 'not_active';
+                }
+                return {
+                    ...base,
+                    playbackResolutions,
+                    hasAdaptivePlayback,
+                    playbackLabel: playbackResolutionService.formatPlaybackLabel(playbackResolutions),
+                    hasOriginalSource,
+                    canReencode,
+                    isReencoding,
+                    reencodeBlockedReason,
+                };
+            }
+            return base;
         });
+
+        if (isOwner && enrichPlayback) {
+            await playbackResolutionService.ensureCachedForVideos(
+                videos.filter((v) => v.status === 'active' && v.r2_key)
+            );
+            videos = videos.map((video) => {
+                if (video.status !== 'active') return video;
+                const playbackResolutions = playbackResolutionService.normalizePlaybackResolutions(
+                    video.playback_resolutions
+                );
+                const hasAdaptivePlayback = playbackResolutionService.hasAdaptivePlayback(playbackResolutions);
+                const hasOriginalSource = !!video.original_r2_key;
+                const processingInFlight = ['pending', 'processing'].includes(video.processing_status);
+                const isReencoding = video.last_task_type === 'reencode' && processingInFlight;
+                const canReencode =
+                    video.status === 'active' &&
+                    hasOriginalSource &&
+                    !processingInFlight &&
+                    !hasAdaptivePlayback;
+                let reencodeBlockedReason = video.reencodeBlockedReason;
+                if (hasAdaptivePlayback) {
+                    reencodeBlockedReason = 'already_adaptive';
+                } else if (!hasOriginalSource) {
+                    reencodeBlockedReason = 'no_original';
+                } else if (processingInFlight) {
+                    reencodeBlockedReason = 'processing';
+                } else if (video.status !== 'active') {
+                    reencodeBlockedReason = 'not_active';
+                } else {
+                    reencodeBlockedReason = null;
+                }
+                return {
+                    ...video,
+                    playbackResolutions,
+                    hasAdaptivePlayback,
+                    playbackLabel: playbackResolutionService.formatPlaybackLabel(playbackResolutions),
+                    canReencode,
+                    isReencoding,
+                    reencodeBlockedReason,
+                };
+            });
+        }
 
         // If lesson is locked, lock all videos
         if (lessonIsLocked) {
@@ -233,6 +319,175 @@ class VideoService {
         }
 
         return videos;
+    }
+
+    /**
+     * All course videos in one query (course details / catalog — avoids N+1 per lesson).
+     */
+    async getCourseCatalogVideos(courseId, userId = null, teacherId = null) {
+        const isOwner = !!(userId && teacherId && userId === teacherId);
+        const lessonStatusFilter = isOwner ? '' : `AND (COALESCE(l.status, 'active') = 'active')`;
+        const videoStatusFilter = isOwner
+            ? ''
+            : `AND (v.status IS NULL OR v.status = 'active' OR v.status = 'processing')`;
+
+        const result = await db.query(
+            `SELECT
+                v.id,
+                v.title,
+                v.lesson_id,
+                v."order",
+                v.duration_seconds,
+                v.is_preview,
+                v.source_type,
+                v.notes,
+                v.assignments,
+                v.status
+             FROM videos v
+             JOIN lessons l ON l.id = v.lesson_id
+             WHERE l.course_id = $1
+             ${lessonStatusFilter}
+             ${videoStatusFilter}
+             ORDER BY l."order" ASC, l.created_at ASC, v."order" ASC, v.created_at ASC`,
+            [courseId]
+        );
+
+        return result.rows.map((row) => {
+            const notes = row.notes
+                ? typeof row.notes === 'string'
+                    ? JSON.parse(row.notes)
+                    : row.notes
+                : [];
+            const assignments = row.assignments
+                ? typeof row.assignments === 'string'
+                    ? JSON.parse(row.assignments)
+                    : row.assignments
+                : [];
+            const isPreview = row.is_preview ?? false;
+            return {
+                id: row.id,
+                title: row.title,
+                lesson_id: row.lesson_id,
+                order: row.order || 0,
+                duration_seconds: row.duration_seconds,
+                is_preview: isPreview,
+                isPreview,
+                source_type: row.source_type || 'upload',
+                status: row.status || 'active',
+                notes: Array.isArray(notes) ? notes : [],
+                assignments: Array.isArray(assignments) ? assignments : [],
+                hasRequiredAssignment:
+                    Array.isArray(assignments) &&
+                    assignments.some((a) => a && a.isRequired === true),
+                // Catalog page: non-preview items show as locked until purchase
+                isLocked: !isPreview,
+            };
+        });
+    }
+
+    async getLessonVideoListItems(lessonId, userId = null, lessonIsLocked = false, isOwner = false) {
+        const statusFilter = isOwner ? '' : `AND (v.status IS NULL OR v.status = 'active' OR v.status = 'processing')`;
+        const result = await db.query(
+            `SELECT v.id, v.title, v."order", v.duration_seconds, v.source_type, v.status, v.is_preview
+             FROM videos v
+             WHERE v.lesson_id = $1 ${statusFilter}
+             ORDER BY v."order" ASC, v.created_at ASC`,
+            [lessonId]
+        );
+        let videos = result.rows.map((row) => ({
+            id: row.id,
+            title: row.title,
+            order: row.order,
+            duration_seconds: row.duration_seconds,
+            source_type: row.source_type || 'upload',
+            status: row.status || 'active',
+            isPreview: row.is_preview ?? false,
+        }));
+
+        if (lessonIsLocked) {
+            return videos.map((video) => ({ ...video, isLocked: true }));
+        }
+
+        if (userId) {
+            const assignmentService = require('./assignmentService');
+            const withLocks = [];
+            for (let i = 0; i < videos.length; i++) {
+                let isLocked = false;
+                if (i > 0) {
+                    for (let j = 0; j < i; j++) {
+                        const completed = await assignmentService.hasCompletedVideoAssignments(userId, videos[j].id);
+                        if (!completed) {
+                            isLocked = true;
+                            break;
+                        }
+                    }
+                }
+                withLocks.push({ ...videos[i], isLocked });
+            }
+            return withLocks;
+        }
+
+        return videos;
+    }
+
+    /**
+     * Resolve playback URL after access checks (shared by sign + watch bootstrap).
+     */
+    async resolvePlaybackUrl(userId, video, baseUrl) {
+        const urlBase = baseUrl || process.env.BASE_URL || 'http://localhost:5000';
+        if (video.storage_provider === 'r2' && video.r2_key && r2Storage.isConfigured) {
+            return `${urlBase}/v1/video/${video.id}/stream/master.m3u8`;
+        }
+        return `${urlBase}/videos/${video.id}/master.m3u8`;
+    }
+
+    /**
+     * Single-pass access check for playback (video row already loaded).
+     */
+    async assertPlaybackAccess(userId, video, role = 'guest') {
+        if (!video) throw new Error('Video not found');
+
+        if (!userId) {
+            if (!video.is_preview) throw new Error('Access denied');
+            return { isOwnerOrManager: false, enrolled: false, isPreviewOnly: true };
+        }
+
+        const isOwnerOrManager = await this.isOwnerOrManager(userId, video.id);
+        let enrolled = isOwnerOrManager || (await this.checkPermission(userId, video.id));
+        if (!enrolled && video.is_preview) enrolled = true;
+        if (!enrolled) throw new Error('Access denied');
+
+        if (!isOwnerOrManager && video.status === 'inactive') {
+            throw new Error('Access denied');
+        }
+
+        if (!isOwnerOrManager && video.lesson_id) {
+            const courseLessonCheck = await db.query(
+                `SELECT 1 FROM lessons l
+                 JOIN courses c ON l.course_id = c.id
+                 WHERE l.id = $1 AND (COALESCE(c.status, 'active') = 'active') AND (COALESCE(l.status, 'active') = 'active')`,
+                [video.lesson_id]
+            );
+            if (courseLessonCheck.rows.length === 0) {
+                throw new Error('Access denied');
+            }
+        }
+
+        let isLocked = false;
+        if (role === 'student') {
+            if (video.is_preview && !isOwnerOrManager && !(await this.checkPermission(userId, video.id))) {
+                isLocked = false;
+            } else {
+                isLocked = await this.isVideoLockedForStudent(userId, video.id);
+            }
+        }
+
+        return {
+            isOwnerOrManager,
+            enrolled,
+            isPreviewOnly: !isOwnerOrManager && !(await this.checkPermission(userId, video.id)) && !!video.is_preview,
+            isLocked,
+        };
     }
 
     /**

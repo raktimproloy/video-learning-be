@@ -20,6 +20,7 @@ router.get(/^\/([^/]+)\/stream\/(.+)$/, optionalAuth, (req, res, next) => {
 });
 
 // Get signed URL for playback (optionalAuth: guests can get URL for preview videos)
+router.get('/:videoId/watch-bootstrap', optionalAuth, videoController.getWatchBootstrap);
 router.get('/:videoId/sign', optionalAuth, videoController.getSignedUrl);
 
 // Get archived live chat for a video saved from live (video_id = live_session_id)

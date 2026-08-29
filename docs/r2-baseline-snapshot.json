@@ -1,0 +1,40 @@
+{
+  "capturedAt": "2026-08-29T04:19:00+06:00",
+  "phase": "Phase 0 preflight baseline",
+  "env": {
+    "CDN_SEGMENT_DELIVERY": "presign",
+    "R2_CDN_PUBLIC_URL": "https://media.shikkhabhumi.com",
+    "R2_BUCKET_NAME": "videos"
+  },
+  "db": {
+    "activeR2Videos": 63,
+    "r2OnlyEncoded": 63
+  },
+  "smokeTests": {
+    "oldest": {
+      "id": "5ce3eca1-18b4-4f04-a987-cca0be9583d9",
+      "title": "Pattern examples Video 1",
+      "created_at": "2026-03-19",
+      "r2_key": "teachers/ca3fb3c3-8399-4e18-a562-47d26d963740/courses/b5218381-c1ba-460c-b20a-0ac07d42a820/lessons/094bc190-e008-478c-9c26-4f0b51d687d8/videos/5ce3eca1-18b4-4f04-a987-cca0be9583d9",
+      "master_m3u8_r2": "OK",
+      "master_m3u8_cdn": "HTTP 200",
+      "note": "Legacy single-quality video (no 720p folder); master.m3u8 reachable via CDN"
+    },
+    "newest": {
+      "id": "f52d7386-0099-4e75-a961-b81e907bb777",
+      "title": "fdawer",
+      "created_at": "2026-08-29",
+      "r2_key": "teachers/429cdb7a-dcea-4855-a132-756490488686/courses/d1ba0f31-abe5-42a3-b082-05e70ecd1848/lessons/9b428d25-18b0-4b93-b58e-0cd33ff944b1/videos/f52d7386-0099-4e75-a961-b81e907bb777",
+      "master_m3u8_r2": "OK",
+      "720p_playlist_r2": "OK",
+      "sample_ts_cdn": "HTTP 200",
+      "note": "Full ladder video; all CDN paths reachable"
+    }
+  },
+  "preflightResult": "PASS — custom domain serves pre-custom-domain uploads",
+  "cloudflareMetricsToCaptureManually": [
+    "R2 total storage GB (7-day trend)",
+    "Class A operations per day",
+    "Class B operations per day"
+  ]
+}

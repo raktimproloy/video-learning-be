@@ -7,7 +7,6 @@ const { requireTeacherPermission } = require('../middleware/teacherPermissionMid
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 },
 });
 
 // Preview watchers (including guests) need lesson notes/assignments/exams for the tabs.

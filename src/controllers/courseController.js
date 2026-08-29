@@ -937,6 +937,7 @@ class CourseController {
                 reviews: enrichedReviews,
                 bundles: details.bundles || [],
                 pendingPaymentRequestId: details.pendingPaymentRequestId || null,
+                isEnrolled: !!details.isEnrolled,
                 books: details.books || [],
                 bookPricing: details.bookPricing || null,
             });

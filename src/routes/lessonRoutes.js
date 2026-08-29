@@ -10,7 +10,6 @@ const { requireRole } = require('../middleware/roleMiddleware');
 const { requireTeacherPermission } = require('../middleware/teacherPermissionMiddleware');
 
 // Live recordings can be large; store on disk to avoid buffering in memory.
-// No explicit fileSize limit here (live recordings must not be blocked by the 500MB cap).
 const LIVE_RECORDINGS_TMP_DIR = path.resolve(__dirname, '../../uploads/live-recordings-tmp');
 if (!fs.existsSync(LIVE_RECORDINGS_TMP_DIR)) {
     fs.mkdirSync(LIVE_RECORDINGS_TMP_DIR, { recursive: true });
@@ -30,12 +29,10 @@ const uploadRecording = multer({
 
 const uploadLesson = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB per file for notes/assignments
 }).any();
 
 const uploadLiveMaterial = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB for live note/assignment files
 }).fields([
     { name: 'file', maxCount: 1 },
 ]);

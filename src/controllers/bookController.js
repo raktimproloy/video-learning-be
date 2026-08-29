@@ -92,18 +92,6 @@ const bookController = {
                 return res.status(400).json({ error: 'Only PDF files are allowed' });
             }
 
-            // Enforce admin max upload size if provided
-            const adminSettingsService = require('../services/adminSettingsService');
-            let maxMb = 500;
-            try {
-                const share = await adminSettingsService.getBookShareSettings?.() ||
-                    await adminSettingsService.getShareSettings();
-                if (share?.bookMaxUploadMb) maxMb = share.bookMaxUploadMb;
-            } catch (_) {}
-            if (file_size && Number(file_size) > maxMb * 1024 * 1024) {
-                return res.status(413).json({ error: `PDF exceeds max size of ${maxMb}MB` });
-            }
-
             const prefix = r2Storage.getBookKeyPrefix(book.teacherId, book.courseId, book.id);
             const objectKey = `${prefix}/master${ext}`;
             const uploadId = await r2Storage.createMultipartUpload(

@@ -575,9 +575,31 @@ async function getDashboardStats(userId) {
   };
 }
 
+async function getLessonVideoProgress(userId, lessonId) {
+  const result = await db.query(
+    `SELECT p.video_id, p.max_watched_seconds,
+            COALESCE(p.last_position_seconds, p.max_watched_seconds) AS last_position_seconds,
+            v.duration_seconds
+     FROM video_watch_progress p
+     JOIN videos v ON v.id = p.video_id
+     WHERE p.user_id = $1 AND v.lesson_id = $2`,
+    [userId, lessonId]
+  );
+  const map = {};
+  for (const row of result.rows) {
+    map[row.video_id] = {
+      maxWatchedSeconds: parseFloat(row.max_watched_seconds) || 0,
+      lastPositionSeconds: parseFloat(row.last_position_seconds) || 0,
+      durationSeconds: row.duration_seconds != null ? parseFloat(row.duration_seconds) : null,
+    };
+  }
+  return map;
+}
+
 module.exports = {
   upsertVideoProgress,
   getVideoProgress,
+  getLessonVideoProgress,
   getCourseProgress,
   getRecentActivity,
   getActivityByDay,

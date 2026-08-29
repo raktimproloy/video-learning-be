@@ -1,5 +1,6 @@
 const progressService = require('../services/progressService');
 const videoService = require('../services/videoService');
+const db = require('../../db');
 
 /**
  * POST /progress/video
@@ -66,6 +67,46 @@ async function getVideoProgress(req, res) {
     return res.json(progress);
   } catch (error) {
     console.error('Get video progress error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * GET /progress/lesson/:lessonId
+ * Batch progress for all videos in a lesson (watch sidebar).
+ */
+async function getLessonVideoProgress(req, res) {
+  try {
+    const userId = req.user.id;
+    if (req.user.role === 'reference' || userId === 'ref') {
+      return res.json({});
+    }
+    const { lessonId } = req.params;
+    if (!lessonId) return res.status(400).json({ error: 'lessonId is required' });
+
+    const lessonService = require('../services/lessonService');
+    const courseService = require('../services/courseService');
+    const lesson = await lessonService.getLessonById(lessonId);
+    if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
+
+    const isOwner = req.user.role === 'teacher' || req.user.role === 'admin';
+    let allowed = isOwner;
+    if (!allowed) {
+      allowed = await courseService.isEnrolled(userId, lesson.course_id);
+    }
+    if (!allowed) {
+      const sample = await db.query(
+        'SELECT 1 FROM videos WHERE lesson_id = $1 AND is_preview = true LIMIT 1',
+        [lessonId]
+      );
+      allowed = sample.rows.length > 0;
+    }
+    if (!allowed) return res.status(403).json({ error: 'Access denied' });
+
+    const progress = await progressService.getLessonVideoProgress(userId, lessonId);
+    return res.json(progress);
+  } catch (error) {
+    console.error('Get lesson video progress error:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 }
@@ -146,6 +187,7 @@ async function getDashboardStats(req, res) {
 module.exports = {
   saveVideoProgress,
   getVideoProgress,
+  getLessonVideoProgress,
   getCourseProgress,
   getRecentActivity,
   getActivityByDay,

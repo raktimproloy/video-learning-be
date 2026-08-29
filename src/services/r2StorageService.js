@@ -19,7 +19,10 @@ const {
 const { Upload } = require('@aws-sdk/lib-storage');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const stream = require('stream');
+const fs = require('fs');
+const path = require('path');
 const r2Config = require('../config/r2');
+const { asyncPool, withRetry } = require('../utils/asyncPool');
 
 let s3Client = null;
 
@@ -263,9 +266,75 @@ async function uploadStream(key, readStream, contentType = 'application/octet-st
       Body: readStream,
       ContentType: contentType,
     },
+    queueSize: r2Config.uploadQueueSize,
+    partSize: r2Config.uploadPartSizeMb * 1024 * 1024,
+    leavePartsOnError: false,
   });
   await upload.done();
   return key;
+}
+
+function contentTypeForExt(filename) {
+  const ext = path.extname(filename).toLowerCase();
+  if (ext === '.m3u8') return 'application/vnd.apple.mpegurl';
+  if (ext === '.ts') return 'video/mp2t';
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  if (ext === '.mp4') return 'video/mp4';
+  if (ext === '.webm') return 'video/webm';
+  return 'application/octet-stream';
+}
+
+function collectLocalFiles(localDir, r2KeyPrefix) {
+  const files = [];
+
+  function walk(currentDir) {
+    const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const localPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        walk(localPath);
+        continue;
+      }
+      const relativePath = path.relative(localDir, localPath).split(path.sep).join('/');
+      const r2Key = r2KeyPrefix ? `${r2KeyPrefix}/${relativePath}` : relativePath;
+      files.push({
+        localPath,
+        r2Key,
+        contentType: contentTypeForExt(entry.name),
+      });
+    }
+  }
+
+  walk(localDir);
+  return files;
+}
+
+/**
+ * Upload a local directory tree to R2 with bounded parallel PUTs.
+ */
+async function uploadDirectory(localDir, r2KeyPrefix, options = {}) {
+  if (!fs.existsSync(localDir)) {
+    throw new Error(`Upload directory not found: ${localDir}`);
+  }
+
+  const files = collectLocalFiles(localDir, r2KeyPrefix);
+  if (files.length === 0) {
+    throw new Error(`Upload directory is empty: ${localDir}`);
+  }
+
+  const concurrency = options.concurrency ?? r2Config.uploadConcurrency;
+  const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
+  let uploaded = 0;
+
+  await asyncPool(concurrency, files, async (file) => {
+    await withRetry(() => uploadFromPath(file.localPath, file.r2Key, file.contentType));
+    uploaded += 1;
+    if (onProgress) {
+      onProgress({ uploaded, total: files.length, r2Key: file.r2Key });
+    }
+  });
+
+  return { fileCount: files.length };
 }
 
 /**
@@ -392,6 +461,7 @@ async function copyObject(sourceKey, destKey) {
 
 /**
  * Promote a processing prefix to live HLS paths (atomic swap).
+ * Copies run in parallel; processing prefix is deleted only after all copies succeed.
  */
 async function promoteProcessingPrefix(processingPrefix, livePrefix, variantDirNames) {
   const keys = await listObjects(processingPrefix);
@@ -414,14 +484,45 @@ async function promoteProcessingPrefix(processingPrefix, livePrefix, variantDirN
     /* ignore */
   }
 
-  for (const key of keys) {
-    const relative = key.slice(processingPrefix.length + 1);
-    if (!relative) continue;
-    const destKey = `${livePrefix}/${relative}`;
-    await copyObject(key, destKey);
+  const copyJobs = keys
+    .map((key) => {
+      const relative = key.slice(processingPrefix.length + 1);
+      if (!relative) return null;
+      return { sourceKey: key, destKey: `${livePrefix}/${relative}` };
+    })
+    .filter(Boolean);
+
+  try {
+    await asyncPool(r2Config.copyConcurrency, copyJobs, async ({ sourceKey, destKey }) => {
+      await withRetry(() => copyObject(sourceKey, destKey));
+    });
+    await deletePrefix(processingPrefix);
+  } catch (err) {
+    throw new Error(`HLS promote failed: ${err.message}`);
+  }
+}
+
+/**
+ * Verify promoted HLS assets exist before marking video active.
+ */
+async function verifyHlsAtPrefix(livePrefix, variantDirNames = []) {
+  const masterKey = `${livePrefix}/master.m3u8`;
+  if (!(await objectExists(masterKey))) {
+    throw new Error('HLS verification failed: master.m3u8 is missing after promote');
   }
 
-  await deletePrefix(processingPrefix);
+  const dirsToCheck = variantDirNames.length > 0
+    ? variantDirNames
+    : ['360p', '720p', '1080p', 'original'];
+
+  for (const dir of dirsToCheck) {
+    const playlistKey = `${livePrefix}/${dir}/playlist.m3u8`;
+    if (await objectExists(playlistKey)) {
+      return { masterKey, variantPlaylistKey: playlistKey };
+    }
+  }
+
+  throw new Error('HLS verification failed: no variant playlist found after promote');
 }
 
 /**
@@ -531,6 +632,7 @@ module.exports = {
   uploadFile,
   uploadStream,
   uploadFromPath,
+  uploadDirectory,
   downloadToPath,
   uploadCourseMedia,
   uploadInstituteMedia,
@@ -541,6 +643,7 @@ module.exports = {
   deletePrefix,
   copyObject,
   promoteProcessingPrefix,
+  verifyHlsAtPrefix,
   getPublicUrl,
   getPresignedGetUrl,
   createMultipartUpload,

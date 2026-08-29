@@ -1,0 +1,31 @@
+{
+  "generatedAt": "2026-08-29T04:22:00+06:00",
+  "summary": {
+    "activeR2Videos": 63,
+    "r2OnlyVideos": 63,
+    "totalStagingObjects": 10,
+    "orphanStagingPrefixes": 10,
+    "activeVideosWithLeftoverStaging": 0,
+    "totalProcessingObjects": 0,
+    "orphanProcessingPrefixes": 0,
+    "missingMasterM3u8": 0
+  },
+  "orphanStagingPrefixes": [
+    "teachers/429cdb7a-dcea-4855-a132-756490488686/courses/24258acf-a029-463b-b97a-81a13cea922c/lessons/4e6b5c0e-e30b-42da-9178-e8665c0a3890/videos/tmp-1781968332416-724344993/staging/",
+    "teachers/429cdb7a-dcea-4855-a132-756490488686/courses/24258acf-a029-463b-b97a-81a13cea922c/lessons/4e6b5c0e-e30b-42da-9178-e8665c0a3890/videos/tmp-1781969639247-115006135/staging/",
+    "teachers/429cdb7a-dcea-4855-a132-756490488686/courses/24258acf-a029-463b-b97a-81a13cea922c/lessons/4e6b5c0e-e30b-42da-9178-e8665c0a3890/videos/tmp-1782011321326-743633724/staging/",
+    "teachers/429cdb7a-dcea-4855-a132-756490488686/courses/24258acf-a029-463b-b97a-81a13cea922c/lessons/4e6b5c0e-e30b-42da-9178-e8665c0a3890/videos/tmp-1782011702443-917327370/staging/",
+    "teachers/429cdb7a-dcea-4855-a132-756490488686/courses/24258acf-a029-463b-b97a-81a13cea922c/lessons/ceb57368-f627-48fd-bf14-acbcb19cb783/videos/862e218d-7253-4bbf-bfd8-e4db8d91442f/staging/",
+    "teachers/4693d5dc-cb3d-4b30-a6b1-30f6f9d054d6/courses/eb7b897f-dd84-43a1-9c65-7fd6f9ab100f/lessons/d1026bae-cb70-4eba-bf3a-b34a6c2fa260/videos/tmp-1784828434236-712851455/staging/",
+    "teachers/4693d5dc-cb3d-4b30-a6b1-30f6f9d054d6/courses/eb7b897f-dd84-43a1-9c65-7fd6f9ab100f/lessons/db04bf78-ba82-4a1f-8f94-7ccd2834235c/videos/tmp-1784656350307-245380632/staging/",
+    "teachers/9660753b-43cc-4002-91ab-c485e16ae85b/courses/7bb47e63-1d2f-4cc3-b84a-51f8d171f7a4/lessons/cc9d55d0-2695-46e7-8c08-a73bdbf4f34e/videos/3adc7517-b119-4576-afde-b2cb7a78aa83/staging/",
+    "teachers/a149435c-3e1d-4163-9ae9-720a0ee2f457/courses/ddf04769-9508-4b73-a615-baeb38a90faf/lessons/ae29e32d-97f5-42ab-a1a9-512608860205/videos/tmp-1774513091584-96170503/staging/",
+    "teachers/cf1a0795-64f6-4f5c-9462-41c2a7db0291/courses/8bbd2223-5e30-4b79-b37d-82bdd471589c/lessons/94d777f7-14ab-482f-b755-c7553c109358/videos/tmp-1782754005548-638047281/staging/"
+  ],
+  "reencodeAudit": {
+    "categoryA": 39,
+    "categoryB": 24,
+    "categoryC": 3
+  },
+  "action": "Enable lifecycle Rule B (14d staging delete) — these 10 orphan staging objects will auto-clean. Safe to delete manually now (failed/abandoned uploads only)."
+}
