@@ -29,6 +29,26 @@ function buildPublicBaseUrl(req) {
     return `${protocol}://${host}`;
 }
 
+function extractAccessToken(req) {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        return authHeader.slice(7).trim() || null;
+    }
+    if (req.query && typeof req.query.token === 'string' && req.query.token) {
+        return req.query.token;
+    }
+    return null;
+}
+
+/** Send body without Express ETag/304 — critical for HLS playlists and AES keys. */
+function sendNoStore(res, body, contentType) {
+    res.set('Content-Type', contentType);
+    res.set('Cache-Control', 'private, no-store, no-cache, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.removeHeader('ETag');
+    return res.status(200).end(typeof body === 'string' ? body : body);
+}
+
 class VideoController {
     async getVideoDetails(req, res) {
         try {
@@ -375,6 +395,10 @@ class VideoController {
 
     async getKey(req, res) {
         try {
+            if (req.authTokenInvalid) {
+                return res.status(401).send('Authentication required');
+            }
+
             const vid = req.query.vid || req.query.id;
             const userId = req.user?.id ?? null;
             const role = req.user?.role ?? 'guest';
@@ -387,8 +411,7 @@ class VideoController {
                 if (!video.is_preview) return res.status(401).send('Authentication required');
                 // Guest can get the key — skip straight to key retrieval
                 const key = await videoService.getVideoKey(null, vid);
-                res.set('Content-Type', 'application/octet-stream');
-                return res.send(key);
+                return sendNoStore(res, key, 'application/octet-stream');
             }
 
             // For students, check if video is locked before providing key
@@ -400,8 +423,7 @@ class VideoController {
             }
 
             const key = await videoService.getVideoKey(userId, vid);
-            res.set('Content-Type', 'application/octet-stream');
-            res.send(key);
+            return sendNoStore(res, key, 'application/octet-stream');
         } catch (error) {
             console.error('Error getting key:', error);
             if (error.message === 'Access denied') return res.status(403).send('No access');
@@ -412,6 +434,10 @@ class VideoController {
 
     async streamSegment(req, res) {
         try {
+            if (req.authTokenInvalid) {
+                return res.status(401).send('Authentication required');
+            }
+
             const videoId = req.params.videoId;
             const subpath = req.params.path || req.params[0] || 'master.m3u8';
             const userId = req.user?.id ?? null;
@@ -433,18 +459,18 @@ class VideoController {
 
             const r2Key = `${video.r2_key}/${subpath}`;
             const apiStreamBase = `${buildPublicBaseUrl(req)}/v1/video/${videoId}/stream`;
+            const accessToken = extractAccessToken(req);
 
-            // HLS playlists: proxy + rewrite segment URLs when CDN/presign enabled
+            // HLS playlists: proxy + rewrite key/child URLs (+ CDN/presign segments)
             if (subpath.endsWith('.m3u8')) {
                 const body = await hlsDeliveryService.getPlaylistBody(
                     r2Key,
                     video.r2_key,
                     apiStreamBase,
-                    subpath
+                    subpath,
+                    accessToken
                 );
-                res.set('Content-Type', contentTypeForPath(subpath));
-                res.set('Cache-Control', 'private, no-cache, must-revalidate');
-                return res.send(body);
+                return sendNoStore(res, body, contentTypeForPath(subpath));
             }
 
             // Segments: optional presign/CDN redirect (fallback to API proxy)

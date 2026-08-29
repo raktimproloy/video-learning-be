@@ -52,7 +52,10 @@ const verifyToken = async (req, res, next) => {
     next();
 };
 
-/** Optional auth: set req.user if valid token, otherwise continue without req.user */
+/** Optional auth: set req.user if valid token, otherwise continue without req.user.
+ * If a Bearer/query token is present but invalid/expired, mark req.authTokenInvalid
+ * so stream handlers can return 401 instead of silently treating the user as a guest.
+ */
 const optionalAuth = (req, res, next) => {
     const authHeader = req.headers.authorization;
     let token;
@@ -65,8 +68,9 @@ const optionalAuth = (req, res, next) => {
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_jwt_secret');
         req.user = decoded;
+        req.authTokenInvalid = false;
     } catch (_) {
-        // ignore invalid/expired
+        req.authTokenInvalid = true;
     }
     next();
 };

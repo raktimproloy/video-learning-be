@@ -63,3 +63,18 @@ Print this and check off in Cloudflare dashboard. No code deploy required for ca
 - [ ] Set `CDN_SEGMENT_DELIVERY=presign` in `.env`
 - [ ] `docker compose restart api`
 - [ ] Optional: Purge Cloudflare cache for `media.shikkhabhumi.com/*.ts`
+
+---
+
+## R2 CORS (required when CDN_SEGMENT_DELIVERY=cdn)
+
+Browser loads `.ts` from `media.shikkhabhumi.com` via XHR — bucket CORS must allow your frontend origins.
+
+- [ ] R2 bucket `videos` → Settings → CORS policy includes:
+  - Allowed origins: `https://shikkhabhumi.com`, `https://www.shikkhabhumi.com`, `https://*.vercel.app` (or explicit Vercel URL)
+  - Allowed methods: `GET`, `HEAD`
+  - Allowed headers: `*`
+  - Expose headers: `Content-Length`, `Content-Type`, `ETag`
+  - Max age: `86400`
+
+Without this, playback fails intermittently or with CORS / fragment errors after CDN enable.
