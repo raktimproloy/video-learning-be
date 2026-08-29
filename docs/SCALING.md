@@ -140,9 +140,37 @@ Set any to `0` to disable batching for that path.
 
 Video segments are on R2. To scale off VPS:
 
-1. Cloudflare in front of R2 public/custom domain
-2. Cache `.ts` segments (short TTL), `.m3u8` (very short or bypass)
-3. Keep signed URLs / encryption keys on API
+1. Cloudflare dashboard → R2 bucket → **Connect Custom Domain** (e.g. `media.yoursite.com`)
+2. Cache rule: `.ts` → TTL 1 hour; `.m3u8` → bypass cache
+3. Set env on API:
+   ```env
+   CDN_SEGMENT_DELIVERY=presign   # off | presign | cdn
+   R2_CDN_PUBLIC_URL=https://media.yoursite.com
+   HLS_SEGMENT_PRESIGN_TTL=120
+   HLS_LADDER_ENABLED=true
+   HLS_SEGMENT_SECONDS=2
+   ```
+4. **Security:** `/v1/video/get-key` stays on API (JWT). Segments remain AES-128 encrypted in R2/CDN.
+5. **Rollback:** set `CDN_SEGMENT_DELIVERY=off` — instant revert to API proxy.
+
+### Rollout checklist
+
+- [ ] Run migration `134_video_playback_optimization.sql`
+- [ ] Deploy with `CDN_SEGMENT_DELIVERY=off` (verify no regression)
+- [ ] Staging: `CDN_SEGMENT_DELIVERY=presign`, run `tester_bot/k6/video-watch.js`
+- [ ] Production: enable presign, monitor `[VideoMetrics]` logs for TTFF
+- [ ] Optional: `CDN_SEGMENT_DELIVERY=cdn` when Cloudflare cache hit rate is good
+
+### Re-encode existing videos (multi-quality ladder)
+
+```bash
+cd backend
+node scripts/video-reencode-audit.js          # Category A/B/C counts
+node scripts/reencode-queue.js --dry-run      # preview queue
+node scripts/reencode-queue.js --limit=20     # queue batch (worker must run separately)
+```
+
+Teacher API: `POST /v1/teacher/videos/:id/reencode` (requires `original_r2_key`).
 
 ---
 

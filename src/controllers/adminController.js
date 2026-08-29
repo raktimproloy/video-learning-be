@@ -937,6 +937,66 @@ class AdminController {
             res.status(500).json({ error: 'Internal Server Error' });
         }
     }
+    async reencodeVideo(req, res) {
+        try {
+            const videoId = req.params.id;
+            const video = await videoService.getVideoById(videoId);
+            if (!video) return res.status(404).json({ error: 'Video not found' });
+
+            let ownerId;
+            try { ownerId = await getEffectiveOwnerId(req, video.lesson_id, null); } catch (e) { return res.status(403).json({ error: e.message }); }
+            if (video.owner_id !== ownerId) return res.status(404).json({ error: 'Video not found or access denied' });
+
+            if (video.status !== 'active') {
+                return res.status(400).json({ error: 'Only active videos can be re-encoded.' });
+            }
+            if (!video.original_r2_key) {
+                return res.status(400).json({
+                    error: 'Original source file not preserved. Re-upload the video to enable re-encoding.',
+                    needsReupload: true,
+                });
+            }
+
+            const pendingRes = await db.query(
+                `SELECT id FROM video_processing_tasks
+                 WHERE video_id = $1 AND status IN ('pending', 'processing')
+                 LIMIT 1`,
+                [videoId]
+            );
+            if (pendingRes.rows.length > 0) {
+                return res.status(400).json({ error: 'Video is already being processed. Please wait.' });
+            }
+
+            const {
+                codec_preference = 'h264',
+                resolutions = ['360p', '720p', '1080p'],
+                crf = 28,
+            } = req.body || {};
+
+            await videoService.saveVideoVersion(videoId, req.user.id, req.user.role);
+
+            const newTask = await adminService.createProcessingTask(
+                ownerId,
+                videoId,
+                codec_preference,
+                resolutions,
+                crf,
+                false,
+                'reencode'
+            );
+
+            console.log(`[Reencode] Task ${newTask.id} queued for active video ${videoId}`);
+            res.status(201).json({
+                message: 'Re-encode queued. Current playback remains available until processing completes.',
+                taskId: newTask.id,
+                videoId,
+            });
+        } catch (error) {
+            console.error('Reencode Video Error:', error);
+            res.status(500).json({ error: 'Failed to queue re-encode. Please try again.' });
+        }
+    }
+
     async retryVideoProcessing(req, res) {
         try {
             const videoId = req.params.id;
@@ -962,7 +1022,9 @@ class AdminController {
                 for (const ext of candidateExts) {
                     if (await r2Storage.objectExists(`${video.r2_key}/staging/input${ext}`)) { stagingExists = true; break; }
                 }
-                if (!stagingExists) return res.status(400).json({ error: 'Source video file not found in storage. Please re-upload the video.', needsReupload: true });
+                if (!stagingExists && !video.original_r2_key) {
+                    return res.status(400).json({ error: 'Source video file not found in storage. Please re-upload the video.', needsReupload: true });
+                }
             }
 
             await db.query(`UPDATE video_processing_tasks SET status = 'cancelled', updated_at = NOW() WHERE video_id = $1 AND status IN ('failed', 'completed')`, [videoId]);

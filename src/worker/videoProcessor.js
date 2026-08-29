@@ -6,6 +6,122 @@ const db = require('../../db');
 const r2Storage = require('../services/r2StorageService');
 const keyStorage = require('../services/keyStorageService');
 const errorLogService = require('../services/errorLogService');
+const videoDelivery = require('../config/videoDelivery');
+
+const RES_MAP = {
+    '360p': { w: 640, h: 360, bandwidth: 800000 },
+    '720p': { w: 1280, h: 720, bandwidth: 1600000 },
+    '1080p': { w: 1920, h: 1080, bandwidth: 3500000 },
+};
+
+const VARIANT_DIR_NAMES = ['360p', '720p', '1080p', 'original'];
+
+const makeEven = (n) => {
+    const x = Math.max(2, Math.floor(Number(n) || 0));
+    return x % 2 === 0 ? x : x - 1;
+};
+
+function buildTargetResolutions(task, origWidth, origHeight) {
+    const safeW = makeEven(origWidth);
+    const safeH = makeEven(origHeight);
+    const requested = Array.isArray(task.resolutions) ? task.resolutions : [];
+    const ladderEnabled = videoDelivery.hlsLadderEnabled && requested.length > 0;
+
+    if (!ladderEnabled) {
+        const shouldDownscaleTo720 = safeH > 720;
+        if (!shouldDownscaleTo720) {
+            return [{ w: safeW, h: safeH, name: 'original', bandwidth: 2000000 }];
+        }
+        const scale = Math.min(1, 720 / safeH, 1280 / safeW);
+        return [{
+            w: makeEven(safeW * scale),
+            h: makeEven(safeH * scale),
+            name: '720p',
+            bandwidth: 1600000,
+        }];
+    }
+
+    const order = ['360p', '720p', '1080p'];
+    const targets = [];
+    for (const label of order) {
+        if (!requested.includes(label)) continue;
+        const spec = RES_MAP[label];
+        if (!spec || spec.h > safeH) continue;
+        const scale = Math.min(1, spec.h / safeH, spec.w / safeW);
+        targets.push({
+            w: makeEven(safeW * scale),
+            h: makeEven(safeH * scale),
+            name: label,
+            bandwidth: spec.bandwidth,
+        });
+    }
+
+    if (targets.length === 0) {
+        return [{ w: safeW, h: safeH, name: 'original', bandwidth: 2000000 }];
+    }
+    return targets;
+}
+
+async function tryDownloadStagingInput(video, workDir, logStep) {
+    const candidateExts = ['.mp4', '.webm', '.mov', '.mkv', '.avi'];
+    for (const ext of candidateExts) {
+        const key = `${video.r2_key}/staging/input${ext}`;
+        if (await r2Storage.objectExists(key)) {
+            const local = path.join(workDir, `input${ext}`);
+            logStep('R2', 'Downloading staging %s...', path.basename(key));
+            await r2Storage.downloadToPath(key, local);
+            return local;
+        }
+    }
+    return null;
+}
+
+async function tryDownloadOriginalSource(video, workDir, logStep) {
+    if (!video.original_r2_key) return null;
+    const ext = path.extname(video.original_r2_key) || '.mp4';
+    const local = path.join(workDir, `original_source${ext}`);
+    logStep('R2', 'Downloading original source %s...', video.original_r2_key);
+    await r2Storage.downloadToPath(video.original_r2_key, local);
+    return local;
+}
+
+async function resolveSourcePath(video, workDir, logStep) {
+    const isR2Staging = video.storage_path === 'r2_staging';
+    let stagingDirToDelete = null;
+
+    if (isR2Staging) {
+        const local = await tryDownloadStagingInput(video, workDir, logStep);
+        if (!local) throw new Error('Staging file not found in R2. Try re-uploading the video.');
+        return { sourcePath: local, stagingDirToDelete, fromOriginal: false };
+    }
+
+    let localPath = video.storage_path;
+    if (localPath && localPath !== 'r2_only' && fs.existsSync(localPath)) {
+        let sourcePath = localPath;
+        if (fs.statSync(localPath).isDirectory()) {
+            const mp4 = path.join(localPath, 'input.mp4');
+            const webm = path.join(localPath, 'input.webm');
+            sourcePath = fs.existsSync(mp4) ? mp4 : fs.existsSync(webm) ? webm : mp4;
+        }
+        if (fs.existsSync(sourcePath)) {
+            stagingDirToDelete = path.dirname(sourcePath);
+            logStep('Source', 'Using local source: %s', sourcePath);
+            return { sourcePath, stagingDirToDelete, fromOriginal: false };
+        }
+    }
+
+    const stagingLocal = await tryDownloadStagingInput(video, workDir, logStep);
+    if (stagingLocal) {
+        return { sourcePath: stagingLocal, stagingDirToDelete: null, fromOriginal: false };
+    }
+
+    const originalLocal = await tryDownloadOriginalSource(video, workDir, logStep);
+    if (originalLocal) {
+        return { sourcePath: originalLocal, stagingDirToDelete: null, fromOriginal: true };
+    }
+
+    throw new Error('Source video file not found. Re-upload the video or ensure original_r2_key exists.');
+}
 
 const getDirSize = (dirPath) => {
     let size = 0;
@@ -77,12 +193,13 @@ class VideoProcessor {
             teacherEmail = video.owner_email;
             videoTitle = video.title;
             const useR2 = video.storage_provider === 'r2' && video.r2_key && r2Storage.isConfigured;
-            const isR2Staging = video.storage_path === 'r2_staging';
-            logStep('DB', 'Video found. storage_provider=%s, useR2=%s, isR2Staging=%s', video.storage_provider, useR2, isR2Staging);
+            const isReencode = task.task_type === 'reencode';
+            logStep('DB', 'Video found. storage_provider=%s, useR2=%s, task_type=%s', video.storage_provider, useR2, task.task_type || 'initial');
 
             let sourcePath;
             let outputDir;
             let stagingDirToDelete = null;
+            let sourceFromOriginal = false;
 
             if (useR2) {
                 logStep('WorkDir', 'Creating temp work directory...');
@@ -91,64 +208,10 @@ class VideoProcessor {
                 outputDir = workDir;
                 logStep('WorkDir', 'Work dir: %s', workDir);
 
-                if (isR2Staging) {
-                    logStep('R2', 'Source is R2 staging. Checking for input file...');
-                    const candidateExts = ['.mp4', '.webm', '.mov', '.mkv', '.avi'];
-                    let foundKey = null;
-                    let foundLocal = null;
-                    for (const ext of candidateExts) {
-                        const key = `${video.r2_key}/staging/input${ext}`;
-                        if (await r2Storage.objectExists(key)) {
-                            foundKey = key;
-                            foundLocal = path.join(workDir, `input${ext}`);
-                            break;
-                        }
-                    }
-                    if (!foundKey || !foundLocal) {
-                        throw new Error('Staging file not found in R2. Try re-uploading the video.');
-                    }
-                    logStep('R2', 'Downloading %s from R2 staging...', path.basename(foundKey));
-                    await r2Storage.downloadToPath(foundKey, foundLocal);
-                    sourcePath = foundLocal;
-                    logStep('R2', 'Download complete: %s', foundLocal);
-                    stagingDirToDelete = null;
-                } else {
-                    logStep('Source', 'Legacy/local staging. Checking path: %s', video.storage_path);
-                    let localPath = video.storage_path;
-                    let found = false;
-                    if (localPath && fs.existsSync(localPath)) {
-                        if (fs.statSync(localPath).isDirectory()) {
-                            const mp4 = path.join(localPath, 'input.mp4');
-                            const webm = path.join(localPath, 'input.webm');
-                            sourcePath = fs.existsSync(mp4) ? mp4 : fs.existsSync(webm) ? webm : mp4;
-                        } else {
-                            sourcePath = localPath;
-                        }
-                        found = fs.existsSync(sourcePath);
-                    }
-                    if (!found) {
-                        logStep('R2', 'Local not found. Fallback: downloading from R2 staging...');
-                        const r2Mp4 = `${video.r2_key}/staging/input.mp4`;
-                        const r2Webm = `${video.r2_key}/staging/input.webm`;
-                        const localMp4 = path.join(workDir, 'input.mp4');
-                        const localWebm = path.join(workDir, 'input.webm');
-                        if (await r2Storage.objectExists(r2Mp4)) {
-                            await r2Storage.downloadToPath(r2Mp4, localMp4);
-                            sourcePath = localMp4;
-                            logStep('R2', 'Downloaded input.mp4');
-                        } else if (await r2Storage.objectExists(r2Webm)) {
-                            await r2Storage.downloadToPath(r2Webm, localWebm);
-                            sourcePath = localWebm;
-                            logStep('R2', 'Downloaded input.webm');
-                        } else {
-                            throw new Error(`Staging file not found. The video was uploaded before R2 staging was enabled. Please delete and re-upload the video.`);
-                        }
-                        stagingDirToDelete = null;
-                    } else {
-                        stagingDirToDelete = path.dirname(sourcePath);
-                        logStep('Source', 'Using local source: %s', sourcePath);
-                    }
-                }
+                const resolved = await resolveSourcePath(video, workDir, logStep);
+                sourcePath = resolved.sourcePath;
+                stagingDirToDelete = resolved.stagingDirToDelete;
+                sourceFromOriginal = resolved.fromOriginal;
             } else {
                 logStep('Source', 'Using local storage. Path: %s', video.storage_path);
                 sourcePath = video.storage_path;
@@ -249,40 +312,10 @@ class VideoProcessor {
             const ffmpegThreads = Math.max(2, Math.min(4, numCpus - 2)); // Leave ≥2 cores for Node/API
             logStep('Encode', 'Codec=%s, CRF=%s, Preset=%s, Threads=%s (cpus=%s)', codec, crf, preset, ffmpegThreads, numCpus);
 
-            // 6. Use original resolution only
-            const makeEven = (n) => {
-                const x = Math.max(2, Math.floor(Number(n) || 0));
-                return x % 2 === 0 ? x : x - 1;
-            };
-
-            const safeW = makeEven(origWidth);
-            const safeH = makeEven(origHeight);
-
-            // Rule:
-            // - If input <= 720p: keep original (no downscale)
-            // - If input > 720p: generate optimized 720p variant for faster playback
-            const shouldDownscaleTo720 = safeH > 720;
-            let targetResolutions;
-            if (!shouldDownscaleTo720) {
-                targetResolutions = [{
-                    w: safeW,
-                    h: safeH,
-                    name: 'original',
-                    bandwidth: 2000000
-                }];
-                logStep('Encode', 'Target resolution: %sx%s (kept original; <=720p)', safeW, safeH);
-            } else {
-                // Keep aspect ratio; cap to 720p height and ~1280 width.
-                const scale = Math.min(1, 720 / safeH, 1280 / safeW);
-                const w720 = makeEven(safeW * scale);
-                const h720 = makeEven(safeH * scale);
-                targetResolutions = [{
-                    w: w720,
-                    h: h720,
-                    name: '720p',
-                    bandwidth: 1600000
-                }];
-                logStep('Encode', 'Target resolution: %sx%s (downscaled from %sx%s)', w720, h720, safeW, safeH);
+            // 6. Build resolution ladder from task.resolutions
+            const targetResolutions = buildTargetResolutions(task, origWidth, origHeight);
+            for (const res of targetResolutions) {
+                logStep('Encode', 'Target variant "%s": %sx%s (~%skbps)', res.name, res.w, res.h, Math.round(res.bandwidth / 1000));
             }
 
             // 7. Process each resolution (encrypting stage for UI)
@@ -306,7 +339,7 @@ class VideoProcessor {
                 const playlistPath = path.join(resDir, playlistName);
 
                 await new Promise((resolve, reject) => {
-                    const segmentSeconds = 4;
+                    const segmentSeconds = videoDelivery.hlsSegmentSeconds;
                     const outputOpts = [
                         '-threads', String(ffmpegThreads),
                         '-map', '0:v:0',
@@ -394,12 +427,18 @@ class VideoProcessor {
                     `UPDATE video_processing_tasks SET processing_stage = $1, updated_at = NOW() WHERE id = $2`,
                     ['storing', task.id]
                 );
-                logStep('R2', 'Uploading encrypted HLS to R2 (prefix: %s)...', video.r2_key);
-                await uploadDirToR2(outputDir, video.r2_key);
-                logStep('R2', 'Upload complete.');
 
-                // 8b. Generate thumbnail BEFORE cleanup (sourcePath still valid)
-                if (sourcePath && fs.existsSync(sourcePath) && r2Storage.isConfigured) {
+                const processingPrefix = `${video.r2_key}/.processing/${task.id}`;
+                logStep('R2', 'Uploading encrypted HLS to staging prefix: %s', processingPrefix);
+                await uploadDirToR2(outputDir, processingPrefix);
+
+                const variantNames = targetResolutions.map((r) => r.name);
+                logStep('R2', 'Promoting staging output to live prefix: %s', video.r2_key);
+                await r2Storage.promoteProcessingPrefix(processingPrefix, video.r2_key, variantNames);
+                logStep('R2', 'Promote complete.');
+
+                // Thumbnail (skip overwrite on re-encode if custom thumbnail set)
+                if (sourcePath && fs.existsSync(sourcePath) && r2Storage.isConfigured && !video.custom_thumbnail_r2_key) {
                     try {
                         logStep('Thumbnail', 'Generating thumbnail from first frame...');
                         const thumbPath = path.join(outputDir, 'thumbnail.jpg');
@@ -424,8 +463,14 @@ class VideoProcessor {
                     }
                 }
 
-                // 8c. Upload original source to R2
-                if (sourcePath && fs.existsSync(sourcePath) && r2Storage.isConfigured) {
+                // Original source — only on initial encode (not re-encode from original)
+                if (
+                    sourcePath &&
+                    fs.existsSync(sourcePath) &&
+                    r2Storage.isConfigured &&
+                    !sourceFromOriginal &&
+                    !isReencode
+                ) {
                     try {
                         logStep('Original', 'Uploading original unencrypted video...');
                         const ext = path.extname(sourcePath) || '.mp4';
@@ -447,15 +492,16 @@ class VideoProcessor {
                     fs.rmSync(stagingDirToDelete, { recursive: true, force: true });
                     logStep('Cleanup', 'Removed staging dir: %s', stagingDirToDelete);
                 }
-                // Always delete R2 staging (initial dummy upload) after successful encrypt+upload so it is never left behind
-                try {
-                    await r2Storage.deletePrefix(`${video.r2_key}/staging`);
-                    logStep('R2', 'Deleted R2 staging (initial upload).');
-                } catch (e) {
-                    console.warn('[VideoProcessor] [Task %s] Failed to delete R2 staging:', task.id, e.message);
+                if (!isReencode) {
+                    try {
+                        await r2Storage.deletePrefix(`${video.r2_key}/staging`);
+                        logStep('R2', 'Deleted R2 staging (initial upload).');
+                    } catch (e) {
+                        console.warn('[VideoProcessor] [Task %s] Failed to delete R2 staging:', task.id, e.message);
+                    }
+                    logStep('DB', 'Updating video storage_path to r2_only...');
+                    await db.query('UPDATE videos SET storage_path = $1 WHERE id = $2', ['r2_only', task.video_id]);
                 }
-                logStep('DB', 'Updating video storage_path to r2_only...');
-                await db.query('UPDATE videos SET storage_path = $1 WHERE id = $2', ['r2_only', task.video_id]);
             }
 
             logStep('DB', 'Marking task completed...');

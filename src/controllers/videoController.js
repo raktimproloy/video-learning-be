@@ -2,6 +2,8 @@ const videoService = require('../services/videoService');
 const lessonService = require('../services/lessonService');
 const courseService = require('../services/courseService');
 const r2Storage = require('../services/r2StorageService');
+const hlsDeliveryService = require('../services/hlsDeliveryService');
+const videoDelivery = require('../config/videoDelivery');
 const liveChatService = require('../services/liveChatService');
 const { sanitizeNotes, sanitizeAssignments } = require('../utils/contentVisibility');
 
@@ -311,7 +313,6 @@ class VideoController {
                 if (!hasAccess) return res.status(403).send('Access denied');
                 if (!isOwnerOrManager && video.status === 'inactive') return res.status(403).send('Access denied');
 
-                // For students, check if video is locked
                 if (role === 'student') {
                     const isLocked = await videoService.isVideoLockedForStudent(userId, videoId);
                     if (isLocked) {
@@ -321,8 +322,39 @@ class VideoController {
             }
 
             const r2Key = `${video.r2_key}/${subpath}`;
+            const apiStreamBase = `${buildPublicBaseUrl(req)}/v1/video/${videoId}/stream`;
+
+            // HLS playlists: proxy + rewrite segment URLs when CDN/presign enabled
+            if (subpath.endsWith('.m3u8')) {
+                const body = await hlsDeliveryService.getPlaylistBody(
+                    r2Key,
+                    video.r2_key,
+                    apiStreamBase,
+                    subpath
+                );
+                res.set('Content-Type', contentTypeForPath(subpath));
+                res.set('Cache-Control', 'private, no-cache, must-revalidate');
+                return res.send(body);
+            }
+
+            // Segments: optional presign/CDN redirect (fallback to API proxy)
+            if (subpath.endsWith('.ts') && videoDelivery.cdnSegmentDelivery !== 'off') {
+                try {
+                    const directUrl = await hlsDeliveryService.buildSegmentDeliveryUrl(r2Key);
+                    if (directUrl) {
+                        res.set('Cache-Control', 'private, max-age=60');
+                        return res.redirect(302, directUrl);
+                    }
+                } catch (redirectErr) {
+                    console.warn('[Stream] presign redirect failed, falling back to proxy:', redirectErr.message);
+                }
+            }
+
             const stream = await r2Storage.getObjectStream(r2Key);
             res.set('Content-Type', contentTypeForPath(subpath));
+            if (subpath.endsWith('.ts')) {
+                res.set('Cache-Control', 'private, max-age=300');
+            }
             stream.pipe(res);
         } catch (error) {
             console.error('Stream error:', error);

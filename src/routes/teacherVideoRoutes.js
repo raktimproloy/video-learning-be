@@ -157,4 +157,13 @@ router.post(
     [check('id', 'Video ID is required').isUUID()],
     adminController.retryVideoProcessing
 );
+
+// --- Re-encode active video (multi-quality ladder from original_r2_key) ---
+router.post(
+    '/:id/reencode',
+    requireTeacherPermission('courses'),
+    [check('id', 'Video ID is required').isUUID()],
+    adminController.reencodeVideo
+);
+
 module.exports = router;

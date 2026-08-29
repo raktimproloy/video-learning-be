@@ -82,6 +82,35 @@ class AnalyticsController {
             res.status(500).json({ error: 'Internal server error' });
         }
     }
+
+    /**
+     * Log video playback startup metrics (TTFF) for monitoring.
+     * Structured log prefix VideoMetrics for log aggregation.
+     */
+    async logVideoPlayback(req, res) {
+        try {
+            const { videoId, ttffMs, autoplay, mutedFallback } = req.body || {};
+            if (!videoId || ttffMs == null) {
+                return res.status(400).json({ error: 'Missing videoId or ttffMs' });
+            }
+            const userId = req.user?.id ?? null;
+            console.log(JSON.stringify({
+                tag: 'VideoMetrics',
+                event: 'video_playback_ready',
+                videoId,
+                userId,
+                ttffMs: Number(ttffMs),
+                autoplay: !!autoplay,
+                mutedFallback: !!mutedFallback,
+                cdnMode: process.env.CDN_SEGMENT_DELIVERY || 'off',
+                ts: new Date().toISOString(),
+            }));
+            res.status(200).json({ success: true });
+        } catch (error) {
+            console.error('Failed to log video playback metric:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
 }
 
 module.exports = new AnalyticsController();

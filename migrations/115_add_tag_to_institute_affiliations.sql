@@ -1,2 +1,2 @@
 ALTER TABLE institute_affiliations
-ADD COLUMN tag VARCHAR(255);
+ADD COLUMN IF NOT EXISTS tag VARCHAR(255);

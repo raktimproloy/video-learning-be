@@ -14,6 +14,7 @@ const {
   UploadPartCommand,
   CompleteMultipartUploadCommand,
   AbortMultipartUploadCommand,
+  CopyObjectCommand,
 } = require('@aws-sdk/client-s3');
 const { Upload } = require('@aws-sdk/lib-storage');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
@@ -376,6 +377,54 @@ async function deletePrefix(prefix) {
 }
 
 /**
+ * Copy an object within the same bucket (used for atomic HLS promote).
+ */
+async function copyObject(sourceKey, destKey) {
+  const client = getClient();
+  await client.send(
+    new CopyObjectCommand({
+      Bucket: r2Config.bucketName,
+      CopySource: `${r2Config.bucketName}/${sourceKey}`,
+      Key: destKey,
+    })
+  );
+}
+
+/**
+ * Promote a processing prefix to live HLS paths (atomic swap).
+ */
+async function promoteProcessingPrefix(processingPrefix, livePrefix, variantDirNames) {
+  const keys = await listObjects(processingPrefix);
+  if (keys.length === 0) {
+    throw new Error('Processing upload is empty — aborting promote');
+  }
+
+  const dirsToClear = new Set(['360p', '720p', '1080p', 'original', ...variantDirNames]);
+  for (const dir of dirsToClear) {
+    try {
+      await deletePrefix(`${livePrefix}/${dir}`);
+    } catch (e) {
+      console.warn('[R2] promote: failed to clear old prefix', dir, e.message);
+    }
+  }
+
+  try {
+    await deleteObject(`${livePrefix}/master.m3u8`);
+  } catch (_) {
+    /* ignore */
+  }
+
+  for (const key of keys) {
+    const relative = key.slice(processingPrefix.length + 1);
+    if (!relative) continue;
+    const destKey = `${livePrefix}/${relative}`;
+    await copyObject(key, destKey);
+  }
+
+  await deletePrefix(processingPrefix);
+}
+
+/**
  * Get public URL for a key (when R2_PUBLIC_URL is configured with custom domain).
  * Returns null if not configured.
  */
@@ -490,6 +539,8 @@ module.exports = {
   listObjects,
   deleteObject,
   deletePrefix,
+  copyObject,
+  promoteProcessingPrefix,
   getPublicUrl,
   getPresignedGetUrl,
   createMultipartUpload,

@@ -10,4 +10,7 @@ router.post('/pageview', optionalAuth, analyticsController.logPageView);
 // Log page view heartbeat duration updates
 router.post('/heartbeat', analyticsHeartbeatLimiter, analyticsController.logHeartbeat);
 
+// Video playback TTFF metrics (watch page startup)
+router.post('/video-playback', optionalAuth, analyticsController.logVideoPlayback);
+
 module.exports = router;
