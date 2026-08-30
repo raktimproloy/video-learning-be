@@ -295,6 +295,11 @@ class CourseController {
                 currency: currency,
                 hasLiveClass: hasLiveClass === 'true' || hasLiveClass === true,
                 hasAssignments: hasAssignments === 'true' || hasAssignments === true,
+                is_certificate_enabled: raw.is_certificate_enabled !== undefined ? (raw.is_certificate_enabled === 'true' || raw.is_certificate_enabled === true) : true,
+                certificate_design: raw.certificate_design || 'default',
+                certificate_criteria: raw.certificate_criteria ? (typeof raw.certificate_criteria === 'string' ? JSON.parse(raw.certificate_criteria) : raw.certificate_criteria) : undefined,
+                whatsapp_group_link: raw.whatsappGroupLink ? raw.whatsappGroupLink.trim() : null,
+                messenger_group_link: raw.messengerGroupLink ? raw.messengerGroupLink.trim() : null,
                 testCourse: isCoreMember && (testCourse === 'true' || testCourse === true)
             };
 
@@ -991,6 +996,10 @@ class CourseController {
                 const pending = await liveClassRequestService.getPendingByCourseId(out.id);
                 out.pendingLiveRequest = !!pending;
             }
+            if (!out.is_purchased && !out.is_owned && role !== 'admin') {
+                delete out.whatsapp_group_link;
+                delete out.messenger_group_link;
+            }
             res.json(out);
         } catch (error) {
             console.error('Get course error:', error);
@@ -1041,6 +1050,11 @@ class CourseController {
                 externalWhatsapp,
                 externalPhone,
                 priceDisplayPeriod,
+                whatsappGroupLink,
+                messengerGroupLink,
+                is_certificate_enabled,
+                certificate_design,
+                certificate_criteria,
             } = req.body;
             const currentUser = await userService.findById(req.user.id);
             const isCoreMember = !!currentUser?.core_member;
@@ -1073,6 +1087,15 @@ class CourseController {
             if (currency !== undefined) courseData.currency = currency;
             if (hasLiveClass !== undefined) courseData.hasLiveClass = hasLiveClass === 'true' || hasLiveClass === true;
             if (hasAssignments !== undefined) courseData.hasAssignments = hasAssignments === 'true' || hasAssignments === true;
+            if (is_certificate_enabled !== undefined) courseData.is_certificate_enabled = is_certificate_enabled === 'true' || is_certificate_enabled === true;
+            if (certificate_design !== undefined) courseData.certificate_design = certificate_design;
+            if (certificate_criteria !== undefined) {
+                try {
+                    courseData.certificate_criteria = typeof certificate_criteria === 'string' ? JSON.parse(certificate_criteria) : certificate_criteria;
+                } catch (e) {
+                    // keep existing or ignore
+                }
+            }
             if (testCourse !== undefined) courseData.testCourse = isCoreMember && (testCourse === 'true' || testCourse === true);
             if (status !== undefined) {
                 const allowed = ['draft', 'active', 'inactive', 'archived'];
@@ -1092,6 +1115,8 @@ class CourseController {
                 const p = String(priceDisplayPeriod).trim();
                 courseData.priceDisplayPeriod = ['monthly', 'yearly', 'one_time'].includes(p) ? p : null;
             }
+            if (whatsappGroupLink !== undefined) courseData.whatsapp_group_link = whatsappGroupLink ? whatsappGroupLink.trim() : null;
+            if (messengerGroupLink !== undefined) courseData.messenger_group_link = messengerGroupLink ? messengerGroupLink.trim() : null;
 
             // Handle file uploads - upload to R2 if configured, otherwise use local storage
             if (req.files) {
@@ -2387,11 +2412,10 @@ class CourseController {
             try {
                 const examsResult = await db.query(
                     `SELECT e.id, e.title, e.lesson_id, e.video_id, e.time_limit_minutes,
-                            e.pass_mark, e.is_published, e.created_at
+                            e.total_marks, e.status, e.created_at
                      FROM exams e
-                     JOIN lessons l ON l.id = e.lesson_id
-                     WHERE l.course_id = $1 AND e.is_published = true
-                     ORDER BY l.order ASC, e.created_at ASC`,
+                     WHERE e.course_id = $1 AND e.status = 'published'
+                     ORDER BY e.created_at ASC`,
                     [courseId]
                 );
                 exams = examsResult.rows.map(e => ({
@@ -2400,8 +2424,8 @@ class CourseController {
                     lessonId: e.lesson_id,
                     videoId: e.video_id,
                     timeLimitMinutes: e.time_limit_minutes,
-                    passMark: e.pass_mark,
-                    isPublished: e.is_published,
+                    totalMarks: e.total_marks,
+                    status: e.status,
                 }));
             } catch (e) {
                 // Exams table may not exist in all deployments
@@ -2446,6 +2470,8 @@ class CourseController {
                     title: course.title,
                     description: course.description,
                     pending_payment_request_id: pendingPaymentResult.rows[0]?.id || null,
+                    whatsapp_group_link: course.whatsapp_group_link || null,
+                    messenger_group_link: course.messenger_group_link || null,
                 },
                 lessons: lessonsWithVideos,
                 progress: progressData,

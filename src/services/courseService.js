@@ -62,8 +62,8 @@ class CourseService {
                     teacher_id, title, description, short_description, full_description,
                     category, subcategory, main_category_id, sub_category_id, admin_category_id, tags, language, subtitle, level, course_type,
                     thumbnail_path, intro_video_path, price, discount_price, currency,
-                    has_live_class, has_assignments, test_course, status
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, 'draft')
+                    has_live_class, has_assignments, is_certificate_enabled, certificate_design, certificate_criteria, whatsapp_group_link, messenger_group_link, test_course, status
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, 'draft')
                 RETURNING *`,
                 [
                     teacherId,
@@ -88,6 +88,11 @@ class CourseService {
                     currency || 'USD',
                     hasLiveClass || false,
                     hasAssignments || false,
+                    courseData.is_certificate_enabled !== false,
+                    courseData.certificate_design || 'default',
+                    courseData.certificate_criteria ? JSON.stringify(courseData.certificate_criteria) : null,
+                    courseData.whatsapp_group_link || null,
+                    courseData.messenger_group_link || null,
                     testCourse || false,
                 ]
             )
@@ -96,8 +101,8 @@ class CourseService {
                     teacher_id, title, description, short_description, full_description,
                     category, subcategory, main_category_id, sub_category_id, admin_category_id, tags, language, subtitle, level, course_type,
                     thumbnail_path, intro_video_path, price, discount_price, currency,
-                    has_live_class, has_assignments, status
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, 'draft')
+                    has_live_class, has_assignments, is_certificate_enabled, certificate_design, certificate_criteria, whatsapp_group_link, messenger_group_link, status
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, 'draft')
                 RETURNING *`,
                 [
                     teacherId,
@@ -122,6 +127,11 @@ class CourseService {
                     currency || 'USD',
                     hasLiveClass || false,
                     hasAssignments || false,
+                    courseData.is_certificate_enabled !== false,
+                    courseData.certificate_design || 'default',
+                    courseData.certificate_criteria ? JSON.stringify(courseData.certificate_criteria) : null,
+                    courseData.whatsapp_group_link || null,
+                    courseData.messenger_group_link || null,
                 ]
             );
         const course = result.rows[0];
@@ -1603,6 +1613,26 @@ class CourseService {
         if (hasAssignments !== undefined) {
             updates.push(`has_assignments = $${paramIndex++}`);
             values.push(hasAssignments);
+        }
+        if (courseData.is_certificate_enabled !== undefined) {
+            updates.push(`is_certificate_enabled = $${paramIndex++}`);
+            values.push(courseData.is_certificate_enabled);
+        }
+        if (courseData.certificate_design !== undefined) {
+            updates.push(`certificate_design = $${paramIndex++}`);
+            values.push(courseData.certificate_design);
+        }
+        if (courseData.certificate_criteria !== undefined) {
+            updates.push(`certificate_criteria = $${paramIndex++}`);
+            values.push(courseData.certificate_criteria ? JSON.stringify(courseData.certificate_criteria) : null);
+        }
+        if (courseData.whatsapp_group_link !== undefined) {
+            updates.push(`whatsapp_group_link = $${paramIndex++}`);
+            values.push(courseData.whatsapp_group_link);
+        }
+        if (courseData.messenger_group_link !== undefined) {
+            updates.push(`messenger_group_link = $${paramIndex++}`);
+            values.push(courseData.messenger_group_link);
         }
         if (testCourse !== undefined && (await hasColumn('courses', 'test_course'))) {
             updates.push(`test_course = $${paramIndex++}`);

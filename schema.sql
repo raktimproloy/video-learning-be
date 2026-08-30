@@ -29,6 +29,11 @@ CREATE TABLE IF NOT EXISTS courses (
     currency TEXT DEFAULT 'USD',
     has_live_class BOOLEAN DEFAULT false,
     has_assignments BOOLEAN DEFAULT false,
+    is_certificate_enabled BOOLEAN DEFAULT true,
+    certificate_design TEXT DEFAULT 'default',
+    certificate_criteria JSONB DEFAULT '{"videos": {"required": true}, "assignments": {"type": "submit_all", "min_marks_percent": 0}, "exams": {"type": "min_marks", "min_marks_percent": 80}}'::jsonb,
+    whatsapp_group_link TEXT,
+    messenger_group_link TEXT,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     display_order INTEGER DEFAULT NULL
