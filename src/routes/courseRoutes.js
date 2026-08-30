@@ -59,6 +59,8 @@ router.get('/student/payment-requests/:id', authMiddleware, requireRole(['studen
 router.post('/student/payment-requests/:id/complete', authMiddleware, requireRole(['student', 'teacher']), courseController.completeStudentPaymentRequest);
 router.get('/student/available', authMiddleware, requireRole(['student', 'teacher']), courseController.getAvailableCourses);
 router.get('/:id/assignments-notes', authMiddleware, requireRole(['student', 'teacher']), courseController.getCourseAssignmentsAndNotes);
+// Consolidated bootstrap endpoint — replaces 8+ individual calls for student course detail page
+router.get('/:id/student-bootstrap', authMiddleware, requireRole(['student', 'teacher']), courseController.getStudentCourseBootstrap);
 router.post('/:id/purchase', authMiddleware, requireRole(['student', 'teacher']), courseController.purchaseCourse);
 router.post('/:id/payment-request', authMiddleware, requireRole(['student', 'teacher']), courseController.createPaymentRequest);
 

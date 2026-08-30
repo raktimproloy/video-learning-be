@@ -2301,6 +2301,165 @@ class CourseController {
             return res.status(500).json({ error: 'Internal server error' });
         }
     }
+    /**
+     * GET /courses/:id/student-bootstrap
+     *
+     * Single round-trip endpoint for the student course detail page.
+     * Replaces 8+ separate API calls with one request:
+     *   - Course info
+     *   - Lessons (with videos embedded, notes/assignment counts, lock status)
+     *   - Course progress (completed video IDs, stats)
+     *   - Recently watched (this course only, max 3)
+     *   - Assignments + notes (with submission status)
+     *   - Exams list
+     *   - Books (course-specific, merged with owned status)
+     */
+    async getStudentCourseBootstrap(req, res) {
+        try {
+            const userId = req.user.id;
+            const { id: courseId } = req.params;
+            const db = require('../../db');
+            const lessonService = require('../services/lessonService');
+            const videoService = require('../services/videoService');
+            const progressService = require('../services/progressService');
+            const examService = require('../services/examService').default || require('../services/examService');
+            const bookService = require('../services/bookService');
+
+            // ── 1. Verify enrollment ──────────────────────────────────────────
+            const [enrollmentResult, courseResult] = await Promise.all([
+                db.query('SELECT 1 FROM course_enrollments WHERE user_id = $1 AND course_id = $2', [userId, courseId]),
+                courseService.getCourseByIdSimple(courseId),
+            ]);
+            if (!enrollmentResult.rows.length) {
+                return res.status(403).json({ error: 'Not enrolled in this course' });
+            }
+            if (!courseResult) {
+                return res.status(404).json({ error: 'Course not found' });
+            }
+            const course = courseResult;
+
+            // ── 2. Parallel: lessons + progress + recent + assignments + books ─
+            const [
+                lessonsRaw,
+                progressData,
+                recentActivity,
+                assignmentsNotesData,
+                pendingPaymentResult,
+            ] = await Promise.all([
+                lessonService.getLessonsByCourse(courseId, userId, course.teacher_id).catch(() => []),
+                progressService.getCourseProgress(userId, courseId).catch(() => null),
+                progressService.getRecentActivity(userId, 5).catch(() => ({ recentlyWatched: [] })),
+                courseService.getCourseAssignmentsAndNotes(courseId, userId).catch(() => ({ assignments: [], notes: [] })),
+                db.query(
+                    `SELECT id FROM payment_requests WHERE user_id = $1 AND course_id = $2 AND status = 'pending' LIMIT 1`,
+                    [userId, courseId]
+                ).catch(() => ({ rows: [] })),
+            ]);
+
+            // ── 3. For each lesson, fetch videos in parallel (all at once) ────
+            const lessonList = Array.isArray(lessonsRaw) ? lessonsRaw : [];
+            const videoResults = lessonList.length > 0
+                ? await Promise.allSettled(
+                    lessonList.map((lesson) => {
+                        const lessonIsLocked = lesson.isLocked === true;
+                        return videoService.getLessonVideoListItems(
+                            lesson.id,
+                            userId,
+                            lessonIsLocked,
+                            false  // student, not owner
+                        ).catch(() => []);
+                    })
+                )
+                : [];
+
+            const lessonsWithVideos = lessonList.map((lesson, i) => {
+                const vResult = videoResults[i];
+                const rawVideos = vResult?.status === 'fulfilled' ? vResult.value : [];
+                // Filter out processing/uploading videos for students
+                const videos = Array.isArray(rawVideos)
+                    ? rawVideos.filter(v => v.status !== 'processing' && v.status !== 'uploading')
+                    : [];
+                return { ...lesson, videos };
+            });
+
+            // ── 4. Exams — use raw DB query to avoid import issues ────────────
+            let exams = [];
+            try {
+                const examsResult = await db.query(
+                    `SELECT e.id, e.title, e.lesson_id, e.video_id, e.time_limit_minutes,
+                            e.pass_mark, e.is_published, e.created_at
+                     FROM exams e
+                     JOIN lessons l ON l.id = e.lesson_id
+                     WHERE l.course_id = $1 AND e.is_published = true
+                     ORDER BY l.order ASC, e.created_at ASC`,
+                    [courseId]
+                );
+                exams = examsResult.rows.map(e => ({
+                    id: e.id,
+                    title: e.title,
+                    lessonId: e.lesson_id,
+                    videoId: e.video_id,
+                    timeLimitMinutes: e.time_limit_minutes,
+                    passMark: e.pass_mark,
+                    isPublished: e.is_published,
+                }));
+            } catch (e) {
+                // Exams table may not exist in all deployments
+                exams = [];
+            }
+
+            // ── 5. Books (course-specific) ────────────────────────────────────
+            let books = [];
+            try {
+                const booksResult = await db.query(
+                    `SELECT b.id, b.title, b.subtitle, b.cover_path, b.total_pages,
+                            b.delivery_mode, b.addon_price, b.pricing_mode,
+                            b.preview_page_count, b.max_courier_orders_per_student,
+                            cb.is_included,
+                            EXISTS(
+                              SELECT 1 FROM student_books sb WHERE sb.book_id = b.id AND sb.user_id = $2
+                            ) as owned,
+                            EXISTS(
+                              SELECT 1 FROM student_books sb
+                              WHERE sb.book_id = b.id AND sb.user_id = $2 AND sb.has_pdf = true
+                            ) as pdf_owned
+                     FROM books b
+                     JOIN course_books cb ON cb.book_id = b.id
+                     WHERE cb.course_id = $1 AND b.status = 'active'
+                     ORDER BY b.title ASC`,
+                    [courseId, userId]
+                );
+                books = booksResult.rows;
+            } catch (e) {
+                books = [];
+            }
+
+            // ── 6. Recent watched — filter to this course ─────────────────────
+            const recentForCourse = (recentActivity.recentlyWatched || [])
+                .filter(r => r.courseId === courseId)
+                .slice(0, 3);
+
+            // ── 7. Compose response ───────────────────────────────────────────
+            return res.json({
+                course: {
+                    id: course.id,
+                    title: course.title,
+                    description: course.description,
+                    pending_payment_request_id: pendingPaymentResult.rows[0]?.id || null,
+                },
+                lessons: lessonsWithVideos,
+                progress: progressData,
+                recentlyWatched: recentForCourse,
+                assignments: (assignmentsNotesData.assignments || []),
+                notes: (assignmentsNotesData.notes || []),
+                exams,
+                books,
+            });
+        } catch (error) {
+            console.error('Student course bootstrap error:', error);
+            res.status(500).json({ error: error.message || 'Internal server error' });
+        }
+    }
 }
 
 
