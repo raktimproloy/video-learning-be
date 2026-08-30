@@ -175,66 +175,71 @@ class VideoController {
                 return res.status(401).json({ error: 'Authentication required' });
             }
 
-            let access;
-            try {
-                access = await videoService.assertPlaybackAccess(userId, video, role);
-            } catch (e) {
-                const msg = e.message || 'Access denied';
+            const accessPromise = videoService.assertPlaybackAccess(userId, video, role).catch(e => ({ error: e }));
+            const progressPromise = (userId && role !== 'reference')
+                ? progressService.getVideoProgress(userId, videoId).catch(() => ({ lastPositionSeconds: 0, maxWatchedSeconds: 0 }))
+                : Promise.resolve({ lastPositionSeconds: 0, maxWatchedSeconds: 0 });
+            const lessonPromise = video.lesson_id
+                ? lessonService.getLessonById(video.lesson_id).catch(() => null)
+                : Promise.resolve(null);
+
+            const [accessResult, progress, lesson] = await Promise.all([accessPromise, progressPromise, lessonPromise]);
+
+            if (accessResult.error) {
+                const msg = accessResult.error.message || 'Access denied';
                 if (msg === 'Video not found') return res.status(404).json({ error: msg });
                 if (!userId) return res.status(401).json({ error: 'Authentication required' });
                 return res.status(403).json({ error: msg });
             }
 
+            const access = accessResult;
             const { isOwnerOrManager, enrolled, isPreviewOnly, isLocked } = access;
             const fullAccess = isOwnerOrManager || enrolled;
 
             const baseUrl = buildPublicBaseUrl(req);
-            let signUrl = null;
-            if (!isLocked) {
-                signUrl = await videoService.resolvePlaybackUrl(userId, video, baseUrl);
-            }
+            
+            const signUrlPromise = !isLocked 
+                ? videoService.resolvePlaybackUrl(userId, video, baseUrl).catch(() => null)
+                : Promise.resolve(null);
 
-            let progress = { lastPositionSeconds: 0, maxWatchedSeconds: 0 };
-            if (userId && role !== 'reference') {
-                progress = await progressService.getVideoProgress(userId, videoId);
-            }
-
-            let lessonVideos = [];
+            let lessonVideosPromise = Promise.resolve([]);
             let lessonTitle = '';
             let courseId = null;
-            if (video.lesson_id) {
-                const lesson = await lessonService.getLessonById(video.lesson_id);
-                lessonTitle = lesson?.title ?? 'Lesson';
-                courseId = lesson?.course_id ?? null;
 
-                let lessonIsLocked = false;
-                let isOwner = role === 'teacher' || role === 'admin';
-                if (lesson && userId && !isOwner) {
-                    const course = await courseService.getCourseByIdSimple(lesson.course_id);
-                    isOwner = !!(course && course.teacher_id === userId);
-                    if (role === 'student') {
-                        const allLessons = await lessonService.getLessonsByCourse(lesson.course_id, userId, course?.teacher_id);
-                        lessonIsLocked = allLessons.find((l) => l.id === video.lesson_id)?.isLocked === true;
+            if (lesson) {
+                lessonTitle = lesson.title ?? 'Lesson';
+                courseId = lesson.course_id ?? null;
+
+                lessonVideosPromise = (async () => {
+                    let lessonIsLocked = false;
+                    let isOwner = role === 'teacher' || role === 'admin';
+                    if (userId && !isOwner) {
+                        const course = await courseService.getCourseByIdSimple(lesson.course_id).catch(() => null);
+                        isOwner = !!(course && course.teacher_id === userId);
+                        if (role === 'student') {
+                            const allLessons = await lessonService.getLessonsByCourse(lesson.course_id, userId, course?.teacher_id).catch(() => []);
+                            lessonIsLocked = allLessons.find((l) => l.id === video.lesson_id)?.isLocked === true;
+                        }
                     }
-                }
-                const userIdForLockCheck = role === 'student' ? userId : null;
-                lessonVideos = await videoService.getLessonVideoListItems(
-                    video.lesson_id,
-                    userIdForLockCheck,
-                    lessonIsLocked,
-                    isOwner
-                );
-                if (role === 'student' && !isOwner) {
-                    lessonVideos = lessonVideos.filter((v) => v.status !== 'processing' && v.status !== 'uploading');
-                }
+                    const userIdForLockCheck = role === 'student' ? userId : null;
+                    let lVideos = await videoService.getLessonVideoListItems(
+                        video.lesson_id,
+                        userIdForLockCheck,
+                        lessonIsLocked,
+                        isOwner
+                    ).catch(() => []);
+                    if (role === 'student' && !isOwner) {
+                        lVideos = lVideos.filter((v) => v.status !== 'processing' && v.status !== 'uploading');
+                    }
+                    return lVideos;
+                })();
             }
 
-            if (userId && video.owner_id !== userId && !isPreviewOnly) {
-                await db.query(
-                    'UPDATE videos SET view_count = COALESCE(view_count, 0) + 1 WHERE id = $1',
-                    [videoId]
-                ).catch(() => {});
-            }
+            const viewCountPromise = (userId && video.owner_id !== userId && !isPreviewOnly)
+                ? db.query('UPDATE videos SET view_count = COALESCE(view_count, 0) + 1 WHERE id = $1', [videoId]).catch(() => {})
+                : Promise.resolve();
+
+            const [signUrl, lessonVideos] = await Promise.all([signUrlPromise, lessonVideosPromise, viewCountPromise]);
 
             res.json({
                 video: {
@@ -266,6 +271,7 @@ class VideoController {
             res.status(500).json({ error: 'Internal server error' });
         }
     }
+
 
     async getLiveChat(req, res) {
         try {
