@@ -1196,8 +1196,8 @@ class CourseService {
                     WHEN jsonb_typeof(courses.tags) = 'string' THEN courses.tags::jsonb
                     ELSE courses.tags
                 END as tags,
-                \${reviewsRatingQuery} as rating,
-                \${reviewsCountQuery} as review_count,
+                ${reviewsRatingQuery} as rating,
+                ${reviewsCountQuery} as review_count,
                 (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = courses.id) as purchase_count,
                 (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id AND (COALESCE(l.status, 'active') = 'active')) as total_lessons,
                 (SELECT COUNT(*)::int FROM videos v 
@@ -1207,7 +1207,7 @@ class CourseService {
             LEFT JOIN users ON courses.teacher_id = users.id 
              WHERE courses.teacher_id = $1 AND courses.id != $2
                AND (COALESCE(courses.status, 'active') = 'active')
-               \${hideTestOther}
+               ${hideTestOther}
             ORDER BY courses.created_at DESC
             LIMIT 4`,
             [course.teacher_id, course.id]
