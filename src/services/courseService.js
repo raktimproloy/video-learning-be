@@ -1022,8 +1022,8 @@ class CourseService {
         const course = await this.getCourseById(id, userId);
         if (!course) return null;
 
-        // Get teacher info with full profile (name, image, institute, verified, address, rating from teacher_reviews)
-        // is_verified column may not exist if migration hasn't been applied yet
+        const hideTestOther = await sqlHideTestCourses('courses');
+
         let verifiedSelect = 'false as is_verified';
         try {
             const { hasColumn } = require('../utils/dbSchemaCache');
@@ -1031,7 +1031,7 @@ class CourseService {
             if (hasIsVerified) verifiedSelect = `COALESCE(tp.is_verified, false) as is_verified`;
         } catch {}
 
-        const teacherResult = await db.query(
+        const teacherQuery = db.query(
             `SELECT u.id, u.email, u.created_at,
                     COALESCE(tp.name, u.email) as name,
                     tp.profile_image_path,
@@ -1051,35 +1051,28 @@ class CourseService {
              WHERE u.id = $1`,
             [course.teacher_id]
         );
-        const teacher = teacherResult.rows[0] || null;
+
+        const reviewsTableCheckQuery = db.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'reviews'
+            )
+        `);
 
         if (course.course_type === 'external') {
-            const reviewsTableCheck = await db.query(`
-                SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'reviews')
-            `);
+            const [teacherResult, reviewsTableCheck] = await Promise.all([teacherQuery, reviewsTableCheckQuery]);
+            const teacher = teacherResult.rows[0] || null;
             const hasReviewsTable = reviewsTableCheck.rows[0]?.exists || false;
-            let reviews = [];
-            if (hasReviewsTable) {
-                const reviewService = require('./reviewService');
-                const reviewRows = await reviewService.getReviewsByCourse(id, 3, 0);
-                reviews = reviewRows.map((r) => ({
-                    id: r.id,
-                    userName: r.user_name || r.user_email || 'Student',
-                    user_profile_image_path: r.user_profile_image_path || null,
-                    rating: parseInt(r.rating) || 0,
-                    comment: r.comment || '',
-                    createdAt: r.created_at,
-                    helpful: 0,
-                }));
-            }
+
             const reviewsRatingQuery = hasReviewsTable
                 ? `(SELECT COALESCE(AVG(r.rating), 0)::numeric(3,2) FROM reviews r WHERE r.course_id = courses.id)`
                 : `0::numeric(3,2)`;
             const reviewsCountQuery = hasReviewsTable
                 ? `(SELECT COUNT(*)::int FROM reviews r WHERE r.course_id = courses.id)`
                 : `0::int`;
-            const hideTestOther = await sqlHideTestCourses('courses');
-            const otherCoursesResult = await db.query(
+
+            const otherCoursesQuery = db.query(
                 `SELECT 
                     courses.*,
                     users.email as teacher_email,
@@ -1103,6 +1096,25 @@ class CourseService {
                 LIMIT 4`,
                 [course.teacher_id, course.id]
             );
+
+            let reviewsPromise = Promise.resolve([]);
+            if (hasReviewsTable) {
+                const reviewService = require('./reviewService');
+                reviewsPromise = reviewService.getReviewsByCourse(id, 3, 0);
+            }
+
+            const [otherCoursesResult, reviewRows] = await Promise.all([otherCoursesQuery, reviewsPromise]);
+
+            const reviews = reviewRows.map((r) => ({
+                id: r.id,
+                userName: r.user_name || r.user_email || 'Student',
+                user_profile_image_path: r.user_profile_image_path || null,
+                rating: parseInt(r.rating) || 0,
+                comment: r.comment || '',
+                createdAt: r.created_at,
+                helpful: 0,
+            }));
+
             const otherCourses = otherCoursesResult.rows.map((row) => ({
                 ...row,
                 tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : (row.tags || []),
@@ -1145,27 +1157,25 @@ class CourseService {
             };
         }
 
-        // Get lessons for this course (pass teacherId so owner sees all, students only see active)
         const lessonService = require('./lessonService');
-        const lessons = await lessonService.getLessonsByCourse(course.id, userId, course.teacher_id);
-
-        // Get all videos for this course (single query — was N+1 per lesson)
         const videoService = require('./videoService');
-        const videos = await videoService.getCourseCatalogVideos(course.id, userId, course.teacher_id);
 
-        let isEnrolled = false;
-        if (userId) {
-            isEnrolled = await this.isEnrolled(userId, course.id);
-        }
+        // Parallelize initial queries
+        const [
+            teacherResult,
+            lessons,
+            videos,
+            isEnrolled,
+            reviewsTableCheck
+        ] = await Promise.all([
+            teacherQuery,
+            lessonService.getLessonsByCourse(course.id, userId, course.teacher_id),
+            videoService.getCourseCatalogVideos(course.id, userId, course.teacher_id),
+            userId ? this.isEnrolled(userId, course.id) : Promise.resolve(false),
+            reviewsTableCheckQuery
+        ]);
 
-        // Check if reviews table exists
-        const reviewsTableCheck = await db.query(`
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'reviews'
-            )
-        `);
+        const teacher = teacherResult.rows[0] || null;
         const hasReviewsTable = reviewsTableCheck.rows[0]?.exists || false;
 
         const reviewsRatingQuery = hasReviewsTable
@@ -1176,10 +1186,8 @@ class CourseService {
             ? `(SELECT COUNT(*)::int FROM reviews r WHERE r.course_id = courses.id)`
             : `0::int`;
 
-        const hideTestOther = await sqlHideTestCourses('courses');
-
-        // Get teacher's other courses (public, limit to 4)
-        const otherCoursesResult = await db.query(
+        // Secondary parallel queries
+        const otherCoursesQuery = db.query(
             `SELECT 
                 courses.*,
                 users.email as teacher_email,
@@ -1188,8 +1196,8 @@ class CourseService {
                     WHEN jsonb_typeof(courses.tags) = 'string' THEN courses.tags::jsonb
                     ELSE courses.tags
                 END as tags,
-                ${reviewsRatingQuery} as rating,
-                ${reviewsCountQuery} as review_count,
+                \${reviewsRatingQuery} as rating,
+                \${reviewsCountQuery} as review_count,
                 (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = courses.id) as purchase_count,
                 (SELECT COUNT(*)::int FROM lessons l WHERE l.course_id = courses.id AND (COALESCE(l.status, 'active') = 'active')) as total_lessons,
                 (SELECT COUNT(*)::int FROM videos v 
@@ -1199,11 +1207,62 @@ class CourseService {
             LEFT JOIN users ON courses.teacher_id = users.id 
              WHERE courses.teacher_id = $1 AND courses.id != $2
                AND (COALESCE(courses.status, 'active') = 'active')
-               ${hideTestOther}
+               \${hideTestOther}
             ORDER BY courses.created_at DESC
             LIMIT 4`,
             [course.teacher_id, course.id]
         );
+
+        let reviewsPromise = Promise.resolve([]);
+        if (hasReviewsTable) {
+            const reviewService = require('./reviewService');
+            reviewsPromise = reviewService.getReviewsByCourse(id, 3, 0);
+        }
+
+        const bundlesPromise = (async () => {
+            try {
+                const bundleService = require('./bundleService');
+                return await bundleService.getBundlesContainingCourse(course.id, course.teacher_id);
+            } catch (e) {
+                return [];
+            }
+        })();
+
+        const pendingPaymentPromise = (async () => {
+            if (!userId) return null;
+            try {
+                const paymentRequestService = require('./paymentRequestService');
+                const pendingList = await paymentRequestService.getByStudent(userId, { status: 'pending', limit: 100 });
+                const forThisCourse = (pendingList || []).find((pr) => pr.courseId === course.id);
+                return forThisCourse ? forThisCourse.id : null;
+            } catch (e) {
+                return null;
+            }
+        })();
+
+        const booksPromise = (async () => {
+            try {
+                const bookService = require('./bookService');
+                return await bookService.getPublicMetaForCourse(id, userId);
+            } catch (e) {
+                console.warn('Course book meta skipped:', e.message);
+                return { books: [], bookPricing: null };
+            }
+        })();
+
+        const [
+            otherCoursesResult,
+            reviewRows,
+            bundles,
+            pendingPaymentRequestId,
+            bookMeta
+        ] = await Promise.all([
+            otherCoursesQuery,
+            reviewsPromise,
+            bundlesPromise,
+            pendingPaymentPromise,
+            booksPromise
+        ]);
 
         const otherCourses = otherCoursesResult.rows.map(row => ({
             ...row,
@@ -1215,24 +1274,16 @@ class CourseService {
             total_videos: row.total_videos || 0
         }));
 
-        // Latest 3 reviews for course details page (include user_profile_image_path for controller to build avatar URL)
-        let reviews = [];
-        if (hasReviewsTable) {
-            const reviewService = require('./reviewService');
-            const reviewRows = await reviewService.getReviewsByCourse(id, 3, 0);
-            reviews = reviewRows.map(r => ({
-                id: r.id,
-                userName: r.user_name || r.user_email || 'Student',
-                user_profile_image_path: r.user_profile_image_path || null,
-                rating: parseInt(r.rating) || 0,
-                comment: r.comment || '',
-                createdAt: r.created_at,
-                helpful: 0
-            }));
-        }
+        const reviews = reviewRows.map(r => ({
+            id: r.id,
+            userName: r.user_name || r.user_email || 'Student',
+            user_profile_image_path: r.user_profile_image_path || null,
+            rating: parseInt(r.rating) || 0,
+            comment: r.comment || '',
+            createdAt: r.created_at,
+            helpful: 0
+        }));
 
-        // Compute total_notes (only actual notes, not assignments) for "course includes" section.
-        // Exclude assignments (isRequired === true). Only count items with note shape (type 'text' or 'file') or no type (legacy).
         const countNotesOnly = (arr) => {
             if (!Array.isArray(arr)) return 0;
             return arr.filter((item) => {
@@ -1251,39 +1302,8 @@ class CourseService {
             total_duration_seconds: totalDurationSeconds
         };
 
-        // Bundles that include this course (for "Bundles" section on course details)
-        let bundles = [];
-        try {
-            const bundleService = require('./bundleService');
-            bundles = await bundleService.getBundlesContainingCourse(course.id, course.teacher_id);
-        } catch (e) {
-            // bundle_courses table may not exist in older deployments
-        }
-
-        // If student is logged in, check for pending payment request for this course (for "Payment pending" link)
-        let pendingPaymentRequestId = null;
-        if (userId) {
-            try {
-                const paymentRequestService = require('./paymentRequestService');
-                const pendingList = await paymentRequestService.getByStudent(userId, { status: 'pending', limit: 100 });
-                const forThisCourse = (pendingList || []).find((pr) => pr.courseId === course.id);
-                if (forThisCourse) pendingPaymentRequestId = forThisCourse.id;
-            } catch (e) {
-                // ignore
-            }
-        }
-
-        // Additive book meta — empty when course has no books (backward compatible)
-        let books = [];
-        let bookPricing = null;
-        try {
-            const bookService = require('./bookService');
-            const bookMeta = await bookService.getPublicMetaForCourse(id, userId);
-            books = bookMeta.books || [];
-            bookPricing = bookMeta.bookPricing || null;
-        } catch (e) {
-            console.warn('Course book meta skipped:', e.message);
-        }
+        const books = bookMeta.books || [];
+        const bookPricing = bookMeta.bookPricing || null;
 
         return {
             course: courseWithMeta,
@@ -1300,17 +1320,18 @@ class CourseService {
                 address: teacher.address || null,
                 totalStudents: parseInt(teacher.total_students) || course.purchase_count || 0,
                 total_courses: parseInt(teacher.total_courses, 10) || 0,
-                rating: parseFloat(teacher.teacher_rating) || 0
+                rating: parseFloat(teacher.teacher_rating) || 0,
             } : null,
             lessons,
             videos,
             otherCourses,
             reviews,
-            bundles: bundles || [],
+            bundles,
             books,
-            bookPricing,
+            bookPricing
         };
     }
+
 
     async getCourseById(id, userId = null, role = null) {
         // Check if reviews table exists
