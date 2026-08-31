@@ -93,11 +93,26 @@ function rewriteMediamtxPlaylist(content, apiStreamBase, accessToken) {
 }
 
 async function readPlaylistText(pathName, resource) {
-  const localPath = await readLocalFile(pathName, resource);
-  if (localPath) {
-    return fs.promises.readFile(localPath, 'utf8');
+  const safeResource = resource || MASTER_RESOURCE;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const localPath = await readLocalFile(pathName, safeResource);
+    if (localPath) {
+      const text = await fs.promises.readFile(localPath, 'utf8');
+      if (text.includes('#EXTM3U') && (text.includes('#EXTINF') || text.includes('#EXT-X-STREAM-INF'))) {
+        return text;
+      }
+    } else {
+      try {
+        const res = await fetchFromMediamtxHttp(pathName, safeResource);
+        const text = await res.text();
+        if (text.includes('#EXTM3U')) return text;
+      } catch (_) {
+        /* retry */
+      }
+    }
+    await new Promise((r) => setTimeout(r, 80 * (attempt + 1)));
   }
-  const res = await fetchFromMediamtxHttp(pathName, resource);
+  const res = await fetchFromMediamtxHttp(pathName, safeResource);
   return res.text();
 }
 

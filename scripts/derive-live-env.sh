@@ -20,6 +20,12 @@ HOST="${BASE#*://}"
 HOST="${HOST%%/*}"
 HOST="${HOST%%:*}"
 
+# Optional: include VPS public IP in ICE candidates (helps when DNS/proxy quirks)
+PUBLIC_IP=""
+if command -v curl >/dev/null 2>&1; then
+  PUBLIC_IP="$(curl -fsS --max-time 3 https://api.ipify.org 2>/dev/null || true)"
+fi
+
 upsert() {
   local key="$1"
   local val="$2"
@@ -39,7 +45,11 @@ upsert "MEDIAMTX_WHIP_PUBLIC_URL" "$BASE"
 if [[ "$HOST" == "localhost" || "$HOST" == "127.0.0.1" ]]; then
   upsert "MEDIAMTX_WEBRTC_HOST" "localhost,127.0.0.1"
 else
-  upsert "MEDIAMTX_WEBRTC_HOST" "${HOST},localhost,127.0.0.1"
+  ICE_HOSTS="${HOST},localhost,127.0.0.1"
+  if [[ -n "$PUBLIC_IP" && "$PUBLIC_IP" != "$HOST" ]]; then
+    ICE_HOSTS="${HOST},${PUBLIC_IP},localhost,127.0.0.1"
+  fi
+  upsert "MEDIAMTX_WEBRTC_HOST" "$ICE_HOSTS"
 fi
 upsert "MEDIAMTX_INTERNAL_URL" "http://mediamtx:8888"
 upsert "MEDIAMTX_HLS_DIR" "/var/mediamtx/hls"

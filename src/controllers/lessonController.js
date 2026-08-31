@@ -21,6 +21,7 @@ const liveIngestService = require('../services/liveIngestService');
 const r2LiveStorage = require('../services/r2LiveStorageService');
 const liveMediamtxProxyService = require('../services/liveMediamtxProxyService');
 const hlsDeliveryService = require('../services/hlsDeliveryService');
+const liveStreamCache = require('../services/liveStreamCacheService');
 const r2Storage = require('../services/r2StorageService');
 const { getAllowedOrigin } = require('../config/cors');
 const fs = require('fs');
@@ -832,11 +833,6 @@ class LessonController {
             }
             const payload = { live_started_at, viewerCount, live_session_id, broadcast_status, live_name, live_description };
             res.json(payload);
-            // Emit to room so all clients (teacher + students) get viewer count via WebSocket (fixes "starting" count showing 0)
-            try {
-                const getIo = require('../socket').getIo;
-                getIo().to(lessonId).emit('liveStatsUpdated', payload);
-            } catch (_) {}
         } catch (error) {
             console.error('Get live stats error:', error);
             res.status(500).json({ error: 'Internal server error' });
@@ -1451,20 +1447,36 @@ class LessonController {
     async getLivePlaylist(req, res) {
         try {
             const lessonId = req.params.id;
-            const lesson = await lessonService.getLessonById(lessonId);
+            const lesson = await liveStreamCache.cached(
+                `lesson:${lessonId}`,
+                liveStreamCache.TTL_MS.lessonRow,
+                () => lessonService.getLessonById(lessonId)
+            );
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
 
-            const course = await courseService.getCourseById(lesson.course_id, req.user?.id, req.user?.role);
+            const course = await liveStreamCache.cached(
+                `course:${lesson.course_id}:${req.user?.id}:${req.user?.role}`,
+                liveStreamCache.TTL_MS.courseRow,
+                () => courseService.getCourseById(lesson.course_id, req.user?.id, req.user?.role)
+            );
             if (!course) return res.status(404).json({ error: 'Course not found' });
 
-            const activeSession = await liveSessionService.getActiveByLesson(lessonId);
+            const activeSession = await liveStreamCache.cached(
+                `activeSession:${lessonId}`,
+                liveStreamCache.TTL_MS.activeSession,
+                () => liveSessionService.getActiveByLesson(lessonId)
+            );
             if (!activeSession || activeSession.provider !== 'r2_live') {
                 return res.status(404).json({ error: 'No active R2 live session.' });
             }
 
             const isTeacher = isTeacherWorkspaceUser(req) && course.teacher_id === workspaceTeacherId(req);
             if (req.user.role === 'student') {
-                const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
+                const enrolled = await liveStreamCache.cached(
+                    `enrolled:${req.user.id}:${lesson.course_id}`,
+                    liveStreamCache.TTL_MS.enrolled,
+                    () => courseService.isEnrolled(req.user.id, lesson.course_id)
+                );
                 if (!enrolled) return res.status(403).json({ error: 'Purchase this course to watch the live stream.' });
                 if (!lesson.is_live && activeSession.status !== 'active') {
                     return res.status(404).json({ error: 'This lesson is not live.' });

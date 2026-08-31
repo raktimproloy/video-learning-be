@@ -1,0 +1,6 @@
+cd /root/video-learning-be
+git pull
+bash scripts/derive-live-env.sh .env
+./scripts/vps-update.sh
+# অথবা অন্তত:
+docker compose up -d --force-recreate mediamtx

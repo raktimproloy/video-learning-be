@@ -12,6 +12,10 @@ Internet → nginx (port 80/8080) → api (Node + Socket.io, RUN_WORKER=0)
 
 **R2 Live:** MediaMTX starts automatically with `docker compose up`. No separate MediaMTX install. WHIP URL = same as `BASE_URL` (nginx proxies `/{stream}/whip`).
 
+**WebRTC media port:** Open **UDP + TCP 8189** on the VPS firewall / cloud security group. WHIP uses HTTPS (443) for signaling; video/audio uses port **8189** directly. If `MEDIAMTX_WEBRTC_HOST` is only `localhost`, teachers see *WebRTC connection failed* / *deadline exceeded* in MediaMTX logs.
+
+After changing `BASE_URL`, always run `./scripts/derive-live-env.sh .env` then `docker compose up -d --force-recreate mediamtx`.
+
 ---
 
 ## 1. VPS requirements
@@ -258,6 +262,7 @@ Update `docker/nginx.conf` upstream to list multiple `api` instances (Docker DNS
 | Worker not processing | `docker compose logs worker` — check R2 credentials |
 | 502 from nginx | Wait for api healthcheck; `docker compose ps` |
 | Socket.io fails | Ensure `NEXT_PUBLIC_SOCKET_URL` has no `/v1` suffix |
+| **R2 Live: WebRTC connection failed** | Run `./scripts/derive-live-env.sh .env` — `MEDIAMTX_WEBRTC_HOST` must include public API host/IP (not only localhost). Open **UDP+TCP 8189** on VPS/cloud firewall. Recreate: `docker compose up -d --force-recreate mediamtx`. Check logs: `docker compose logs mediamtx \| grep deadline` |
 | **CORS error in browser** | Set `FRONTEND_URL` + `CORS_EXTRA_ORIGINS` in API `.env`; redeploy API. Vercel `*.vercel.app` allowed by default |
 | Migrations fail | Run manually: `docker compose run --rm api node run_migrations.js` |
 
