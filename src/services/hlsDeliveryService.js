@@ -72,13 +72,19 @@ function rewriteExtXMapLine(line, apiStreamBase, playlistSubpath, accessToken, l
  * Build a direct segment URL after auth (presigned R2 or CDN public URL).
  */
 async function buildSegmentDeliveryUrl(r2Key) {
-  const { cdnSegmentDelivery, hlsSegmentPresignTtl, r2CdnPublicUrl } = videoDelivery;
+  const liveDelivery = require('../config/liveDelivery');
+  const isLiveKey = String(r2Key).startsWith('live/sessions/');
+  let mode = videoDelivery.cdnSegmentDelivery;
+  if (isLiveKey && liveDelivery.cdnDelivery !== 'off') {
+    mode = liveDelivery.cdnDelivery;
+  }
+  const { hlsSegmentPresignTtl, r2CdnPublicUrl } = videoDelivery;
 
-  if (cdnSegmentDelivery === 'cdn' && r2CdnPublicUrl) {
+  if (mode === 'cdn' && r2CdnPublicUrl) {
     return `${r2CdnPublicUrl}/${r2Key}`;
   }
 
-  if (cdnSegmentDelivery === 'presign' || cdnSegmentDelivery === 'cdn') {
+  if (mode === 'presign' || mode === 'cdn') {
     return r2Storage.getPresignedGetUrl(r2Key, hlsSegmentPresignTtl);
   }
 
@@ -196,5 +202,8 @@ module.exports = {
   buildSegmentDeliveryUrl,
   rewritePlaylistContent,
   getPlaylistBody,
+  readObjectAsString,
   withAccessToken,
+  rewriteExtXKeyLine,
+  rewriteExtXMapLine,
 };

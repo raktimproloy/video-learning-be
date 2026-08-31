@@ -22,6 +22,11 @@ const r2LiveStorage = require('../services/r2LiveStorageService');
 const liveMediamtxProxyService = require('../services/liveMediamtxProxyService');
 const hlsDeliveryService = require('../services/hlsDeliveryService');
 const liveStreamCache = require('../services/liveStreamCacheService');
+const liveAccessService = require('../services/liveAccessService');
+const liveCdnDeliveryService = require('../services/liveCdnDeliveryService');
+const liveStatsBroadcast = require('../services/liveStatsBroadcastService');
+const liveDelivery = require('../config/liveDelivery');
+const ttlCache = require('../utils/ttlCache');
 const r2Storage = require('../services/r2StorageService');
 const { getAllowedOrigin } = require('../config/cors');
 const fs = require('fs');
@@ -809,29 +814,40 @@ class LessonController {
     async getLiveStats(req, res) {
         try {
             const lessonId = req.params.id;
-            const lesson = await lessonService.getLessonById(lessonId);
-            if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
-            const course = await courseService.getCourseById(lesson.course_id, req.user?.id, req.user?.role);
-            if (!course) return res.status(404).json({ error: 'Course not found' });
-            const isTeacher = isTeacherWorkspaceUser(req) && course.teacher_id === workspaceTeacherId(req);
-            const isStudent = req.user.role === 'student';
-            if (isStudent) {
-                const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
-                if (!enrolled) return res.status(403).json({ error: 'Access denied' });
-            } else if (!isTeacher) return res.status(403).json({ error: 'Access denied' });
-            const live_session_id = lesson.current_live_session_id || null;
-            const live_started_at = await lessonService.getLiveStartedAt(lessonId);
-            const viewerCount = await liveWatchService.getViewerCount(lessonId, course.teacher_id, live_session_id);
-            let broadcast_status = 'ended';
-            let live_name = null;
-            let live_description = null;
-            if (live_session_id) {
-                const session = await liveSessionService.getById(live_session_id);
-                broadcast_status = session?.broadcast_status || 'starting';
-                live_name = session?.live_name ?? null;
-                live_description = session?.live_description ?? null;
-            }
-            const payload = { live_started_at, viewerCount, live_session_id, broadcast_status, live_name, live_description };
+            const access = await liveAccessService.resolveLiveAccess(req, lessonId);
+            if (!access.ok) return res.status(access.status).json({ error: access.error });
+
+            const payload = await ttlCache.getOrSet(
+                `liveStats:${lessonId}:${access.lesson.current_live_session_id || 'none'}`,
+                liveDelivery.liveStatsCacheMs,
+                async () => {
+                    const { lesson, teacherId } = access;
+                    const live_session_id = lesson.current_live_session_id || null;
+                    const live_started_at = await lessonService.getLiveStartedAt(lessonId);
+                    const viewerCount = await ttlCache.getOrSet(
+                        `liveViewers:${lessonId}:${live_session_id || 'none'}`,
+                        liveDelivery.viewerCountCacheMs,
+                        () => liveWatchService.getViewerCount(lessonId, teacherId, live_session_id)
+                    );
+                    let broadcast_status = 'ended';
+                    let live_name = null;
+                    let live_description = null;
+                    if (live_session_id) {
+                        const session = await liveSessionService.getById(live_session_id);
+                        broadcast_status = session?.broadcast_status || 'starting';
+                        live_name = session?.live_name ?? null;
+                        live_description = session?.live_description ?? null;
+                    }
+                    return {
+                        live_started_at,
+                        viewerCount,
+                        live_session_id,
+                        broadcast_status,
+                        live_name,
+                        live_description,
+                    };
+                }
+            );
             res.json(payload);
         } catch (error) {
             console.error('Get live stats error:', error);
@@ -888,15 +904,14 @@ class LessonController {
             const live_name = updated.live_name ?? null;
             const live_description = updated.live_description ?? null;
             try {
-                const getIo = require('../socket').getIo;
-                getIo().to(lessonId).emit('liveStatsUpdated', {
+                liveStatsBroadcast.broadcastLiveStats(lessonId, {
                     broadcast_status,
                     live_started_at,
                     viewerCount,
                     live_session_id,
                     live_name,
                     live_description,
-                });
+                }, { force: true });
             } catch (_) {}
             res.json({ broadcast_status });
         } catch (error) {
@@ -969,15 +984,14 @@ class LessonController {
                 live_description = session?.live_description ?? null;
             }
             try {
-                const getIo = require('../socket').getIo;
-                getIo().to(lessonId).emit('liveStatsUpdated', {
+                liveStatsBroadcast.broadcastLiveStats(lessonId, {
                     broadcast_status,
                     live_started_at,
                     viewerCount,
                     live_session_id: liveSessionId,
                     live_name,
                     live_description,
-                });
+                }, { force: true });
             } catch (_) {}
             res.json({
                 ok: true,
@@ -1016,15 +1030,14 @@ class LessonController {
                 live_started_at = await lessonService.getLiveStartedAt(lessonId);
             }
             try {
-                const getIo = require('../socket').getIo;
-                getIo().to(lessonId).emit('liveStatsUpdated', {
+                liveStatsBroadcast.broadcastLiveStats(lessonId, {
                     broadcast_status,
                     live_started_at,
                     viewerCount,
                     live_session_id,
                     live_name,
                     live_description,
-                });
+                }, { force: true });
             } catch (_) {}
             res.json({ ok: true });
         } catch (error) {
@@ -1037,19 +1050,15 @@ class LessonController {
         try {
             if (req.user.role !== 'student') return res.status(403).json({ error: 'Students only' });
             const lessonId = req.params.id;
-            const lesson = await lessonService.getLessonById(lessonId);
-            if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
             await liveWatchService.heartbeat(lessonId, req.user.id);
-            const course = await courseService.getCourseById(lesson.course_id, req.user?.id, req.user?.role);
-            const live_session_id = lesson?.current_live_session_id || null;
-            const viewerCount = await liveWatchService.getViewerCount(lessonId, course?.teacher_id, live_session_id);
-            try {
-                const getIo = require('../socket').getIo;
-                getIo().to(lessonId).emit('liveStatsUpdated', {
-                    viewerCount,
-                    live_session_id,
-                });
-            } catch (_) {}
+            const access = await liveAccessService.resolveLiveAccess(req, lessonId);
+            if (!access.ok) return res.status(access.status).json({ error: access.error });
+            const live_session_id = access.lesson?.current_live_session_id || null;
+            const viewerCount = await ttlCache.getOrSet(
+                `liveViewers:${lessonId}:${live_session_id || 'none'}`,
+                liveDelivery.viewerCountCacheMs,
+                () => liveWatchService.getViewerCount(lessonId, access.teacherId, live_session_id)
+            );
             res.json({ ok: true, viewerCount });
         } catch (error) {
             console.error('Live watch heartbeat error:', error);
@@ -1447,53 +1456,23 @@ class LessonController {
     async getLivePlaylist(req, res) {
         try {
             const lessonId = req.params.id;
-            const lesson = await liveStreamCache.cached(
-                `lesson:${lessonId}`,
-                liveStreamCache.TTL_MS.lessonRow,
-                () => lessonService.getLessonById(lessonId)
-            );
-            if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
+            const access = await liveAccessService.resolveLiveAccess(req, lessonId, {
+                requireActiveSession: true,
+                provider: 'r2_live',
+            });
+            if (!access.ok) return res.status(access.status).json({ error: access.error });
 
-            const course = await liveStreamCache.cached(
-                `course:${lesson.course_id}:${req.user?.id}:${req.user?.role}`,
-                liveStreamCache.TTL_MS.courseRow,
-                () => courseService.getCourseById(lesson.course_id, req.user?.id, req.user?.role)
-            );
-            if (!course) return res.status(404).json({ error: 'Course not found' });
-
-            const activeSession = await liveStreamCache.cached(
-                `activeSession:${lessonId}`,
-                liveStreamCache.TTL_MS.activeSession,
-                () => liveSessionService.getActiveByLesson(lessonId)
-            );
-            if (!activeSession || activeSession.provider !== 'r2_live') {
-                return res.status(404).json({ error: 'No active R2 live session.' });
-            }
-
-            const isTeacher = isTeacherWorkspaceUser(req) && course.teacher_id === workspaceTeacherId(req);
-            if (req.user.role === 'student') {
-                const enrolled = await liveStreamCache.cached(
-                    `enrolled:${req.user.id}:${lesson.course_id}`,
-                    liveStreamCache.TTL_MS.enrolled,
-                    () => courseService.isEnrolled(req.user.id, lesson.course_id)
-                );
-                if (!enrolled) return res.status(403).json({ error: 'Purchase this course to watch the live stream.' });
-                if (!lesson.is_live && activeSession.status !== 'active') {
-                    return res.status(404).json({ error: 'This lesson is not live.' });
-                }
-            } else if (!isTeacher) {
-                return res.status(403).json({ error: 'Access denied' });
-            }
-
+            const { activeSession } = access;
             const apiBase = getLivePlaylistApiBase(req, lessonId);
             const accessToken = req.headers.authorization?.replace(/^Bearer\s+/i, '') || req.query.token || null;
             const pathName = activeSession.ingest_stream_key
                 ? r2LiveStorage.getMediamtxPathName(activeSession.ingest_stream_key)
                 : null;
+            const useCdn = await liveCdnDeliveryService.shouldServeViaCdn(activeSession);
+            const r2Prefix = r2LiveStorage.getLiveSessionPrefix(activeSession.id);
 
-            // MediaMTX passthrough — child playlists and segments of the fallback stream.
-            if (req.query.mtx) {
-                if (!pathName) return res.status(404).json({ error: 'Live stream is not ready yet.' });
+            // MediaMTX passthrough — used during cold start (origin) or when CDN is disabled.
+            if (req.query.mtx && pathName && !useCdn) {
                 const resource = liveMediamtxProxyService.sanitizeResource(String(req.query.mtx));
                 try {
                     if (liveMediamtxProxyService.isSegmentResource(resource)) {
@@ -1513,13 +1492,45 @@ class LessonController {
 
             const subpath = (req.query.subpath && String(req.query.subpath)) || 'master.m3u8';
             const safeSub = subpath.replace(/\.\./g, '').replace(/^\/+/, '');
-            const r2Prefix = r2LiveStorage.getLiveSessionPrefix(activeSession.id);
             const r2Key = `${r2Prefix}/${safeSub}`;
             const isActiveLive = activeSession.status === 'active' && !!pathName;
 
-            // While the teacher is live, always serve real-time HLS from MediaMTX.
-            // R2 mirror is for recording/VOD — serving it mid-stream breaks playback
-            // (stale segments, mixed init prefixes after WHIP reconnect).
+            // CDN scale path (YouTube/FB model): playlists via API, segments at CDN edge.
+            if (useCdn) {
+                if (req.query.mtx && liveMediamtxProxyService.isSegmentResource(String(req.query.mtx))) {
+                    const mtxName = liveMediamtxProxyService.sanitizeResource(String(req.query.mtx));
+                    const file = mtxName.includes('/') ? mtxName.split('/').pop() : mtxName;
+                    const segKey = `${r2Prefix}/720p/${file}`;
+                    const cdnUrl = await liveCdnDeliveryService.getCdnRedirectForSegment(segKey);
+                    if (cdnUrl) return res.redirect(302, cdnUrl);
+                }
+
+                if (safeSub.endsWith('.m3u8') && await r2Storage.objectExists(r2Key)) {
+                    const body = await liveCdnDeliveryService.getLivePlaylistFromR2(
+                        r2Key, r2Prefix, safeSub, apiBase, accessToken
+                    );
+                    res.set('Content-Type', 'application/vnd.apple.mpegurl');
+                    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+                    return res.send(body);
+                }
+
+                if (liveMediamtxProxyService.isSegmentResource(safeSub)) {
+                    const cdnUrl = await liveCdnDeliveryService.getCdnRedirectForSegment(r2Key);
+                    if (cdnUrl) return res.redirect(302, cdnUrl);
+                }
+            }
+
+            // R2 mirror ready but CDN edge not yet — serve playlists via API proxy (transition).
+            if (isActiveLive && activeSession.hls_ready_at && safeSub.endsWith('.m3u8') && await r2Storage.objectExists(r2Key)) {
+                const body = await hlsDeliveryService.getPlaylistBody(
+                    r2Key, r2Prefix, apiBase, safeSub, accessToken, { livePlaylist: true }
+                );
+                res.set('Content-Type', 'application/vnd.apple.mpegurl');
+                res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+                return res.send(body);
+            }
+
+            // Cold start: serve real-time HLS from MediaMTX origin until CDN mirror is ready.
             if (isActiveLive && safeSub === 'master.m3u8') {
                 try {
                     const body = await liveMediamtxProxyService.getPlaylistBody(
@@ -1561,7 +1572,6 @@ class LessonController {
                 return res.send(body);
             }
 
-            // R2 not populated yet — serve directly from MediaMTX so students see video immediately.
             if (pathName && safeSub === 'master.m3u8') {
                 try {
                     const body = await liveMediamtxProxyService.getPlaylistBody(

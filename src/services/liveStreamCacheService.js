@@ -1,42 +1,35 @@
 /**
- * Short-lived in-memory cache for live HLS endpoints.
- * Cuts repeated DB hits when many students poll playlists/segments.
+ * Short-lived cache for live HLS endpoints (Redis-backed when REDIS_URL is set).
  */
+const ttlCache = require('../utils/ttlCache');
+
 const TTL_MS = {
   activeSession: 2500,
   lessonRow: 5000,
   courseRow: 5000,
+  courseMeta: 60000,
   enrolled: 60000,
+  liveStats: 3000,
+  viewerCount: 5000,
 };
 
-const store = new Map();
+async function cached(key, ttlMs, loader) {
+  return ttlCache.getOrSet(key, ttlMs, loader);
+}
 
 function cacheGet(key) {
-  const entry = store.get(key);
-  if (!entry) return undefined;
-  if (Date.now() > entry.expiresAt) {
-    store.delete(key);
-    return undefined;
-  }
-  return entry.value;
+  return ttlCache.get(key);
 }
 
 function cacheSet(key, value, ttlMs) {
-  store.set(key, { value, expiresAt: Date.now() + ttlMs });
-}
-
-async function cached(key, ttlMs, loader) {
-  const hit = cacheGet(key);
-  if (hit !== undefined) return hit;
-  const value = await loader();
-  cacheSet(key, value, ttlMs);
-  return value;
+  ttlCache.set(key, value, ttlMs);
 }
 
 function invalidateLesson(lessonId) {
-  for (const key of store.keys()) {
-    if (key.includes(String(lessonId))) store.delete(key);
-  }
+  const id = String(lessonId);
+  ttlCache.delete(`lesson:${id}`);
+  ttlCache.delete(`activeSession:${id}`);
+  ttlCache.delete(`liveStats:${id}`);
 }
 
 module.exports = {

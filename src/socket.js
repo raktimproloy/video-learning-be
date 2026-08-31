@@ -2,9 +2,12 @@ const socketIo = require('socket.io');
 const jwt = require('jsonwebtoken');
 const liveChatService = require('./services/liveChatService');
 const lessonService = require('./services/lessonService');
-const courseService = require('./services/courseService');
 const liveWatchService = require('./services/liveWatchService');
 const liveSessionService = require('./services/liveSessionService');
+const liveStatsBroadcast = require('./services/liveStatsBroadcastService');
+const liveAccessService = require('./services/liveAccessService');
+const ttlCache = require('./utils/ttlCache');
+const liveDelivery = require('./config/liveDelivery');
 const { isOriginAllowed } = require('./config/cors');
 
 let io;
@@ -76,10 +79,14 @@ const initSocket = (server) => {
                 try {
                     const lesson = await lessonService.getLessonById(roomId).catch(() => null);
                     if (!lesson) return;
-                    const course = await courseService.getCourseById(lesson.course_id).catch(() => null);
-                    if (!course) return;
+                    const courseMeta = await liveAccessService.getCourseMeta(lesson.course_id).catch(() => null);
+                    if (!courseMeta) return;
                     const live_session_id = lesson.current_live_session_id || null;
-                    const viewerCount = await liveWatchService.getViewerCount(roomId, course.teacher_id, live_session_id);
+                    const viewerCount = await ttlCache.getOrSet(
+                        `liveViewers:${roomId}:${live_session_id || 'none'}`,
+                        liveDelivery.viewerCountCacheMs,
+                        () => liveWatchService.getViewerCount(roomId, courseMeta.teacher_id, live_session_id)
+                    );
                     let broadcast_status = 'ended';
                     let live_name = null;
                     let live_description = null;
@@ -91,7 +98,7 @@ const initSocket = (server) => {
                         live_description = session?.live_description ?? null;
                         live_started_at = await lessonService.getLiveStartedAt(roomId).catch(() => null);
                     }
-                    io.to(roomId).emit('liveStatsUpdated', {
+                    liveStatsBroadcast.emitLiveStatsToSocket(socket, {
                         viewerCount,
                         broadcast_status,
                         live_started_at,

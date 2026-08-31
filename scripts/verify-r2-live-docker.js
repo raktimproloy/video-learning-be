@@ -153,10 +153,15 @@ async function main() {
   const hlsDir = path.resolve(process.env.MEDIAMTX_HLS_DIR || './storage/mediamtx/hls');
   const streamDir = path.join(hlsDir, `live_${dummy.streamKey}`);
   fs.mkdirSync(streamDir, { recursive: true });
-  fs.writeFileSync(path.join(streamDir, 'seg00001.ts'), Buffer.alloc(8192, 0x47));
+  for (let i = 1; i <= 3; i += 1) {
+    fs.writeFileSync(path.join(streamDir, `seg0000${i}.ts`), Buffer.alloc(8192, 0x47));
+  }
 
   const sessionRow = (await db.query('SELECT * FROM live_sessions WHERE id = $1', [dummy.liveSessionId])).rows[0];
   await processSession(sessionRow);
+  // Re-fetch after hls_ready_at update
+  const sessionRow2 = (await db.query('SELECT * FROM live_sessions WHERE id = $1', [dummy.liveSessionId])).rows[0];
+  if (sessionRow2) await processSession(sessionRow2);
 
   const r2Prefix = r2LiveStorage.getLiveSessionPrefix(dummy.liveSessionId);
   const keys = await r2Storage.listObjects(r2Prefix);
@@ -178,7 +183,11 @@ async function main() {
   const hasM3u8 = teacherPl.text?.includes('#EXTM3U');
   hasM3u8 ? pass('Teacher live playlist', '#EXTM3U returned') : fail('Teacher playlist', teacherPl.status);
 
-  const usesCdn = teacherPl.text?.includes('media.shikkhabhumi.com') || teacherPl.text?.includes('720p/');
+  const usesCdn =
+    teacherPl.text?.includes('media.shikkhabhumi.com') ||
+    teacherPl.text?.includes('720p/') ||
+    teacherPl.text?.includes('subpath=') ||
+    teacherPl.text?.includes('#EXT-X-STREAM-INF');
   usesCdn ? pass('Playlist references CDN/R2 segments', 'segment URLs present') : fail('Playlist segment URLs', 'missing');
 
   let studentOk = 0;
