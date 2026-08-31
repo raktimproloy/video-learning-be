@@ -1,0 +1,26 @@
+{
+  "runId": "mtggosp4",
+  "startedAt": "2026-08-30T23:49:47.465Z",
+  "frontend": "http://localhost:3000",
+  "api": "http://localhost:8080",
+  "provider": "r2_live",
+  "metrics": {},
+  "timeline": [
+    {
+      "t": 1788133787466,
+      "event": "seed",
+      "detail": "dummy teacher + student"
+    },
+    {
+      "t": 1788133788761,
+      "event": "teacher",
+      "detail": "login"
+    }
+  ],
+  "checks": [],
+  "save": null,
+  "error": "page.evaluate: SecurityError: Failed to read the 'localStorage' property from 'Window': Access is denied for this document.\n    at UtilityScript.evaluate (<anonymous>:236:17)\n    at UtilityScript.<anonymous> (<anonymous>:1:44)",
+  "finishedAt": "2026-08-30T23:49:49.201Z",
+  "ok": false,
+  "screenshot": "D:\\Encryption Learning Platfrom\\Main\\backend\\scripts\\r2-live-browser-error-mtggosp4.png"
+}

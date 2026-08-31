@@ -1,0 +1,93 @@
+{
+  "runId": "mtggw8gm",
+  "startedAt": "2026-08-30T23:55:34.486Z",
+  "frontend": "http://localhost:3001",
+  "api": "http://localhost:8080",
+  "provider": "r2_live",
+  "metrics": {
+    "teacherLoginMs": 947,
+    "goLiveMs": 3482,
+    "whipConnectMs": 1399,
+    "teacherPreview": {
+      "videoWidth": 2,
+      "videoHeight": 2,
+      "readyState": 4,
+      "paused": false,
+      "currentTime": 35.4,
+      "playbackRate": 1,
+      "bufferAheadSec": null
+    },
+    "teacherWebRtc": {
+      "outboundFps": null,
+      "outboundBitrateKbps": null,
+      "rttMs": null,
+      "packetsLost": null
+    },
+    "hlsReadyWaitMs": "timeout",
+    "r2SegmentCount": 0,
+    "studentLoginMs": 0
+  },
+  "timeline": [
+    {
+      "t": 1788134134488,
+      "event": "seed",
+      "detail": "dummy teacher + student"
+    },
+    {
+      "t": 1788134135412,
+      "event": "teacher",
+      "detail": "login"
+    },
+    {
+      "t": 1788134136359,
+      "event": "teacher",
+      "detail": "navigate http://localhost:3001/teacher/courses/080eaca2-bc97-4e93-b487-b6e369aabc20/lessons/421c579c-10ec-4876-83e6-21606cf3f75f/live"
+    },
+    {
+      "t": 1788134138631,
+      "event": "teacher",
+      "detail": "clicked Go Live"
+    },
+    {
+      "t": 1788134141980,
+      "event": "teacher",
+      "detail": "session fc5d415d-d5a1-47b1-8357-c1214bb776c1"
+    },
+    {
+      "t": 1788134143053,
+      "event": "teacher",
+      "detail": "clicked Start Live (WHIP publish)"
+    },
+    {
+      "t": 1788134144337,
+      "event": "teacher",
+      "detail": "WHIP connected in 1399ms"
+    },
+    {
+      "t": 1788134144337,
+      "event": "live",
+      "detail": "streaming 35s for HLS segments → R2"
+    },
+    {
+      "t": 1788134240074,
+      "event": "r2",
+      "detail": "0 segments in bucket"
+    },
+    {
+      "t": 1788134240074,
+      "event": "student",
+      "detail": "join live"
+    },
+    {
+      "t": 1788134240074,
+      "event": "student",
+      "detail": "join http://localhost:3001/student/courses/080eaca2-bc97-4e93-b487-b6e369aabc20/lessons/421c579c-10ec-4876-83e6-21606cf3f75f/live"
+    }
+  ],
+  "checks": [],
+  "save": null,
+  "error": "page.waitForFunction: Target page, context or browser has been closed",
+  "finishedAt": "2026-08-30T23:57:47.856Z",
+  "ok": false,
+  "screenshot": "D:\\Encryption Learning Platfrom\\Main\\backend\\scripts\\r2-live-browser-error-mtggw8gm.png"
+}

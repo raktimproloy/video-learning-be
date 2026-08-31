@@ -33,6 +33,13 @@ const LOCAL_SUBDOMAIN_PATTERNS = [
     /^http:\/\/[\w-]+\.127\.0\.0\.1(?::\d+)?$/i,
 ];
 
+/** Dev LAN IPs (phone/tablet testing): http://192.168.x.x:3000 */
+const DEV_LAN_PATTERNS = [
+    /^http:\/\/192\.168\.\d{1,3}\.\d{1,3}(?::\d+)?$/i,
+    /^http:\/\/10\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?$/i,
+    /^http:\/\/172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}(?::\d+)?$/i,
+];
+
 function normalizeOrigin(origin) {
     if (!origin || typeof origin !== 'string') return null;
     return origin.trim().replace(/\/$/, '');
@@ -76,9 +83,10 @@ function isOriginAllowed(origin) {
     if (!normalized) return false;
     if (allowlistSet.has(normalized)) return true;
     if (WILDCARD_PATTERNS.some((rx) => rx.test(normalized))) return true;
-    // Allow local institute subdomains in non-production
+    // Allow local institute subdomains + LAN IPs in non-production
     if (process.env.NODE_ENV !== 'production') {
         if (LOCAL_SUBDOMAIN_PATTERNS.some((rx) => rx.test(normalized))) return true;
+        if (DEV_LAN_PATTERNS.some((rx) => rx.test(normalized))) return true;
     }
     return false;
 }

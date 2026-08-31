@@ -5,7 +5,7 @@
  */
 const db = require('../../db');
 
-const PROVIDERS = ['agora', 'stream', '100ms', 'youtube', 'aws_ivs'];
+const PROVIDERS = ['agora', 'stream', '100ms', 'youtube', 'aws_ivs', 'r2_live'];
 
 /**
  * Record usage for a completed live session. Call when session ends (endDiscarded or markSaved).
@@ -84,6 +84,11 @@ async function getRemainingMinutes(provider) {
  * @returns {{ provider: string }}
  */
 async function getProviderWithFreeMinutes(liveSettings = {}) {
+    const liveDelivery = require('../config/liveDelivery');
+    if (liveDelivery.forceProvider && PROVIDERS.includes(liveDelivery.forceProvider)) {
+        return { provider: liveDelivery.forceProvider };
+    }
+
     const enabled = (key) => liveSettings[key] === true;
     const packages = await db.query(
         `SELECT provider, free_minutes_cap, display_order, is_fallback_only
@@ -97,6 +102,7 @@ async function getProviderWithFreeMinutes(liveSettings = {}) {
         stream: enabled('streamEnabled'),
         '100ms': enabled('hundredMsEnabled'),
         youtube: enabled('youtubeEnabled'),
+        r2_live: enabled('r2LiveEnabled'),
     };
 
     for (const pkg of packages) {

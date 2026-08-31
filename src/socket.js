@@ -175,4 +175,20 @@ const getIo = () => {
     return io;
 };
 
-module.exports = { initSocket, getIo };
+function emitLiveHlsReady(lessonId, sessionId) {
+    if (!io) return;
+    io.to(lessonId).emit('live:hls_ready', { lessonId, sessionId });
+}
+
+function wireLiveEventBus() {
+    const { subscribeLiveEvents } = require('./utils/liveEventBus');
+    subscribeLiveEvents((payload) => {
+        if (payload?.type === 'hls_ready' && payload.lessonId) {
+            emitLiveHlsReady(payload.lessonId, payload.sessionId);
+        }
+    }).catch((err) => {
+        console.warn('Live event bus wiring failed:', err.message);
+    });
+}
+
+module.exports = { initSocket, getIo, emitLiveHlsReady, wireLiveEventBus };

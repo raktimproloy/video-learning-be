@@ -50,6 +50,24 @@ function rewriteExtXKeyLine(line, apiOrigin, accessToken) {
   });
 }
 
+/** Rewrite #EXT-X-MAP init-segment URIs for live fmp4 playlists served via subpath proxy. */
+function rewriteExtXMapLine(line, apiStreamBase, playlistSubpath, accessToken, livePlaylist) {
+  if (!/#EXT-X-MAP:/i.test(line)) return line;
+  const playlistDir = playlistDirFromSubpath(playlistSubpath);
+  return line.replace(/URI="([^"]+)"/i, (_, uri) => {
+    if (uri.startsWith('http://') || uri.startsWith('https://')) {
+      return `URI="${withAccessToken(uri, accessToken)}"`;
+    }
+    const rel = uri.includes('/')
+      ? uri
+      : (playlistDir ? `${playlistDir}/${uri}` : uri);
+    const url = livePlaylist
+      ? `${apiStreamBase}?subpath=${encodeURIComponent(rel)}`
+      : `${apiStreamBase}/${rel.replace(/^\//, '')}`;
+    return `URI="${withAccessToken(url, accessToken)}"`;
+  });
+}
+
 /**
  * Build a direct segment URL after auth (presigned R2 or CDN public URL).
  */
@@ -73,8 +91,9 @@ async function buildSegmentDeliveryUrl(r2Key) {
  * - EXT-X-KEY → absolute get-key URL (+ token)
  * - .ts → CDN/presign when enabled
  */
-async function rewritePlaylistContent(content, videoR2Key, apiStreamBase, playlistSubpath, accessToken = null) {
+async function rewritePlaylistContent(content, videoR2Key, apiStreamBase, playlistSubpath, accessToken = null, opts = {}) {
   const { cdnSegmentDelivery } = videoDelivery;
+  const livePlaylist = opts.livePlaylist === true;
   const rewriteSegments = cdnSegmentDelivery !== 'off';
   const apiOrigin = originFromBase(apiStreamBase);
   const playlistDir = playlistDirFromSubpath(playlistSubpath);
@@ -89,16 +108,25 @@ async function rewritePlaylistContent(content, videoR2Key, apiStreamBase, playli
     if (!trimmed) return { type: 'raw', value: line };
 
     if (trimmed.startsWith('#')) {
+      let tagLine = rewriteExtXKeyLine(line, apiOrigin, accessToken);
+      tagLine = rewriteExtXMapLine(tagLine, apiStreamBase, playlistSubpath, accessToken, livePlaylist);
       return {
         type: 'raw',
-        value: rewriteExtXKeyLine(line, apiOrigin, accessToken),
+        value: tagLine,
       };
     }
 
     if (trimmed.endsWith('.m3u8')) {
       let url = trimmed;
       if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
-        url = `${apiStreamBase}/${trimmed.replace(/^\//, '')}`;
+        if (livePlaylist) {
+          const rel = trimmed.includes('/')
+            ? trimmed
+            : (playlistDir ? `${playlistDir}/${trimmed}` : trimmed);
+          url = `${apiStreamBase}?subpath=${encodeURIComponent(rel)}`;
+        } else {
+          url = `${apiStreamBase}/${trimmed.replace(/^\//, '')}`;
+        }
       }
       return { type: 'raw', value: withAccessToken(url, accessToken) };
     }
@@ -111,6 +139,14 @@ async function rewritePlaylistContent(content, videoR2Key, apiStreamBase, playli
       const idx = segmentJobs.length;
       segmentJobs.push(segmentKey);
       return { type: 'segment', jobIndex: idx, fallback: line };
+    }
+
+    if (livePlaylist && /\.(ts|m4s|mp4)$/i.test(trimmed)) {
+      const segmentRel = trimmed.includes('/')
+        ? trimmed
+        : (playlistDir ? `${playlistDir}/${trimmed}` : trimmed);
+      const url = `${apiStreamBase}?subpath=${encodeURIComponent(segmentRel)}`;
+      return { type: 'raw', value: withAccessToken(url, accessToken) };
     }
 
     return { type: 'raw', value: line };
@@ -149,9 +185,9 @@ async function readObjectAsString(key) {
 /**
  * Fetch playlist from R2, rewrite key/child URLs and optional CDN/presign segment URLs.
  */
-async function getPlaylistBody(r2Key, videoR2Key, apiStreamBase, playlistSubpath, accessToken = null) {
+async function getPlaylistBody(r2Key, videoR2Key, apiStreamBase, playlistSubpath, accessToken = null, opts = {}) {
   const content = await readObjectAsString(r2Key);
-  return rewritePlaylistContent(content, videoR2Key, apiStreamBase, playlistSubpath, accessToken);
+  return rewritePlaylistContent(content, videoR2Key, apiStreamBase, playlistSubpath, accessToken, opts);
 }
 
 module.exports = {

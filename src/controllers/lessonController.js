@@ -17,12 +17,44 @@ const userService = require('../services/userService');
 const awsIvsService = require('../services/awsIvsService');
 const hundredMsService = require('../services/hundredMsService');
 const streamVideoService = require('../services/streamVideoService');
+const liveIngestService = require('../services/liveIngestService');
+const r2LiveStorage = require('../services/r2LiveStorageService');
+const liveMediamtxProxyService = require('../services/liveMediamtxProxyService');
+const hlsDeliveryService = require('../services/hlsDeliveryService');
 const r2Storage = require('../services/r2StorageService');
+const { getAllowedOrigin } = require('../config/cors');
 const fs = require('fs');
 const path = require('path');
 
 function workspaceTeacherId(req) {
     return req.effectiveTeacherId || req.user.id;
+}
+
+/** HLS playlist + segment URLs rewritten for browser (same-origin proxy avoids CORS). */
+function getLivePlaylistApiBase(req, lessonId) {
+    let origin = getAllowedOrigin(req.headers.origin);
+    if (!origin) {
+        const ref = String(req.headers.referer || req.headers.referrer || '');
+        const match = ref.match(/^(https?:\/\/[^/]+)/i);
+        if (match) origin = getAllowedOrigin(match[1]);
+    }
+    if (!origin) {
+        const fwdHost = req.headers['x-forwarded-host'];
+        const fwdProto = req.headers['x-forwarded-proto'] || 'http';
+        if (fwdHost) {
+            const candidate = getAllowedOrigin(`${fwdProto}://${String(fwdHost).split(',')[0].trim()}`);
+            if (candidate) origin = candidate;
+        }
+    }
+    if (origin) {
+        return `${origin}/api-backend/lessons/${lessonId}/live/playlist`;
+    }
+    const frontend = process.env.FRONTEND_URL ? String(process.env.FRONTEND_URL).replace(/\/$/, '') : null;
+    if (frontend && process.env.NODE_ENV === 'production') {
+        return `${frontend}/api-backend/lessons/${lessonId}/live/playlist`;
+    }
+    const base = String(process.env.BASE_URL || 'http://localhost:8080').replace(/\/$/, '');
+    return `${base}/v1/lessons/${lessonId}/live/playlist`;
 }
 
 function isTeacherWorkspaceUser(req) {
@@ -32,8 +64,8 @@ function isTeacherWorkspaceUser(req) {
 const STAGING_DIR = path.resolve(__dirname, '../../staging');
 const UPLOADS_LESSONS = path.resolve(__dirname, '../../uploads/lessons');
 
-/** Return live credentials for the given provider (agora | stream | 100ms | aws_ivs | youtube). */
-async function getLiveCredsForProvider(provider, channelName, uid, role) {
+/** Return live credentials for the given provider (agora | stream | 100ms | aws_ivs | youtube | r2_live). */
+async function getLiveCredsForProvider(provider, channelName, uid, role, opts = {}) {
     if (provider === 'agora') {
         return agoraService.generateRtcToken(channelName, uid, role);
     }
@@ -45,6 +77,11 @@ async function getLiveCredsForProvider(provider, channelName, uid, role) {
     }
     if (provider === 'aws_ivs') {
         return awsIvsService.getCredentials(channelName, uid, role);
+    }
+    if (provider === 'r2_live') {
+        if (!opts.liveSessionId) return null;
+        const baseUrl = process.env.BASE_URL || '';
+        return liveIngestService.getCredentials(channelName, opts.liveSessionId, uid, role, baseUrl);
     }
     if (provider === 'youtube') {
         return null; // YouTube: not implemented; configure and add YouTube Live API if needed
@@ -366,6 +403,7 @@ class LessonController {
                     hundredMsEnabled: true,
                     awsIvsEnabled: false,
                     youtubeEnabled: false,
+                    r2LiveEnabled: false,
                 };
 
                 if (!liveSettings.liveClassEnabled && !currentUser.core_member) {
@@ -387,8 +425,10 @@ class LessonController {
                     else if (provider === '100ms' && !liveSettings.hundredMsEnabled) provider = null;
                     else if (provider === 'aws_ivs' && !liveSettings.awsIvsEnabled) provider = null;
                     else if (provider === 'youtube' && !liveSettings.youtubeEnabled) provider = null;
+                    else if (provider === 'r2_live' && !liveSettings.r2LiveEnabled) provider = null;
                     if (!provider) {
-                        if (liveSettings.agoraEnabled) provider = 'agora';
+                        if (liveSettings.r2LiveEnabled) provider = 'r2_live';
+                        else if (liveSettings.agoraEnabled) provider = 'agora';
                         else if (liveSettings.streamEnabled) provider = 'stream';
                         else if (liveSettings.hundredMsEnabled) provider = '100ms';
                         else if (liveSettings.youtubeEnabled) provider = 'youtube';
@@ -417,10 +457,11 @@ class LessonController {
                     const updatedLesson = await lessonService.updateLiveStatus(id, true, sessionData);
                     const uid = Math.abs(req.user.id.split('').reduce((a, c) => ((a << 5) - a) + c.charCodeAt(0), 0)) % 2147483647;
                     const role = req.user.role === 'teacher' ? 'publisher' : 'subscriber';
-                    let creds = await getLiveCredsForProvider(provider, id, uid, role);
+                    let creds = await getLiveCredsForProvider(provider, id, uid, role, { liveSessionId: liveSession.id });
                     let effectiveProvider = provider;
                     if (!creds) {
-                        const tryOrder = ['agora', 'stream', '100ms', 'youtube', 'aws_ivs'].filter(p =>
+                        const tryOrder = ['r2_live', 'agora', 'stream', '100ms', 'youtube', 'aws_ivs'].filter(p =>
+                            (p === 'r2_live' && liveSettings.r2LiveEnabled) ||
                             (p === 'agora' && liveSettings.agoraEnabled) ||
                             (p === 'stream' && liveSettings.streamEnabled) ||
                             (p === '100ms' && liveSettings.hundredMsEnabled) ||
@@ -428,7 +469,7 @@ class LessonController {
                             (p === 'aws_ivs' && liveSettings.awsIvsEnabled)
                         );
                         for (const p of tryOrder) {
-                            creds = await getLiveCredsForProvider(p, id, uid, role);
+                            creds = await getLiveCredsForProvider(p, id, uid, role, { liveSessionId: liveSession.id });
                             if (creds) { effectiveProvider = p; break; }
                         }
                     }
@@ -473,6 +514,7 @@ class LessonController {
                 hundredMsEnabled: true,
                 awsIvsEnabled: false,
                 youtubeEnabled: false,
+                r2LiveEnabled: false,
             };
 
             if (!liveSettings.liveClassEnabled && !currentUser.core_member) {
@@ -486,7 +528,8 @@ class LessonController {
                 (p === 'stream' && liveSettings.streamEnabled) ||
                 (p === '100ms' && liveSettings.hundredMsEnabled) ||
                 (p === 'aws_ivs' && liveSettings.awsIvsEnabled) ||
-                (p === 'youtube' && liveSettings.youtubeEnabled);
+                (p === 'youtube' && liveSettings.youtubeEnabled) ||
+                (p === 'r2_live' && liveSettings.r2LiveEnabled);
             if (!providerEnabled(provider)) {
                 return res.status(503).json({ error: `${provider} live service is currently disabled.` });
             }
@@ -501,7 +544,9 @@ class LessonController {
                 if (!enrolled) return res.status(403).json({ error: 'Purchase this course to watch the live stream.' });
                 if (!lesson.is_live) return res.status(404).json({ error: 'This lesson is not live.' });
             }
-            const creds = await getLiveCredsForProvider(provider, id, uid, role);
+            const creds = await getLiveCredsForProvider(provider, id, uid, role, {
+                liveSessionId: activeSession?.id || lesson.current_live_session_id,
+            });
             if (!creds) return res.status(503).json({ error: `${provider} is not configured.` });
             return res.json({ ...creds, provider });
         } catch (error) {
@@ -1275,13 +1320,6 @@ class LessonController {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
             const lessonId = req.params.id;
-            if (!req.file || (!req.file.buffer && !req.file.path)) {
-                return res.status(400).json({ error: 'No recording file uploaded.' });
-            }
-            const sizeBytes = req.file.buffer ? req.file.buffer.length : (req.file.size || 0);
-            if (sizeBytes < 1000) {
-                return res.status(400).json({ error: 'Recording is too short or invalid. Record for at least a few seconds before saving.' });
-            }
 
             const lesson = await lessonService.getLessonById(lessonId);
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
@@ -1293,6 +1331,20 @@ class LessonController {
             const liveSession = await liveSessionService.getActiveByLesson(lessonId);
             if (!liveSession) {
                 return res.status(400).json({ error: 'No active live session found. Start a live stream and record before saving.' });
+            }
+
+            const isR2Live = liveSession.provider === 'r2_live';
+
+            if (!isR2Live) {
+                if (!req.file || (!req.file.buffer && !req.file.path)) {
+                    return res.status(400).json({ error: 'No recording file uploaded.' });
+                }
+                const sizeBytes = req.file.buffer ? req.file.buffer.length : (req.file.size || 0);
+                if (sizeBytes < 1000) {
+                    return res.status(400).json({ error: 'Recording is too short or invalid. Record for at least a few seconds before saving.' });
+                }
+            } else if (!r2Storage.isConfigured) {
+                return res.status(503).json({ error: 'R2 storage is not configured for live save.' });
             }
 
             const videoId = liveSession.id;
@@ -1317,18 +1369,36 @@ class LessonController {
             }));
 
             const stagingVideoDir = path.join(STAGING_DIR, videoId);
+            const r2Prefix = useR2 ? r2Storage.getVideoKeyPrefix(ownerId, course.id, lessonId, videoId) : null;
+
             const video = await adminService.createVideoWithId(
                 videoId,
                 title,
-                useR2 ? 'r2_staging' : stagingVideoDir,
+                isR2Live && useR2 ? 'r2_live' : (useR2 ? 'r2_staging' : stagingVideoDir),
                 ownerId,
                 lessonId,
                 liveOrder,
-                { storageProvider: useR2 ? 'r2' : 'local', r2Key: null, description: liveDesc, notes, assignments }
+                { storageProvider: useR2 ? 'r2' : 'local', r2Key: isR2Live && useR2 ? r2Prefix : null, description: liveDesc, notes, assignments }
             );
 
-            if (useR2) {
-                const r2Prefix = r2Storage.getVideoKeyPrefix(ownerId, course.id, lessonId, video.id);
+            if (isR2Live && useR2) {
+                const liveSourcePrefix = r2LiveStorage.getLiveSessionPrefix(liveSession.id);
+                const masterExists = await r2Storage.objectExists(`${liveSourcePrefix}/master.m3u8`);
+                if (!masterExists) {
+                    return res.status(400).json({ error: 'No live HLS recording found. Stream for a few seconds before saving.' });
+                }
+                await adminService.updateVideoR2(video.id, r2Prefix);
+                await adminService.createProcessingTask(
+                    ownerId,
+                    video.id,
+                    'h264',
+                    ['720p'],
+                    28,
+                    false,
+                    'live_hls_encrypt',
+                    liveSourcePrefix
+                );
+            } else if (useR2) {
                 const r2StagingKey = `${r2Prefix}/staging/input.webm`;
                 if (req.file.buffer) {
                     await r2Storage.uploadFile(r2StagingKey, req.file.buffer, 'video/webm');
@@ -1336,6 +1406,7 @@ class LessonController {
                     await r2Storage.uploadFromPath(req.file.path, r2StagingKey, 'video/webm');
                 }
                 await adminService.updateVideoR2(video.id, r2Prefix);
+                await adminService.createProcessingTask(ownerId, video.id, 'h264', ['360p', '720p', '1080p'], 28, false);
             } else {
                 if (!fs.existsSync(STAGING_DIR)) fs.mkdirSync(STAGING_DIR, { recursive: true });
                 if (!fs.existsSync(stagingVideoDir)) fs.mkdirSync(stagingVideoDir, { recursive: true });
@@ -1345,14 +1416,12 @@ class LessonController {
                 } else {
                     fs.copyFileSync(req.file.path, dest);
                 }
+                await adminService.createProcessingTask(ownerId, video.id, 'h264', ['360p', '720p', '1080p'], 28, false);
             }
 
-            // Clean up temp uploaded file if using diskStorage
-            if (req.file.path) {
+            if (req.file?.path) {
                 try { fs.unlinkSync(req.file.path); } catch { /* ignore */ }
             }
-
-            await adminService.createProcessingTask(ownerId, video.id, 'h264', ['360p', '720p', '1080p'], 28, false);
 
             const attendeeCount = await liveWatchService.getAttendeeCountBySession(videoId);
             await db.query(
@@ -1366,13 +1435,152 @@ class LessonController {
             await lessonService.updateLiveStatus(lessonId, false, {});
 
             res.status(201).json({
-                message: 'Recording saved. It will be encrypted and processed like other lesson videos.',
+                message: isR2Live
+                    ? 'Live recording saved. Encrypting HLS and preparing VOD...'
+                    : 'Recording saved. It will be encrypted and processed like other lesson videos.',
                 video_id: video.id,
                 lesson_id: lessonId,
             });
         } catch (error) {
             console.error('Save live recording error:', error);
             res.status(500).json({ error: error.message || 'Internal server error' });
+        }
+    }
+
+    /** GET live HLS playlist for r2_live provider (JWT + enrollment). */
+    async getLivePlaylist(req, res) {
+        try {
+            const lessonId = req.params.id;
+            const lesson = await lessonService.getLessonById(lessonId);
+            if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
+
+            const course = await courseService.getCourseById(lesson.course_id, req.user?.id, req.user?.role);
+            if (!course) return res.status(404).json({ error: 'Course not found' });
+
+            const activeSession = await liveSessionService.getActiveByLesson(lessonId);
+            if (!activeSession || activeSession.provider !== 'r2_live') {
+                return res.status(404).json({ error: 'No active R2 live session.' });
+            }
+
+            const isTeacher = isTeacherWorkspaceUser(req) && course.teacher_id === workspaceTeacherId(req);
+            if (req.user.role === 'student') {
+                const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
+                if (!enrolled) return res.status(403).json({ error: 'Purchase this course to watch the live stream.' });
+                if (!lesson.is_live && activeSession.status !== 'active') {
+                    return res.status(404).json({ error: 'This lesson is not live.' });
+                }
+            } else if (!isTeacher) {
+                return res.status(403).json({ error: 'Access denied' });
+            }
+
+            const apiBase = getLivePlaylistApiBase(req, lessonId);
+            const accessToken = req.headers.authorization?.replace(/^Bearer\s+/i, '') || req.query.token || null;
+            const pathName = activeSession.ingest_stream_key
+                ? r2LiveStorage.getMediamtxPathName(activeSession.ingest_stream_key)
+                : null;
+
+            // MediaMTX passthrough — child playlists and segments of the fallback stream.
+            if (req.query.mtx) {
+                if (!pathName) return res.status(404).json({ error: 'Live stream is not ready yet.' });
+                const resource = liveMediamtxProxyService.sanitizeResource(String(req.query.mtx));
+                try {
+                    if (liveMediamtxProxyService.isSegmentResource(resource)) {
+                        const seg = await liveMediamtxProxyService.getSegmentBody(pathName, resource);
+                        res.set('Content-Type', seg.contentType);
+                        res.set('Cache-Control', 'no-store');
+                        return res.send(seg.body);
+                    }
+                    const body = await liveMediamtxProxyService.getPlaylistBody(pathName, resource, apiBase, accessToken);
+                    res.set('Content-Type', 'application/vnd.apple.mpegurl');
+                    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+                    return res.send(body);
+                } catch (_) {
+                    return res.status(404).json({ error: 'Live stream is not ready yet.' });
+                }
+            }
+
+            const subpath = (req.query.subpath && String(req.query.subpath)) || 'master.m3u8';
+            const safeSub = subpath.replace(/\.\./g, '').replace(/^\/+/, '');
+            const r2Prefix = r2LiveStorage.getLiveSessionPrefix(activeSession.id);
+            const r2Key = `${r2Prefix}/${safeSub}`;
+            const isActiveLive = activeSession.status === 'active' && !!pathName;
+
+            // While the teacher is live, always serve real-time HLS from MediaMTX.
+            // R2 mirror is for recording/VOD — serving it mid-stream breaks playback
+            // (stale segments, mixed init prefixes after WHIP reconnect).
+            if (isActiveLive && safeSub === 'master.m3u8') {
+                try {
+                    const body = await liveMediamtxProxyService.getPlaylistBody(
+                        pathName, liveMediamtxProxyService.MASTER_RESOURCE, apiBase, accessToken
+                    );
+                    res.set('Content-Type', 'application/vnd.apple.mpegurl');
+                    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+                    return res.send(body);
+                } catch (_) {
+                    return res.status(404).json({ error: 'Playlist not ready yet.' });
+                }
+            }
+
+            if (liveMediamtxProxyService.isSegmentResource(safeSub)) {
+                if (!isActiveLive && await r2Storage.objectExists(r2Key)) {
+                    const stream = await r2Storage.getObjectStream(r2Key);
+                    res.set('Content-Type', liveMediamtxProxyService.contentTypeForResource(safeSub));
+                    res.set('Cache-Control', 'no-store');
+                    return stream.pipe(res);
+                }
+                if (isActiveLive) {
+                    const mtxName = safeSub.includes('/') ? safeSub.split('/').pop() : safeSub;
+                    try {
+                        const seg = await liveMediamtxProxyService.getSegmentBody(pathName, mtxName);
+                        res.set('Content-Type', seg.contentType);
+                        res.set('Cache-Control', 'no-store');
+                        return res.send(seg.body);
+                    } catch (_) {
+                        return res.status(404).json({ error: 'Segment not ready yet.' });
+                    }
+                }
+                return res.status(404).json({ error: 'Segment not ready yet.' });
+            }
+
+            if (!isActiveLive && await r2Storage.objectExists(r2Key)) {
+                const body = await hlsDeliveryService.getPlaylistBody(r2Key, r2Prefix, apiBase, safeSub, accessToken, { livePlaylist: true });
+                res.set('Content-Type', 'application/vnd.apple.mpegurl');
+                res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+                return res.send(body);
+            }
+
+            // R2 not populated yet — serve directly from MediaMTX so students see video immediately.
+            if (pathName && safeSub === 'master.m3u8') {
+                try {
+                    const body = await liveMediamtxProxyService.getPlaylistBody(
+                        pathName, liveMediamtxProxyService.MASTER_RESOURCE, apiBase, accessToken
+                    );
+                    res.set('Content-Type', 'application/vnd.apple.mpegurl');
+                    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+                    return res.send(body);
+                } catch (_) {
+                    return res.status(404).json({ error: 'Playlist not ready yet.' });
+                }
+            }
+
+            return res.status(404).json({ error: 'Playlist not ready yet.' });
+        } catch (error) {
+            console.error('Get live playlist error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    /** POST internal MediaMTX ingest auth hook. */
+    async liveIngestAuth(req, res) {
+        try {
+            const result = await liveIngestService.validateIngestAuth(req.body || {}, req.headers);
+            if (!result.ok) {
+                return res.status(401).json({ error: result.reason || 'unauthorized' });
+            }
+            return res.status(200).json({ ok: true });
+        } catch (error) {
+            console.error('Live ingest auth error:', error);
+            return res.status(401).json({ error: 'unauthorized' });
         }
     }
 

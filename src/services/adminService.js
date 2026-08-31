@@ -180,7 +180,7 @@ class AdminService {
         return result.rows[0];
     }
 
-    async createProcessingTask(userId, videoId, codecPreference, resolutions, crf, compress, taskType = 'initial') {
+    async createProcessingTask(userId, videoId, codecPreference, resolutions, crf, compress, taskType = 'initial', sourceR2Prefix = null) {
         const allowedCodecs = ['h264', 'h265'];
         if (!allowedCodecs.includes(codecPreference)) {
             throw new Error('Invalid codec preference');
@@ -190,15 +190,15 @@ class AdminService {
         if (invalidRes.length > 0) {
             throw new Error('Invalid resolutions');
         }
-        const allowedTaskTypes = ['initial', 'reencode'];
+        const allowedTaskTypes = ['initial', 'reencode', 'live_hls_encrypt'];
         const safeTaskType = allowedTaskTypes.includes(taskType) ? taskType : 'initial';
 
         const result = await db.query(
             `INSERT INTO video_processing_tasks 
-             (user_id, video_id, codec_preference, resolutions, crf, compress, status, task_type) 
-             VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
+             (user_id, video_id, codec_preference, resolutions, crf, compress, status, task_type, source_r2_prefix) 
+             VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8)
              RETURNING *`,
-            [userId, videoId, codecPreference, resolutions, crf || null, compress || false, safeTaskType]
+            [userId, videoId, codecPreference, resolutions, crf || null, compress || false, safeTaskType, sourceR2Prefix || null]
         );
         return result.rows[0];
     }

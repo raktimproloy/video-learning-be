@@ -49,6 +49,7 @@ router.get(/^\/media\/(.+)$/, (req, res, next) => {
 });
 router.get('/:id/videos', authMiddleware, lessonController.getLessonVideos);
 router.get('/:id/live/token', authMiddleware, lessonController.getLiveToken);
+router.get('/:id/live/playlist', authMiddleware, lessonController.getLivePlaylist);
 router.get('/:id/live/chat', authMiddleware, lessonController.getLiveChat);
 router.get('/:id/live/materials', authMiddleware, lessonController.getLiveMaterials);
 router.get('/:id/live/exams', authMiddleware, lessonController.getLiveExams);

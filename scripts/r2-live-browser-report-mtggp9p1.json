@@ -1,0 +1,33 @@
+{
+  "runId": "mtggp9p1",
+  "startedAt": "2026-08-30T23:50:09.493Z",
+  "frontend": "http://localhost:3000",
+  "api": "http://localhost:8080",
+  "provider": "r2_live",
+  "metrics": {
+    "teacherLoginMs": 962
+  },
+  "timeline": [
+    {
+      "t": 1788133809494,
+      "event": "seed",
+      "detail": "dummy teacher + student"
+    },
+    {
+      "t": 1788133810408,
+      "event": "teacher",
+      "detail": "login"
+    },
+    {
+      "t": 1788133811371,
+      "event": "teacher",
+      "detail": "navigate http://localhost:3000/teacher/courses/9536c6f9-5f5c-4334-88ed-4b7609b5cd22/lessons/94b4c9f9-a980-4cdd-9ba2-097bf0e0474f/live"
+    }
+  ],
+  "checks": [],
+  "save": null,
+  "error": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n  - waiting for locator('#live_name') to be visible\n",
+  "finishedAt": "2026-08-30T23:50:56.496Z",
+  "ok": false,
+  "screenshot": "D:\\Encryption Learning Platfrom\\Main\\backend\\scripts\\r2-live-browser-error-mtggp9p1.png"
+}

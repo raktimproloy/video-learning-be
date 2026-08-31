@@ -246,3 +246,11 @@ node scripts/r2-orphan-audit.js --json > reports/r2-orphan-$(date +%F).json
 | Lifecycle D (IA) | Storage −10–30% on `original/` library | After 30-day transition |
 
 Free tier: 10 GB storage + 1M Class A + 10M Class B/month.
+
+---
+
+## Live HLS sessions (`live/sessions/`)
+
+Active R2 Live broadcasts write to `live/sessions/{liveSessionId}/`. On discard/end-without-save, the API deletes this prefix. On save, segments are encrypted and promoted to the standard VOD path.
+
+**Orphan safety (Cloudflare R2 Lifecycle):** auto-delete objects under prefix `live/sessions/` older than **7 days**.

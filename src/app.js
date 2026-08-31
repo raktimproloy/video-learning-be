@@ -124,6 +124,18 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 // Static profile images (default avatars for students/teachers)
 app.use('/images', express.static(path.join(__dirname, '../public/images')));
 
+const lessonController = require('./controllers/lessonController');
+const liveDelivery = require('./config/liveDelivery');
+
+// Internal MediaMTX ingest auth (Docker network / VPS only)
+app.post('/v1/internal/live/ingest-auth', express.json(), (req, res, next) => {
+    const qSecret = req.query?.secret;
+    if (qSecret && qSecret !== liveDelivery.ingestAuthSecret) {
+        return res.status(401).json({ error: 'unauthorized' });
+    }
+    return lessonController.liveIngestAuth(req, res, next);
+});
+
 // Routes
 app.use('/v1/settings', settingsRoutes);
 app.use('/v1/auth', authRoutes);

@@ -1,0 +1,38 @@
+{
+  "runId": "mtggtxs5",
+  "startedAt": "2026-08-30T23:53:47.334Z",
+  "frontend": "http://localhost:3001",
+  "api": "http://localhost:8080",
+  "provider": "r2_live",
+  "metrics": {
+    "teacherLoginMs": 1074
+  },
+  "timeline": [
+    {
+      "t": 1788134027335,
+      "event": "seed",
+      "detail": "dummy teacher + student"
+    },
+    {
+      "t": 1788134028329,
+      "event": "teacher",
+      "detail": "login"
+    },
+    {
+      "t": 1788134029403,
+      "event": "teacher",
+      "detail": "navigate http://localhost:3001/teacher/courses/1919ad0b-a0d8-4b79-ab9c-6188f51a12a9/lessons/0286fc18-aaba-46fc-bcde-aa8bc0b131f1/live"
+    },
+    {
+      "t": 1788134054231,
+      "event": "teacher",
+      "detail": "clicked Go Live"
+    }
+  ],
+  "checks": [],
+  "save": null,
+  "error": "page.waitForURL: Timeout 45000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation until \"load\"\n============================================================",
+  "finishedAt": "2026-08-30T23:54:59.245Z",
+  "ok": false,
+  "screenshot": "D:\\Encryption Learning Platfrom\\Main\\backend\\scripts\\r2-live-browser-error-mtggtxs5.png"
+}

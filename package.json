@@ -24,6 +24,8 @@
     "docker:deploy": "bash scripts/vps-deploy.sh",
     "docker:update": "bash scripts/vps-update.sh",
     "r2:preflight": "node scripts/r2-preflight-smoke.js",
+    "test:r2-live": "node scripts/test-r2-live-e2e.js",
+    "test:r2-live:local": "node scripts/test-r2-live-local.js",
     "r2:orphan-audit": "node scripts/r2-orphan-audit.js",
     "r2:reencode-audit": "node scripts/video-reencode-audit.js"
   },
@@ -63,5 +65,8 @@
     "sharp": "^0.34.5",
     "socket.io": "^4.8.3",
     "stream-chat": "^9.38.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.1"
   }
 }

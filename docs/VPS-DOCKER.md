@@ -3,11 +3,14 @@
 Production stack on your VPS:
 
 ```
-Internet → nginx (port 80) → api (Node + Socket.io, RUN_WORKER=0)
-                          → redis (cache + Socket.io adapter)
-         worker (FFmpeg video processing, separate container)
+Internet → nginx (port 80/8080) → api (Node + Socket.io, RUN_WORKER=0)
+                               → mediamtx (WHIP ingest + HLS, bundled)
+                               → redis (cache + Socket.io adapter)
+         worker (FFmpeg + live segment uploader → R2)
          PostgreSQL (Supabase — external, not in Docker)
 ```
+
+**R2 Live:** MediaMTX starts automatically with `docker compose up`. No separate MediaMTX install. WHIP URL = same as `BASE_URL` (nginx proxies `/{stream}/whip`).
 
 ---
 
@@ -75,8 +78,9 @@ npm run docker:deploy
 This will:
 
 1. `docker compose build`
-2. Run migrations (`node run_migrations.js`)
-3. Start `api`, `worker`, `redis`, `nginx`
+2. Derive MediaMTX env from `BASE_URL` (WHIP + WebRTC host)
+3. Run migrations (`node run_migrations.js`)
+4. Start `api`, `worker`, `mediamtx`, `redis`, `nginx`
 
 ### 2.4 Verify
 
@@ -96,9 +100,11 @@ docker compose logs -f api
    ```env
    NEXT_PUBLIC_API_URL=https://api.shikkhabhumi.com/v1
    NEXT_PUBLIC_SOCKET_URL=https://api.shikkhabhumi.com
+   NEXT_PUBLIC_MEDIA_GATEWAY_URL=https://api.shikkhabhumi.com
    NEXT_PUBLIC_SITE_URL=https://shikkhabhumi.com
    NEXT_PUBLIC_ROOT_DOMAIN=shikkhabhumi.com
    ```
+   `NEXT_PUBLIC_MEDIA_GATEWAY_URL` = same as API URL (WHIP goes through nginx on the API host).
 
 ### Teacher institute subdomains (`*.shikkhabhumi.com`)
 

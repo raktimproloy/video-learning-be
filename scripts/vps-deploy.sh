@@ -10,6 +10,10 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
+echo "==> Deriving R2 live / MediaMTX env from BASE_URL..."
+chmod +x scripts/derive-live-env.sh 2>/dev/null || true
+bash scripts/derive-live-env.sh .env
+
 echo "==> Building images..."
 docker compose build
 
@@ -33,6 +37,12 @@ if curl -sf "http://127.0.0.1:${HTTP_PORT}/health" >/dev/null; then
   echo
 else
   echo "WARN: health check failed — run: docker compose logs api"
+fi
+
+if docker compose ps mediamtx 2>/dev/null | grep -q "healthy\|Up"; then
+  echo "OK: MediaMTX (R2 live ingest) is running — bundled with backend stack"
+else
+  echo "WARN: MediaMTX not healthy — run: docker compose logs mediamtx"
 fi
 
 docker compose ps

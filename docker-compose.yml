@@ -1,7 +1,15 @@
 # Shikkhabhumi backend — Docker Compose (VPS production)
+# Includes MediaMTX for R2 Live (WHIP) — no separate MediaMTX install needed.
 # Copy to .env and fill values: cp .env.docker.example .env
+# Deploy: ./scripts/vps-deploy.sh  OR  npm run docker:deploy
 
 name: shikkhabhumi
+
+x-live-env: &live-env
+  MEDIAMTX_INTERNAL_URL: http://mediamtx:8888
+  MEDIAMTX_HLS_DIR: /var/mediamtx/hls
+  LIVE_HLS_SEGMENT_SECONDS: ${LIVE_HLS_SEGMENT_SECONDS:-1}
+  LIVE_HLS_PLAYLIST_WINDOW: ${LIVE_HLS_PLAYLIST_WINDOW:-6}
 
 services:
   api:
@@ -16,11 +24,14 @@ services:
       PORT: "3000"
       RUN_WORKER: "0"
       REDIS_URL: redis://redis:6379
-    # Ensure .env PORT=5000 does not override Docker internal port
+      MEDIAMTX_WHIP_PUBLIC_URL: ${MEDIAMTX_WHIP_PUBLIC_URL:-${BASE_URL:-http://localhost:8080}}
+      <<: *live-env
     env_file: .env
     depends_on:
       redis:
         condition: service_healthy
+      mediamtx:
+        condition: service_started
     networks:
       - backend
     healthcheck:
@@ -31,6 +42,7 @@ services:
       start_period: 90s
     volumes:
       - app_keys:/app/keys
+      - live_hls_data:/var/mediamtx/hls
     logging:
       driver: json-file
       options:
@@ -46,18 +58,47 @@ services:
     restart: unless-stopped
     command: node src/worker/index.js
     env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379
+      MEDIAMTX_WHIP_PUBLIC_URL: ${MEDIAMTX_WHIP_PUBLIC_URL:-${BASE_URL:-http://localhost:8080}}
+      <<: *live-env
     depends_on:
       api:
         condition: service_healthy
+      mediamtx:
+        condition: service_started
     networks:
       - backend
     volumes:
       - app_keys:/app/keys
+      - live_hls_data:/var/mediamtx/hls
     logging:
       driver: json-file
       options:
         max-size: "20m"
         max-file: "5"
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest-ffmpeg
+    container_name: shikkhabhumi-mediamtx
+    restart: unless-stopped
+    ports:
+      # WebRTC media (WHIP publish from browser) — required for local Docker
+      - "8189:8189/udp"
+      - "8189:8189/tcp"
+    environment:
+      MTX_WEBRTCADDITIONALHOSTS: ${MEDIAMTX_WEBRTC_HOST:-localhost,127.0.0.1}
+    volumes:
+      - ./docker/mediamtx.yml:/mediamtx.yml:ro
+      - live_hls_data:/var/mediamtx/hls
+    networks:
+      - backend
+    # Scratch-based image — no shell/wget; started = ready for WHIP/HLS
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   redis:
     image: redis:7-alpine
@@ -85,6 +126,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+      mediamtx:
+        condition: service_started
     networks:
       - backend
     logging:
@@ -100,3 +143,4 @@ networks:
 volumes:
   redis_data:
   app_keys:
+  live_hls_data:

@@ -1,0 +1,32 @@
+# MediaMTX — bundled with backend Docker stack (do not run separately).
+# WHIP ingest + LL-HLS; auth via API internal hook.
+# WebRTC public host is injected at deploy time via MTX_WEBRTCADDITIONALHOSTS env.
+
+logLevel: info
+logDestinations: [stdout]
+
+api: yes
+apiAddress: :9997
+
+webrtc: yes
+webrtcAddress: :8889
+# Avoid advertising Docker-internal IPs (172.x) to the browser — causes ICE failure.
+webrtcIPsFromInterfaces: no
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+# MTX_WEBRTCADDITIONALHOSTS set in docker-compose (localhost,127.0.0.1,public host)
+
+hls: yes
+hlsAddress: :8888
+hlsDirectory: /var/mediamtx/hls
+# WebRTC WHIP sends Opus audio; mpegts HLS only supports AAC. fmp4 supports Opus + H.264.
+hlsVariant: fmp4
+hlsSegmentDuration: 1s
+hlsSegmentCount: 4
+
+authMethod: http
+authHTTPAddress: http://api:3000/v1/internal/live/ingest-auth
+
+paths:
+  all_others:
+    source: publisher

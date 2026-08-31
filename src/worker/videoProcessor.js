@@ -7,6 +7,7 @@ const r2Storage = require('../services/r2StorageService');
 const keyStorage = require('../services/keyStorageService');
 const errorLogService = require('../services/errorLogService');
 const videoDelivery = require('../config/videoDelivery');
+const liveVodEncryptWorker = require('./liveVodEncryptWorker');
 
 const RES_MAP = {
     '360p': { w: 640, h: 360, bandwidth: 800000 },
@@ -144,6 +145,11 @@ class VideoProcessor {
         const logStep = (step, msg, ...args) => console.log(`[VideoProcessor] [Task ${task.id}] [${step}] ${msg}`, ...args);
 
         log('Starting processing for video_id=%s', task.video_id);
+
+        if (task.task_type === 'live_hls_encrypt') {
+            return liveVodEncryptWorker.processTask(task);
+        }
+
         let workDir = null;
 
         // Mark task as started (so watchdog can detect stuck tasks by started_at age)

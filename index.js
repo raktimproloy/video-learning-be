@@ -1,6 +1,6 @@
 const http = require('http');
 const app = require('./src/app');
-const { initSocket } = require('./src/socket');
+const { initSocket, wireLiveEventBus } = require('./src/socket');
 const { shutdownRedis } = require('./src/utils/redisClient');
 const { shutdownAnalyticsBatch } = require('./src/services/analyticsBatchService');
 const { shutdownLiveHeartbeatBatch } = require('./src/services/liveWatchBatchService');
@@ -20,6 +20,7 @@ server.keepAliveTimeout = 65_000;
 
 async function start() {
     initSocket(server);
+    wireLiveEventBus();
 
     if (process.env.RUN_WORKER !== '0') {
         require('./src/worker/index');

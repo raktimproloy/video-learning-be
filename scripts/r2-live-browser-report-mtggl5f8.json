@@ -1,0 +1,32 @@
+{
+  "runId": "mtggl5f8",
+  "startedAt": "2026-08-30T23:46:57.332Z",
+  "frontend": "http://localhost:3000",
+  "api": "http://localhost:8080",
+  "provider": "r2_live",
+  "metrics": {
+    "teacherLoginMs": 1596
+  },
+  "timeline": [
+    {
+      "t": 1788133617333,
+      "event": "seed",
+      "detail": "dummy teacher + student"
+    },
+    {
+      "t": 1788133618615,
+      "event": "teacher",
+      "detail": "login"
+    },
+    {
+      "t": 1788133620212,
+      "event": "teacher",
+      "detail": "navigate http://localhost:3000/teacher/courses/17eb5c8b-5646-4245-a5ea-658b15422ed5/lessons/7d61a0d0-71fb-44be-82ea-cfc9f2788636/live"
+    }
+  ],
+  "checks": [],
+  "save": null,
+  "error": "locator.waitFor: Timeout 30000ms exceeded.\nCall log:\n  - waiting for getByRole('button', { name: /go live/i }) to be visible\n",
+  "finishedAt": "2026-08-30T23:47:30.318Z",
+  "ok": false
+}

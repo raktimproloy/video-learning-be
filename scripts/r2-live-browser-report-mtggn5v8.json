@@ -1,0 +1,32 @@
+{
+  "runId": "mtggn5v8",
+  "startedAt": "2026-08-30T23:48:31.221Z",
+  "frontend": "http://localhost:3000",
+  "api": "http://localhost:8080",
+  "provider": "r2_live",
+  "metrics": {
+    "teacherLoginMs": 1575
+  },
+  "timeline": [
+    {
+      "t": 1788133711222,
+      "event": "seed",
+      "detail": "dummy teacher + student"
+    },
+    {
+      "t": 1788133712959,
+      "event": "teacher",
+      "detail": "login"
+    },
+    {
+      "t": 1788133714535,
+      "event": "teacher",
+      "detail": "navigate http://localhost:3000/teacher/courses/90703c58-0d01-4b9c-8e60-26ad263a01fb/lessons/0afe56d5-4ff3-4594-b38c-8cc55d6075a1/live"
+    }
+  ],
+  "checks": [],
+  "save": null,
+  "error": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n  - waiting for locator('#live_name') to be visible\n",
+  "finishedAt": "2026-08-30T23:49:19.656Z",
+  "ok": false
+}
