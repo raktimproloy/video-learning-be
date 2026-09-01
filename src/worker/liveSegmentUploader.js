@@ -20,7 +20,7 @@ const segmentDurations = new Map(); // sessionId -> Map(fileName -> durationSec)
 const r2SyncedSessions = new Set();
 const lastPlaylistWrite = new Map(); // sessionId -> { at, count }
 const playbackReadyEmitted = new Set();
-const PLAYLIST_WRITE_MIN_MS = Math.max(1500, parseInt(process.env.LIVE_PLAYLIST_WRITE_MIN_MS || '2000', 10));
+const PLAYLIST_WRITE_MIN_MS = Math.max(1000, parseInt(process.env.LIVE_PLAYLIST_WRITE_MIN_MS || '1000', 10));
 const UPLOAD_CONCURRENCY = Math.max(1, Math.min(4, parseInt(process.env.LIVE_R2_UPLOAD_CONCURRENCY || '4', 10)));
 
 async function markCdnReady(sessionId, lessonId) {

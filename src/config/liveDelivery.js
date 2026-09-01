@@ -7,10 +7,10 @@ const liveCdnRaw = (process.env.LIVE_CDN_DELIVERY || process.env.CDN_SEGMENT_DEL
 const liveCdnDelivery = ['off', 'presign', 'cdn'].includes(liveCdnRaw) ? liveCdnRaw : 'off';
 
 /** Time-based hold-back target (Live Tester model) — converted to segment count from actual EXTINF. */
-const holdBackTargetSeconds = Math.max(10, parseInt(process.env.LIVE_HOLD_BACK_SECONDS || '20', 10));
+const holdBackTargetSeconds = Math.max(10, parseInt(process.env.LIVE_HOLD_BACK_SECONDS || '15', 10));
 /** Legacy segment-count fallback when playlist durations not yet known. */
 const holdBackSegments = Math.max(4, parseInt(process.env.LIVE_PLAYBACK_HOLD_BACK_SEGMENTS || '10', 10));
-const clientStartBufferSeconds = Math.max(2, parseInt(process.env.LIVE_CLIENT_START_BUFFER_SECONDS || '4', 10));
+const clientStartBufferSeconds = Math.max(2, parseInt(process.env.LIVE_CLIENT_START_BUFFER_SECONDS || '3', 10));
 /** Min publishable segments in playlist before playback_ready (Live Tester uses 3). */
 const cdnMinSegmentsDefault = Math.max(3, parseInt(process.env.LIVE_CDN_MIN_SEGMENTS || '3', 10));
 
@@ -59,6 +59,6 @@ module.exports = {
     Math.min(32, parseInt(process.env.LIVE_UPLOADER_SESSION_CONCURRENCY || '8', 10))
   ),
   statsBroadcastMs: Math.max(3000, parseInt(process.env.LIVE_STATS_BROADCAST_MS || '8000', 10)),
-  liveStatsCacheMs: Math.max(1000, parseInt(process.env.LIVE_STATS_CACHE_MS || '3000', 10)),
+  liveStatsCacheMs: Math.max(1000, parseInt(process.env.LIVE_STATS_CACHE_MS || '1500', 10)),
   viewerCountCacheMs: Math.max(2000, parseInt(process.env.LIVE_VIEWER_COUNT_CACHE_MS || '5000', 10)),
 };
