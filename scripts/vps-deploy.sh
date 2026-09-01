@@ -22,6 +22,8 @@ docker compose run --rm --no-deps api node run_migrations.js
 
 echo "==> Starting services..."
 docker compose up -d --remove-orphans
+# MediaMTX mounts mediamtx.yml read-only — recreate so config changes (e.g. hlsAlwaysRemux) apply.
+docker compose up -d --force-recreate mediamtx
 
 echo "==> Waiting for health..."
 sleep 5
