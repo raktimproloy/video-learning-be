@@ -434,12 +434,23 @@ async function deleteObject(key) {
  */
 async function deletePrefix(prefix) {
   const keys = await listObjects(prefix);
+  if (keys.length === 0) return;
   const client = getClient();
-  for (const key of keys) {
-    await client.send(
-      new DeleteObjectCommand({
-        Bucket: r2Config.bucketName,
-        Key: key,
+  const concurrency = Math.max(1, Math.min(8, parseInt(process.env.R2_DELETE_CONCURRENCY || '4', 10)));
+  for (let i = 0; i < keys.length; i += concurrency) {
+    const batch = keys.slice(i, i + concurrency);
+    await Promise.all(
+      batch.map(async (key) => {
+        try {
+          await client.send(
+            new DeleteObjectCommand({
+              Bucket: r2Config.bucketName,
+              Key: key,
+            })
+          );
+        } catch (_) {
+          /* best-effort cleanup */
+        }
       })
     );
   }

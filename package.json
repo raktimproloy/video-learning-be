@@ -12,6 +12,8 @@
     "seed-categories": "node scripts/seed-categories.js",
     "start": "node index.js",
     "worker": "node src/worker/index.js",
+    "live-uploader": "node src/worker/liveUploaderOnly.js",
+    "live-diag": "node scripts/live-diag-report.js",
     "worker:2": "node src/worker/runWorkers.js 2",
     "pm2:start": "pm2 start ecosystem.config.js",
     "pm2:logs": "pm2 logs",

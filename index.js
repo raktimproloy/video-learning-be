@@ -32,6 +32,12 @@ async function start() {
     const liveSessionForceEndJob = require('./src/jobs/liveSessionForceEndJob');
     liveSessionForceEndJob.start();
 
+    if (process.env.RUN_LIVE_UPLOADER !== '0') {
+        const { startLiveSegmentUploader } = require('./src/worker/liveSegmentUploader');
+        startLiveSegmentUploader();
+        console.log('In-process live segment uploader started (set RUN_LIVE_UPLOADER=0 when using dedicated live-uploader container)');
+    }
+
     await new Promise((resolve, reject) => {
         server.listen(port, '0.0.0.0', (err) => {
             if (err) reject(err);

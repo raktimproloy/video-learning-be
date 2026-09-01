@@ -24,6 +24,7 @@ const hlsDeliveryService = require('../services/hlsDeliveryService');
 const liveStreamCache = require('../services/liveStreamCacheService');
 const liveAccessService = require('../services/liveAccessService');
 const liveCdnDeliveryService = require('../services/liveCdnDeliveryService');
+const liveDiagnosticsService = require('../services/liveDiagnosticsService');
 const liveStatsBroadcast = require('../services/liveStatsBroadcastService');
 const liveDelivery = require('../config/liveDelivery');
 const ttlCache = require('../utils/ttlCache');
@@ -817,8 +818,9 @@ class LessonController {
             const access = await liveAccessService.resolveLiveAccess(req, lessonId);
             if (!access.ok) return res.status(access.status).json({ error: access.error });
 
+            const sessionId = access.lesson.current_live_session_id || 'none';
             const payload = await ttlCache.getOrSet(
-                `liveStats:${lessonId}:${access.lesson.current_live_session_id || 'none'}`,
+                `liveStats:${lessonId}:${sessionId}`,
                 liveDelivery.liveStatsCacheMs,
                 async () => {
                     const { lesson, teacherId } = access;
@@ -832,11 +834,25 @@ class LessonController {
                     let broadcast_status = 'ended';
                     let live_name = null;
                     let live_description = null;
+                    let hls_ready_at = null;
+                    let cdn_ready = false;
+                    let playback_ready = false;
                     if (live_session_id) {
                         const session = await liveSessionService.getById(live_session_id);
                         broadcast_status = session?.broadcast_status || 'starting';
                         live_name = session?.live_name ?? null;
                         live_description = session?.live_description ?? null;
+                        if (session?.provider === 'r2_live') {
+                            hls_ready_at = session.hls_ready_at || null;
+                            const readiness = await liveCdnDeliveryService.getPlaybackReadiness(session);
+                            cdn_ready = readiness.cdn_ready;
+                            playback_ready = readiness.playback_ready;
+                        }
+                    }
+                    let hold_back_seconds = liveDelivery.holdBackTargetSeconds;
+                    if (live_session_id) {
+                        const timing = await liveCdnDeliveryService.getSessionTiming(live_session_id);
+                        if (timing?.holdBackSeconds) hold_back_seconds = timing.holdBackSeconds;
                     }
                     return {
                         live_started_at,
@@ -845,9 +861,17 @@ class LessonController {
                         broadcast_status,
                         live_name,
                         live_description,
+                        hls_ready_at,
+                        cdn_ready,
+                        playback_ready,
+                        hold_back_seconds,
+                        client_start_buffer_seconds: liveDelivery.clientStartBufferSeconds,
                     };
                 }
             );
+            // Never cache live stats in browser/CDN while waiting for playback (304 kept playback_ready stale).
+            res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+            res.set('Pragma', 'no-cache');
             res.json(payload);
         } catch (error) {
             console.error('Get live stats error:', error);
@@ -1462,7 +1486,7 @@ class LessonController {
             });
             if (!access.ok) return res.status(access.status).json({ error: access.error });
 
-            const { activeSession } = access;
+            const { activeSession, isTeacher } = access;
             const apiBase = getLivePlaylistApiBase(req, lessonId);
             const accessToken = req.headers.authorization?.replace(/^Bearer\s+/i, '') || req.query.token || null;
             const pathName = activeSession.ingest_stream_key
@@ -1470,9 +1494,25 @@ class LessonController {
                 : null;
             const useCdn = await liveCdnDeliveryService.shouldServeViaCdn(activeSession);
             const r2Prefix = r2LiveStorage.getLiveSessionPrefix(activeSession.id);
+            const isActiveLive = activeSession.status === 'active' && !!pathName;
+            const studentR2Only = liveDelivery.studentR2Only && !isTeacher && req.query.preview !== '1';
 
-            // MediaMTX passthrough — used during cold start (origin) or when CDN is disabled.
-            if (req.query.mtx && pathName && !useCdn) {
+            const subpath = (req.query.subpath && String(req.query.subpath)) || 'master.m3u8';
+            const safeSub = subpath.replace(/\.\./g, '').replace(/^\/+/, '');
+            const r2Key = `${r2Prefix}/${safeSub}`;
+
+            // Students: R2/CDN only — never MediaMTX cold-start (stable smooth playback).
+            if (studentR2Only && isActiveLive && !useCdn) {
+                if (safeSub.endsWith('.m3u8') || liveMediamtxProxyService.isSegmentResource(safeSub) || req.query.mtx) {
+                    return res.status(404).json({
+                        error: 'Live stream is preparing. Please wait a moment.',
+                        code: 'LIVE_WARMING_UP',
+                    });
+                }
+            }
+
+            // MediaMTX passthrough — teacher preview or legacy cold start only.
+            if (req.query.mtx && pathName && !useCdn && !studentR2Only) {
                 const resource = liveMediamtxProxyService.sanitizeResource(String(req.query.mtx));
                 try {
                     if (liveMediamtxProxyService.isSegmentResource(resource)) {
@@ -1490,11 +1530,6 @@ class LessonController {
                 }
             }
 
-            const subpath = (req.query.subpath && String(req.query.subpath)) || 'master.m3u8';
-            const safeSub = subpath.replace(/\.\./g, '').replace(/^\/+/, '');
-            const r2Key = `${r2Prefix}/${safeSub}`;
-            const isActiveLive = activeSession.status === 'active' && !!pathName;
-
             // CDN scale path (YouTube/FB model): playlists via API, segments at CDN edge.
             if (useCdn) {
                 if (req.query.mtx && liveMediamtxProxyService.isSegmentResource(String(req.query.mtx))) {
@@ -1511,17 +1546,38 @@ class LessonController {
                     );
                     res.set('Content-Type', 'application/vnd.apple.mpegurl');
                     res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+                    liveDiagnosticsService.append({
+                        type: 'playlist_served',
+                        lessonId,
+                        sessionId: activeSession.id,
+                        data: {
+                            source: 'r2',
+                            file: safeSub,
+                            segCount: body.split('\n').filter((l) => {
+                                const t = l.trim();
+                                return t && !t.startsWith('#');
+                            }).length,
+                            segmentDelivery: liveDelivery.useLocalSegmentProxy ? 'proxy' : 'cdn',
+                        },
+                    });
                     return res.send(body);
                 }
 
                 if (liveMediamtxProxyService.isSegmentResource(safeSub)) {
+                    if (liveDelivery.useLocalSegmentProxy && await r2Storage.objectExists(r2Key)) {
+                        const stream = await r2Storage.getObjectStream(r2Key);
+                        res.set('Content-Type', liveMediamtxProxyService.contentTypeForResource(safeSub));
+                        res.set('Cache-Control', 'public, max-age=120, immutable');
+                        res.set('Access-Control-Allow-Origin', '*');
+                        return stream.pipe(res);
+                    }
                     const cdnUrl = await liveCdnDeliveryService.getCdnRedirectForSegment(r2Key);
                     if (cdnUrl) return res.redirect(302, cdnUrl);
                 }
             }
 
-            // R2 mirror ready but CDN edge not yet — serve playlists via API proxy (transition).
-            if (isActiveLive && activeSession.hls_ready_at && safeSub.endsWith('.m3u8') && await r2Storage.objectExists(r2Key)) {
+            // R2 mirror ready but CDN edge not yet — serve playlists via API proxy (transition, non-student only).
+            if (!studentR2Only && isActiveLive && activeSession.hls_ready_at && safeSub.endsWith('.m3u8') && await r2Storage.objectExists(r2Key)) {
                 const body = await hlsDeliveryService.getPlaylistBody(
                     r2Key, r2Prefix, apiBase, safeSub, accessToken, { livePlaylist: true }
                 );
@@ -1530,8 +1586,8 @@ class LessonController {
                 return res.send(body);
             }
 
-            // Cold start: serve real-time HLS from MediaMTX origin until CDN mirror is ready.
-            if (isActiveLive && safeSub === 'master.m3u8') {
+            // Cold start: MediaMTX origin (teacher preview / legacy only).
+            if (!studentR2Only && isActiveLive && safeSub === 'master.m3u8') {
                 try {
                     const body = await liveMediamtxProxyService.getPlaylistBody(
                         pathName, liveMediamtxProxyService.MASTER_RESOURCE, apiBase, accessToken
@@ -1551,7 +1607,7 @@ class LessonController {
                     res.set('Cache-Control', 'no-store');
                     return stream.pipe(res);
                 }
-                if (isActiveLive) {
+                if (isActiveLive && !studentR2Only) {
                     const mtxName = safeSub.includes('/') ? safeSub.split('/').pop() : safeSub;
                     try {
                         const seg = await liveMediamtxProxyService.getSegmentBody(pathName, mtxName);
@@ -1561,6 +1617,12 @@ class LessonController {
                     } catch (_) {
                         return res.status(404).json({ error: 'Segment not ready yet.' });
                     }
+                }
+                if (studentR2Only && isActiveLive) {
+                    return res.status(404).json({
+                        error: 'Live stream is preparing. Please wait a moment.',
+                        code: 'LIVE_WARMING_UP',
+                    });
                 }
                 return res.status(404).json({ error: 'Segment not ready yet.' });
             }
@@ -1589,6 +1651,74 @@ class LessonController {
         } catch (error) {
             console.error('Get live playlist error:', error);
             res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    /** POST client playback / teacher telemetry for R2 live debugging. */
+    async postLiveDiag(req, res) {
+        try {
+            const lessonId = req.params.id;
+            const access = await liveAccessService.resolveLiveAccess(req, lessonId);
+            if (!access.ok) return res.status(access.status).json({ error: access.error });
+
+            const body = req.body || {};
+            const sessionId = access.lesson.current_live_session_id || body.sessionId || null;
+            const role = access.isTeacher ? 'teacher' : 'student';
+
+            liveDiagnosticsService.append({
+                type: body.type || 'playback_sample',
+                lessonId,
+                sessionId,
+                role,
+                message: body.message,
+                data: {
+                    ...body,
+                    uid: req.user?.id,
+                },
+            });
+
+            return res.json({ ok: true });
+        } catch (error) {
+            console.error('Post live diag error:', error);
+            return res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    /** GET diagnostics report for active live session (teacher / enrolled student). */
+    async getLiveDiag(req, res) {
+        try {
+            const lessonId = req.params.id;
+            const access = await liveAccessService.resolveLiveAccess(req, lessonId);
+            if (!access.ok) return res.status(access.status).json({ error: access.error });
+
+            const sessionId = access.lesson.current_live_session_id || req.query.sessionId || null;
+            const report = liveDiagnosticsService.getSessionReport(lessonId, sessionId);
+            res.set('Cache-Control', 'no-store');
+            return res.json(report);
+        } catch (error) {
+            console.error('Get live diag error:', error);
+            return res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    /** GET global diagnostics (internal — secret query param). */
+    async getLiveDiagInternal(req, res) {
+        try {
+            const secret = req.query.secret || req.headers['x-live-diag-secret'];
+            const expected = process.env.LIVE_DIAG_SECRET || liveDelivery.ingestAuthSecret;
+            if (!secret || secret !== expected) {
+                return res.status(401).json({ error: 'unauthorized' });
+            }
+            const lessonId = req.query.lessonId || null;
+            const sessionId = req.query.sessionId || null;
+            const report = lessonId || sessionId
+                ? liveDiagnosticsService.getSessionReport(lessonId, sessionId)
+                : liveDiagnosticsService.getGlobalReport();
+            res.set('Cache-Control', 'no-store');
+            return res.json(report);
+        } catch (error) {
+            console.error('Get live diag internal error:', error);
+            return res.status(500).json({ error: 'Internal server error' });
         }
     }
 

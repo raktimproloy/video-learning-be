@@ -5,7 +5,6 @@ const videoProcessor = require('./videoProcessor');
 const bookProcessor = require('./bookProcessor');
 const bookProcessingService = require('../services/bookProcessingService');
 const errorLogService = require('../services/errorLogService');
-const { startLiveSegmentUploader } = require('./liveSegmentUploader');
 
 // Worker runs in the same process as the API. videoProcessor uses a fast FFmpeg preset
 // and limits encoder threads so the API stays responsive during encoding.
@@ -70,7 +69,6 @@ async function startWorker() {
     console.log(`Video/Book Processing Worker #${workerIndex} started...`);
 
     await resetStuckTasks();
-    startLiveSegmentUploader();
 
     while (true) {
         try {

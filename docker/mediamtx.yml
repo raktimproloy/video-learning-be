@@ -21,8 +21,10 @@ hlsAddress: :8888
 hlsDirectory: /var/mediamtx/hls
 # WebRTC WHIP sends Opus audio; mpegts HLS only supports AAC. fmp4 supports Opus + H.264.
 hlsVariant: fmp4
-hlsSegmentDuration: 1s
-hlsSegmentCount: 6
+hlsSegmentDuration: 2s
+hlsSegmentCount: 15
+# Generate HLS on disk as soon as WHIP publishes (required for R2 live-uploader; no HLS readers needed).
+hlsAlwaysRemux: yes
 
 authMethod: http
 authHTTPAddress: http://api:3000/v1/internal/live/ingest-auth

@@ -48,6 +48,8 @@ router.get(/^\/media\/(.+)$/, (req, res, next) => {
     return lessonController.streamLessonMedia(req, res, next);
 });
 router.get('/:id/videos', authMiddleware, lessonController.getLessonVideos);
+router.get('/:id/live/diag', authMiddleware, lessonController.getLiveDiag);
+router.post('/:id/live/diag', authMiddleware, lessonController.postLiveDiag);
 router.get('/:id/live/token', authMiddleware, lessonController.getLiveToken);
 router.get('/:id/live/playlist', authMiddleware, lessonController.getLivePlaylist);
 router.get('/:id/live/chat', authMiddleware, lessonController.getLiveChat);

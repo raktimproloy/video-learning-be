@@ -187,15 +187,23 @@ function emitLiveHlsReady(lessonId, sessionId) {
     io.to(lessonId).emit('live:hls_ready', { lessonId, sessionId });
 }
 
+function emitLivePlaybackReady(lessonId, sessionId) {
+    if (!io) return;
+    io.to(lessonId).emit('live:playback_ready', { lessonId, sessionId });
+}
+
 function wireLiveEventBus() {
     const { subscribeLiveEvents } = require('./utils/liveEventBus');
     subscribeLiveEvents((payload) => {
         if (payload?.type === 'hls_ready' && payload.lessonId) {
             emitLiveHlsReady(payload.lessonId, payload.sessionId);
         }
+        if (payload?.type === 'playback_ready' && payload.lessonId) {
+            emitLivePlaybackReady(payload.lessonId, payload.sessionId);
+        }
     }).catch((err) => {
         console.warn('Live event bus wiring failed:', err.message);
     });
 }
 
-module.exports = { initSocket, getIo, emitLiveHlsReady, wireLiveEventBus };
+module.exports = { initSocket, getIo, emitLiveHlsReady, emitLivePlaybackReady, wireLiveEventBus };

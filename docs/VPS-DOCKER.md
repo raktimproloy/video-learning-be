@@ -6,7 +6,8 @@ Production stack on your VPS:
 Internet → nginx (port 80/8080) → api (Node + Socket.io, RUN_WORKER=0)
                                → mediamtx (WHIP ingest + HLS, bundled)
                                → redis (cache + Socket.io adapter)
-         worker (FFmpeg + live segment uploader → R2)
+         worker (FFmpeg video encoding only)
+         live-uploader (HLS → R2 mirror, dedicated — smooth multi-teacher live)
          PostgreSQL (Supabase — external, not in Docker)
 ```
 
@@ -207,6 +208,7 @@ Use for testing. Production should use HTTPS (Option A or Cloudflare proxy).
 | Stop | `docker compose down` |
 | Logs (API) | `docker compose logs -f api` |
 | Logs (worker) | `docker compose logs -f worker` |
+| Logs (live-uploader) | `docker compose logs -f live-uploader` |
 | Rebuild after code change | `./scripts/vps-update.sh` |
 | Migrations only | `./scripts/docker-migrate.sh` |
 | Shell into API | `docker compose exec api sh` |
@@ -218,8 +220,10 @@ Use for testing. Production should use HTTPS (Option A or Cloudflare proxy).
 
 | Container | Role | Notes |
 |-----------|------|-------|
-| **api** | Express + Socket.io | `RUN_WORKER=0` — no FFmpeg here |
+| **api** | Express + Socket.io | `RUN_WORKER=0`, `RUN_LIVE_UPLOADER=0` — no FFmpeg or live mirror here |
 | **worker** | FFmpeg video encoding | Same image, `node src/worker/index.js` |
+| **live-uploader** | R2 Live HLS mirror | `node src/worker/liveUploaderOnly.js` — polls MediaMTX, uploads to R2 |
+| **mediamtx** | WHIP ingest + HLS | Shared `live_hls_data` volume with live-uploader |
 | **redis** | Cache + Socket.io | Auto via `REDIS_URL=redis://redis:6379` |
 | **nginx** | Reverse proxy | `/v1/`, `/health`, `/socket.io/` |
 

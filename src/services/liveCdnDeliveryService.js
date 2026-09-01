@@ -7,7 +7,58 @@
 const liveDelivery = require('../config/liveDelivery');
 const videoDelivery = require('../config/videoDelivery');
 const r2Storage = require('./r2StorageService');
+const r2LiveStorage = require('./r2LiveStorageService');
 const hlsDeliveryService = require('./hlsDeliveryService');
+
+async function countMirroredMediaSegments(sessionId) {
+  if (!r2Storage.isConfigured || !sessionId) return 0;
+  try {
+    const prefix = `${r2LiveStorage.getLiveSessionPrefix(sessionId)}/720p/`;
+    const keys = await r2Storage.listObjects(prefix);
+    return keys.filter((k) => {
+      const name = k.split('/').pop() || k;
+      if (/_init\.mp4$/i.test(name)) return false;
+      return /_video\d+_seg\d+\./i.test(name) || /\.(m4s|ts)$/i.test(name);
+    }).length;
+  } catch (_) {
+    return 0;
+  }
+}
+
+async function countPublishableSegmentsOnR2(sessionId) {
+  if (!r2Storage.isConfigured || !sessionId) return 0;
+  try {
+    const prefix = r2LiveStorage.getLiveSessionPrefix(sessionId);
+    const playlistKey = `${prefix}/720p/playlist.m3u8`;
+    if (!(await r2Storage.objectExists(playlistKey))) return 0;
+    const content = await hlsDeliveryService.readObjectAsString(playlistKey);
+    return content.split('\n').filter((l) => {
+      const t = l.trim();
+      return t && !t.startsWith('#') && /\.(mp4|m4s|ts)$/i.test(t);
+    }).length;
+  } catch (_) {
+    return 0;
+  }
+}
+
+async function hasMinSegmentsOnR2(sessionId) {
+  const publishable = await countPublishableSegmentsOnR2(sessionId);
+  return publishable >= liveDelivery.cdnMinSegments;
+}
+
+async function getSessionTiming(sessionId) {
+  try {
+    const { getRedisClient } = require('../utils/redisClient');
+    const redis = await getRedisClient();
+    if (redis) {
+      const raw = await redis.get(`live:timing:${sessionId}`);
+      if (raw) return JSON.parse(raw);
+    }
+  } catch (_) {
+    /* optional */
+  }
+  return null;
+}
 
 async function isCdnReadyForSession(sessionId) {
   try {
@@ -23,6 +74,25 @@ async function isCdnReadyForSession(sessionId) {
   return false;
 }
 
+async function getPlaybackReadiness(activeSession) {
+  if (!activeSession?.id) {
+    return { hls_ready: false, cdn_ready: false, playback_ready: false };
+  }
+  const hlsReady = !!activeSession.hls_ready_at;
+  if (!hlsReady) {
+    return { hls_ready: false, cdn_ready: false, playback_ready: false };
+  }
+  const dbReady = !!activeSession.playback_ready_at;
+  const redisReady = await isCdnReadyForSession(activeSession.id);
+  const r2Ready = dbReady || redisReady ? true : await hasMinSegmentsOnR2(activeSession.id);
+  const playbackReady = dbReady || redisReady || r2Ready;
+  return {
+    hls_ready: hlsReady,
+    cdn_ready: playbackReady,
+    playback_ready: playbackReady,
+  };
+}
+
 function isCdnConfigured() {
   const mode = liveDelivery.cdnDelivery;
   if (mode === 'off') return false;
@@ -35,7 +105,9 @@ async function shouldServeViaCdn(activeSession) {
   if (!isCdnConfigured()) return false;
   if (!activeSession || activeSession.status !== 'active') return false;
   if (!activeSession.hls_ready_at) return false;
-  return isCdnReadyForSession(activeSession.id);
+  if (activeSession.playback_ready_at) return true;
+  if (await isCdnReadyForSession(activeSession.id)) return true;
+  return hasMinSegmentsOnR2(activeSession.id);
 }
 
 function playlistDirFromSubpath(playlistSubpath) {
@@ -59,10 +131,20 @@ function segmentR2Key(r2Prefix, playlistSubpath, fileName) {
   return `${r2Prefix}/${rel}`;
 }
 
+function buildLiveSegmentUrl(apiStreamBase, playlistSubpath, fileName, accessToken) {
+  const playlistDir = playlistDirFromSubpath(playlistSubpath);
+  const rel = fileName.includes('/')
+    ? fileName
+    : (playlistDir ? `${playlistDir}/${fileName}` : fileName);
+  const url = `${apiStreamBase}?subpath=${encodeURIComponent(rel)}`;
+  return hlsDeliveryService.withAccessToken(url, accessToken);
+}
+
 /**
- * Rewrite live fmp4 playlist: segments/init → CDN, child playlists → API subpath.
+ * Rewrite live fmp4 playlist: segments/init → CDN (or API proxy on localhost), child playlists → API subpath.
  */
 async function rewriteLivePlaylistToCdn(content, r2Prefix, playlistSubpath, apiStreamBase, accessToken) {
+  const useProxy = liveDelivery.useLocalSegmentProxy;
   const playlistDir = playlistDirFromSubpath(playlistSubpath);
   const segmentKeys = [];
   const lines = String(content || '').split('\n');
@@ -77,10 +159,27 @@ async function rewriteLivePlaylistToCdn(content, r2Prefix, playlistSubpath, apiS
         if (mapMatch) {
           const uri = mapMatch[1];
           const file = uri.includes('/') ? uri.split('/').pop() : uri;
+          if (useProxy) {
+            const url = buildLiveSegmentUrl(apiStreamBase, playlistSubpath, file, accessToken);
+            return { type: 'raw', value: line.replace(/URI="([^"]+)"/i, `URI="${url}"`) };
+          }
           const r2Key = segmentR2Key(r2Prefix, playlistSubpath, file);
           const idx = segmentKeys.length;
           segmentKeys.push(r2Key);
           return { type: 'segment', jobIndex: idx, fallback: line, isMap: true };
+        }
+      }
+      // Master AUDIO / SUBTITLES media playlists must go through API (auth), not raw R2 paths.
+      if (/#EXT-X-MEDIA:/i.test(line) && /URI="/i.test(line)) {
+        const mediaMatch = line.match(/URI="([^"]+)"/i);
+        if (mediaMatch) {
+          const uri = mediaMatch[1];
+          const rel = uri.includes('/')
+            ? uri.replace(/^\.\//, '')
+            : (playlistDir ? `${playlistDir}/${uri}` : uri);
+          const url = `${apiStreamBase}?subpath=${encodeURIComponent(rel)}`;
+          const rewritten = line.replace(/URI="([^"]+)"/i, `URI="${hlsDeliveryService.withAccessToken(url, accessToken)}"`);
+          return { type: 'raw', value: rewritten };
         }
       }
       return { type: 'raw', value: line };
@@ -96,6 +195,10 @@ async function rewriteLivePlaylistToCdn(content, r2Prefix, playlistSubpath, apiS
 
     if (isMediaSegmentLine(trimmed)) {
       const file = trimmed.includes('/') ? trimmed.split('/').pop() : trimmed;
+      if (useProxy) {
+        const url = buildLiveSegmentUrl(apiStreamBase, playlistSubpath, file, accessToken);
+        return { type: 'raw', value: url };
+      }
       const r2Key = segmentR2Key(r2Prefix, playlistSubpath, file);
       const idx = segmentKeys.length;
       segmentKeys.push(r2Key);
@@ -139,6 +242,9 @@ async function getCdnRedirectForSegment(r2Key) {
 module.exports = {
   isCdnConfigured,
   shouldServeViaCdn,
+  isCdnReadyForSession,
+  getPlaybackReadiness,
+  getSessionTiming,
   rewriteLivePlaylistToCdn,
   getLivePlaylistFromR2,
   getCdnRedirectForSegment,

@@ -112,14 +112,7 @@ class LiveSessionService {
     async endDiscarded(lessonId) {
         const session = await this.getActiveByLesson(lessonId);
         if (session && session.status === 'active') {
-            if (session.provider === 'r2_live') {
-                try {
-                    const r2LiveStorage = require('./r2LiveStorageService');
-                    await r2LiveStorage.cleanupLiveSession(session.id);
-                } catch (err) {
-                    console.error('R2 live cleanup (endDiscarded) failed:', err);
-                }
-            }
+            // Discard DB state first so Go Live never waits on R2 cleanup (can be hundreds of objects).
             await db.query(
                 `UPDATE live_sessions SET broadcast_status = 'ended', status = 'discarded', ended_at = NOW(), updated_at = NOW()
                  WHERE id = $1 AND status = 'active'`,
@@ -129,6 +122,14 @@ class LiveSessionService {
                 await liveUsageService.recordUsageForSession(session.id);
             } catch (err) {
                 console.error('Live usage record (endDiscarded) failed:', err);
+            }
+            if (session.provider === 'r2_live') {
+                setImmediate(() => {
+                    const r2LiveStorage = require('./r2LiveStorageService');
+                    r2LiveStorage.cleanupLiveSession(session.id).catch((err) => {
+                        console.error('R2 live cleanup (endDiscarded) failed:', err);
+                    });
+                });
             }
         }
         await db.query(

@@ -109,6 +109,32 @@ async function markHlsReady(sessionId) {
   );
 }
 
+async function markPlaybackReady(sessionId) {
+  try {
+    await db.query(
+      `UPDATE live_sessions SET playback_ready_at = COALESCE(playback_ready_at, NOW()), updated_at = NOW() WHERE id = $1`,
+      [sessionId]
+    );
+  } catch (err) {
+    if (!/playback_ready_at|column .* does not exist/i.test(err.message || '')) {
+      throw err;
+    }
+  }
+}
+
+async function clearPlaybackReady(sessionId) {
+  try {
+    await db.query(
+      `UPDATE live_sessions SET playback_ready_at = NULL, updated_at = NOW() WHERE id = $1`,
+      [sessionId]
+    );
+  } catch (err) {
+    if (!/playback_ready_at|column .* does not exist/i.test(err.message || '')) {
+      throw err;
+    }
+  }
+}
+
 module.exports = {
   generateStreamKey,
   setSessionStreamKey,
@@ -118,4 +144,6 @@ module.exports = {
   validateIngestAuth,
   getCredentials,
   markHlsReady,
+  markPlaybackReady,
+  clearPlaybackReady,
 };

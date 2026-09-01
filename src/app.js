@@ -136,6 +136,8 @@ app.post('/v1/internal/live/ingest-auth', express.json(), (req, res, next) => {
     return lessonController.liveIngestAuth(req, res, next);
 });
 
+app.get('/v1/internal/live/diag', (req, res, next) => lessonController.getLiveDiagInternal(req, res, next));
+
 // Routes
 app.use('/v1/settings', settingsRoutes);
 app.use('/v1/auth', authRoutes);
