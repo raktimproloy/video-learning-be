@@ -23,7 +23,7 @@ END $$;
 
 ALTER TABLE live_provider_packages
 ADD CONSTRAINT live_provider_packages_provider_check
-CHECK (provider IN ('agora', 'stream', '100ms', 'youtube', 'aws_ivs'));
+CHECK (provider IN ('agora', 'stream', '100ms', 'youtube', 'aws_ivs', 'r2_live'));
 
 INSERT INTO live_provider_packages (provider, free_minutes_cap, display_order, is_fallback_only)
 VALUES ('stream', 10000, 15, false)
@@ -44,7 +44,7 @@ END $$;
 
 ALTER TABLE live_usage_records
 ADD CONSTRAINT live_usage_records_provider_check
-CHECK (provider IN ('agora', 'stream', '100ms', 'youtube', 'aws_ivs'));
+CHECK (provider IN ('agora', 'stream', '100ms', 'youtube', 'aws_ivs', 'r2_live'));
 
 -- 4) Live sessions provider check support Stream
 DO $$
@@ -61,5 +61,5 @@ END $$;
 
 ALTER TABLE live_sessions
 ADD CONSTRAINT live_sessions_provider_check
-CHECK (provider IN ('agora', 'stream', '100ms', 'aws_ivs', 'youtube'));
+CHECK (provider IN ('agora', 'stream', '100ms', 'aws_ivs', 'youtube', 'r2_live'));
 
