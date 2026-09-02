@@ -126,7 +126,33 @@ class LiveSessionService {
             if (session.provider === 'r2_live') {
                 setImmediate(() => {
                     const r2LiveStorage = require('./r2LiveStorageService');
-                    r2LiveStorage.cleanupLiveSession(session.id).catch((err) => {
+                    (async () => {
+                        let protectRecording = false;
+                        try {
+                            const videoExists = await db.query(
+                                `SELECT id FROM videos WHERE id = $1 LIMIT 1`,
+                                [session.id]
+                            );
+                            if (videoExists.rows.length > 0) protectRecording = true;
+                            if (!protectRecording) {
+                                const protect = await db.query(
+                                    `SELECT id FROM video_processing_tasks
+                                     WHERE video_id = $1 AND task_type = 'live_hls_encrypt'
+                                       AND status IN ('pending', 'processing', 'completed')
+                                     LIMIT 1`,
+                                    [session.id]
+                                );
+                                protectRecording = protect.rows.length > 0;
+                            }
+                        } catch (err) {
+                            console.warn('R2 live discard protect check failed:', err.message);
+                        }
+                        if (protectRecording) {
+                            console.log('[R2Live] Skipping cleanup — recording protected for encrypt/VOD:', session.id);
+                            return;
+                        }
+                        await r2LiveStorage.cleanupLiveSession(session.id);
+                    })().catch((err) => {
                         console.error('R2 live cleanup (endDiscarded) failed:', err);
                     });
                 });

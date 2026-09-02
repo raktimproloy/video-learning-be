@@ -1399,6 +1399,45 @@ class LessonController {
 
             const stagingVideoDir = path.join(STAGING_DIR, videoId);
             const r2Prefix = useR2 ? r2Storage.getVideoKeyPrefix(ownerId, course.id, lessonId, videoId) : null;
+            let liveSourcePrefix = null;
+
+            // r2_live: flush segments into live+recording prefixes, stop uploaders, finalize recording only.
+            // Live sliding-window playlists under live/sessions/ are never rewritten here.
+            if (isR2Live && useR2) {
+                const liveSegmentUploader = require('../worker/liveSegmentUploader');
+                liveSourcePrefix = r2LiveStorage.getLiveRecordingPrefix(liveSession.id);
+                try {
+                    if (liveSession.ingest_stream_key) {
+                        await liveSegmentUploader.processSession({
+                            id: liveSession.id,
+                            lesson_id: liveSession.lesson_id,
+                            ingest_stream_key: liveSession.ingest_stream_key,
+                            hls_ready_at: liveSession.hls_ready_at,
+                        });
+                    }
+                } catch (flushErr) {
+                    console.warn('[saveLiveRecording] final flush failed:', flushErr.message);
+                }
+                // Verify append-only recording has media BEFORE ending the live session.
+                const recKeys = await r2Storage.listObjects(`${liveSourcePrefix}/720p/`);
+                const hasRecMedia = recKeys.some((k) => /_video\d+_seg\d+\.(mp4|m4s|ts)$/i.test(k));
+                if (!hasRecMedia) {
+                    return res.status(400).json({
+                        error: 'No live HLS recording found. Stream for a few seconds before saving.',
+                        code: 'no_recording',
+                    });
+                }
+                await liveSessionService.markSaved(liveSession.id);
+                await new Promise((r) => setTimeout(r, 800));
+                const finalized = await liveSegmentUploader.finalizeSessionRecording(liveSession.id);
+                if (!finalized.ok) {
+                    return res.status(400).json({
+                        error: 'No live HLS recording found. Stream for a few seconds before saving.',
+                        code: finalized.reason || 'no_recording',
+                    });
+                }
+                if (finalized.prefix) liveSourcePrefix = finalized.prefix;
+            }
 
             const video = await adminService.createVideoWithId(
                 videoId,
@@ -1411,11 +1450,7 @@ class LessonController {
             );
 
             if (isR2Live && useR2) {
-                const liveSourcePrefix = r2LiveStorage.getLiveSessionPrefix(liveSession.id);
-                const masterExists = await r2Storage.objectExists(`${liveSourcePrefix}/master.m3u8`);
-                if (!masterExists) {
-                    return res.status(400).json({ error: 'No live HLS recording found. Stream for a few seconds before saving.' });
-                }
+                // Encrypt from append-only recording prefix; keep until encrypt succeeds.
                 await adminService.updateVideoR2(video.id, r2Prefix);
                 await adminService.createProcessingTask(
                     ownerId,
@@ -1458,7 +1493,9 @@ class LessonController {
                 [attendeeCount, videoId]
             );
 
-            await liveSessionService.markSaved(liveSession.id);
+            if (!(isR2Live && useR2)) {
+                await liveSessionService.markSaved(liveSession.id);
+            }
 
             // Mark lesson as no longer live and clear current_live_session_id.
             await lessonService.updateLiveStatus(lessonId, false, {});

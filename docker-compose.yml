@@ -82,6 +82,8 @@ services:
     volumes:
       - app_keys:/app/keys
       - live_hls_data:/var/mediamtx/hls
+    healthcheck:
+      disable: true
     logging:
       driver: json-file
       options:
@@ -110,6 +112,8 @@ services:
       - backend
     volumes:
       - live_hls_data:/var/mediamtx/hls
+    healthcheck:
+      disable: true
     logging:
       driver: json-file
       options:
