@@ -182,8 +182,16 @@ class VideoController {
             const lessonPromise = video.lesson_id
                 ? lessonService.getLessonById(video.lesson_id).catch(() => null)
                 : Promise.resolve(null);
+            const guestLessonVideosPromise = (!userId && video.lesson_id)
+                ? videoService.getLessonVideoListItems(video.lesson_id, null, false, false, { previewOnly: true }).catch(() => [])
+                : Promise.resolve(null);
 
-            const [accessResult, progress, lesson] = await Promise.all([accessPromise, progressPromise, lessonPromise]);
+            const [accessResult, progress, lesson, guestLessonVideos] = await Promise.all([
+                accessPromise,
+                progressPromise,
+                lessonPromise,
+                guestLessonVideosPromise,
+            ]);
 
             if (accessResult.error) {
                 const msg = accessResult.error.message || 'Access denied';
@@ -194,15 +202,15 @@ class VideoController {
 
             const access = accessResult;
             const { isOwnerOrManager, enrolled, isPreviewOnly, isLocked } = access;
-            const fullAccess = isOwnerOrManager || enrolled;
+            const fullAccess = isOwnerOrManager || (enrolled && !isPreviewOnly);
 
             const baseUrl = buildPublicBaseUrl(req);
             
-            const signUrlPromise = !isLocked 
-                ? videoService.resolvePlaybackUrl(userId, video, baseUrl).catch(() => null)
-                : Promise.resolve(null);
+            const signUrl = !isLocked
+                ? await videoService.resolvePlaybackUrl(userId, video, baseUrl).catch(() => null)
+                : null;
 
-            let lessonVideosPromise = Promise.resolve([]);
+            let lessonVideos = Array.isArray(guestLessonVideos) ? guestLessonVideos : [];
             let lessonTitle = '';
             let courseId = null;
 
@@ -210,36 +218,34 @@ class VideoController {
                 lessonTitle = lesson.title ?? 'Lesson';
                 courseId = lesson.course_id ?? null;
 
-                lessonVideosPromise = (async () => {
+                if (userId) {
+                    const isOwner = !!isOwnerOrManager;
+                    const previewOnly = !!isPreviewOnly;
                     let lessonIsLocked = false;
-                    let isOwner = role === 'teacher' || role === 'admin';
-                    if (userId && !isOwner) {
-                        const course = await courseService.getCourseByIdSimple(lesson.course_id).catch(() => null);
-                        isOwner = !!(course && course.teacher_id === userId);
-                        if (role === 'student') {
-                            const allLessons = await lessonService.getLessonsByCourse(lesson.course_id, userId, course?.teacher_id).catch(() => []);
-                            lessonIsLocked = allLessons.find((l) => l.id === video.lesson_id)?.isLocked === true;
-                        }
+                    if (!previewOnly && !isOwner && role === 'student') {
+                        lessonIsLocked = await lessonService.isLessonLockedForStudent(
+                            lesson.course_id,
+                            video.lesson_id,
+                            userId
+                        ).catch(() => false);
                     }
-                    const userIdForLockCheck = role === 'student' ? userId : null;
-                    let lVideos = await videoService.getLessonVideoListItems(
+                    const userIdForLockCheck = previewOnly ? null : (role === 'student' ? userId : null);
+                    lessonVideos = await videoService.getLessonVideoListItems(
                         video.lesson_id,
                         userIdForLockCheck,
                         lessonIsLocked,
-                        isOwner
+                        isOwner,
+                        { previewOnly }
                     ).catch(() => []);
                     if (role === 'student' && !isOwner) {
-                        lVideos = lVideos.filter((v) => v.status !== 'processing' && v.status !== 'uploading');
+                        lessonVideos = lessonVideos.filter((v) => v.status !== 'processing' && v.status !== 'uploading');
                     }
-                    return lVideos;
-                })();
+                }
             }
 
-            const viewCountPromise = (userId && video.owner_id !== userId && !isPreviewOnly)
-                ? db.query('UPDATE videos SET view_count = COALESCE(view_count, 0) + 1 WHERE id = $1', [videoId]).catch(() => {})
-                : Promise.resolve();
-
-            const [signUrl, lessonVideos] = await Promise.all([signUrlPromise, lessonVideosPromise, viewCountPromise]);
+            if (userId && video.owner_id !== userId && !isPreviewOnly) {
+                db.query('UPDATE videos SET view_count = COALESCE(view_count, 0) + 1 WHERE id = $1', [videoId]).catch(() => {});
+            }
 
             res.json({
                 video: {
@@ -322,10 +328,12 @@ class VideoController {
                 if (lesson && !isOwner) {
                     const course = await courseService.getCourseByIdSimple(lesson.course_id);
                     isOwner = course && userId && course.teacher_id === userId;
-                    if (userIdForLockCheck) {
-                        const allLessons = await lessonService.getLessonsByCourse(lesson.course_id, userIdForLockCheck, course?.teacher_id);
-                        const currentLesson = allLessons.find(l => l.id === lessonId);
-                        lessonIsLocked = currentLesson?.isLocked === true;
+                    if (userIdForLockCheck && !isOwner) {
+                        lessonIsLocked = await lessonService.isLessonLockedForStudent(
+                            lesson.course_id,
+                            lessonId,
+                            userIdForLockCheck
+                        );
                     }
                 }
                 videos = await videoService.getLessonVideoListItems(lessonId, userIdForLockCheck, lessonIsLocked, isOwner);
@@ -411,22 +419,15 @@ class VideoController {
             }
             if (!vid) return res.status(400).json({ error: 'Missing video ID (vid or id)' });
 
-            // For guests: only allow key for preview videos
-            if (!userId) {
-                const video = await videoService.getVideoById(vid);
-                if (!video) return res.status(404).send('Video not found');
-                if (!video.is_preview) return res.status(401).send('Authentication required');
-                // Guest can get the key — skip straight to key retrieval
-                const key = await videoService.getVideoKey(null, vid);
-                return sendNoStore(res, key, 'application/octet-stream');
-            }
+            const video = await videoService.getVideoById(vid);
+            if (!video) return res.status(404).send('Video not found');
 
-            // For students, check if video is locked before providing key
-            if (role === 'student') {
-                const isLocked = await videoService.isVideoLockedForStudent(userId, vid);
-                if (isLocked) {
-                    return res.status(403).send('Video is locked. Complete the required assignment from the previous video/lesson to unlock.');
-                }
+            const auth = await streamAuthCache.authorizeStream(userId, role, video);
+            if (!auth.allowed) {
+                return res.status(auth.status || 403).send(auth.message || 'Access denied');
+            }
+            if (auth.isLocked) {
+                return res.status(403).send('Video is locked. Complete the required assignment from the previous video/lesson to unlock.');
             }
 
             const key = await videoService.getVideoKey(userId, vid);

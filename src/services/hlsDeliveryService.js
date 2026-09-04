@@ -142,6 +142,9 @@ async function rewritePlaylistContent(content, videoR2Key, apiStreamBase, playli
         ? trimmed
         : (playlistDir ? `${playlistDir}/${trimmed}` : trimmed);
       const segmentKey = `${videoR2Key}/${segmentRel}`;
+      if (cdnSegmentDelivery === 'cdn' && videoDelivery.r2CdnPublicUrl) {
+        return { type: 'raw', value: `${videoDelivery.r2CdnPublicUrl}/${segmentKey}` };
+      }
       const idx = segmentJobs.length;
       segmentJobs.push(segmentKey);
       return { type: 'segment', jobIndex: idx, fallback: line };

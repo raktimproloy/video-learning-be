@@ -185,21 +185,96 @@ async function hasCompletedLessonExams(userId, lessonId) {
   }
 }
 
+function parseJsonbArray(val) {
+  if (!val) return [];
+  if (typeof val === 'string') {
+    try {
+      const parsed = JSON.parse(val);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return Array.isArray(val) ? val : [];
+}
+
+/**
+ * Videos whose required assignments/exams are not yet completed.
+ * One batched query set instead of N×M per-video checks.
+ */
+async function getVideosWithIncompleteRequiredWork(userId, videoIds) {
+  const incomplete = new Set();
+  const ids = [...new Set((videoIds || []).filter(Boolean))];
+  if (!userId || ids.length === 0) return incomplete;
+
+  const videos = await db.query(
+    `SELECT id, assignments FROM videos WHERE id = ANY($1::uuid[])`,
+    [ids]
+  );
+
+  const requiredByVideo = new Map();
+  for (const row of videos.rows) {
+    const required = parseJsonbArray(row.assignments)
+      .filter((a) => a && a.isRequired && a.id)
+      .map((a) => String(a.id));
+    if (required.length > 0) requiredByVideo.set(row.id, required);
+  }
+
+  if (requiredByVideo.size > 0) {
+    const passed = await db.query(
+      `SELECT video_id, assignment_id
+       FROM assignment_submissions
+       WHERE user_id = $1
+         AND assignment_type = 'video'
+         AND video_id = ANY($2::uuid[])
+         AND status = 'passed'`,
+      [userId, ids]
+    );
+    const passedSet = new Set(
+      passed.rows.map((r) => `${r.video_id}:${String(r.assignment_id)}`)
+    );
+    for (const [vid, reqIds] of requiredByVideo) {
+      if (reqIds.some((aid) => !passedSet.has(`${vid}:${aid}`))) {
+        incomplete.add(vid);
+      }
+    }
+  }
+
+  try {
+    const hasRequiredCol = await hasColumn('exams', 'is_required');
+    if (hasRequiredCol) {
+      const exams = await db.query(
+        `SELECT id, video_id FROM exams
+         WHERE video_id = ANY($1::uuid[]) AND is_required = true AND status = 'published'`,
+        [ids]
+      );
+      if (exams.rows.length > 0) {
+        const examIds = exams.rows.map((e) => e.id);
+        const subs = await db.query(
+          `SELECT exam_id FROM exam_submissions
+           WHERE student_id = $1 AND exam_id = ANY($2::uuid[])`,
+          [userId, examIds]
+        );
+        const taken = new Set(subs.rows.map((r) => r.exam_id));
+        for (const exam of exams.rows) {
+          if (!taken.has(exam.id)) incomplete.add(exam.video_id);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('getVideosWithIncompleteRequiredWork exam check error:', err.message);
+  }
+
+  return incomplete;
+}
+
 /**
  * Check if student has submitted all required assignments for a video.
  * Requires status = 'passed' for unlocking. Also requires required exams to be taken.
  */
 async function hasCompletedVideoAssignments(userId, videoId) {
-  const video = await videoService.getVideoById(videoId);
-  if (video && video.assignments) {
-    const assignments = typeof video.assignments === 'string' ? JSON.parse(video.assignments) : video.assignments;
-    const required = (Array.isArray(assignments) ? assignments : []).filter((a) => a.isRequired);
-    for (const a of required) {
-      const passed = await hasPassedAssignment(userId, 'video', videoId, null, a.id);
-      if (!passed) return false;
-    }
-  }
-  return hasCompletedVideoExams(userId, videoId);
+  const incomplete = await getVideosWithIncompleteRequiredWork(userId, [videoId]);
+  return !incomplete.has(videoId);
 }
 
 /**
@@ -513,6 +588,7 @@ module.exports = {
   hasSubmitted,
   hasPassedAssignment,
   hasCompletedVideoAssignments,
+  getVideosWithIncompleteRequiredWork,
   hasCompletedLessonAssignments,
   hasCompletedVideoExams,
   hasCompletedLessonExams,

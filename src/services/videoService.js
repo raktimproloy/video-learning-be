@@ -35,8 +35,8 @@ class VideoService {
     /**
      * Checks if user is owner of the video OR a marketer managing the course.
      */
-    async isOwnerOrManager(userId, videoId) {
-        const video = await this.getVideoById(videoId);
+    async isOwnerOrManager(userId, videoId, videoRow = null) {
+        const video = videoRow || await this.getVideoById(videoId);
         if (!video) return false;
         if (video.owner_id === userId) return true;
 
@@ -281,44 +281,62 @@ class VideoService {
             });
         }
 
-        // If lesson is locked, lock all videos
-        if (lessonIsLocked) {
+        return this.applyLessonVideoLocks(videos, {
+            userId,
+            lessonIsLocked,
+            isOwner,
+            previewOnly: !userId,
+        });
+    }
+
+    isPreviewVideo(video) {
+        return !!(video && (video.isPreview === true || video.is_preview === true));
+    }
+
+    /**
+     * Preview/public videos stay unlocked. Guests and preview-only viewers
+     * see the rest of the lesson as locked. Enrolled students use assignment locks.
+     */
+    async applyLessonVideoLocks(videos, { userId = null, lessonIsLocked = false, isOwner = false, previewOnly = false } = {}) {
+        if (isOwner) {
+            return videos.map((video) => ({ ...video, isLocked: false }));
+        }
+
+        if (previewOnly || !userId) {
             return videos.map((video) => ({
                 ...video,
-                isLocked: true
+                isLocked: !this.isPreviewVideo(video),
             }));
         }
 
-        // If userId is provided, check lock status for each video
-        if (userId) {
-            const assignmentService = require('./assignmentService');
-            const videosWithLockStatus = [];
-            for (let i = 0; i < videos.length; i++) {
-                const video = videos[i];
-                let isLocked = false;
-
-                // First video is never locked
-                if (i > 0) {
-                    // Check ALL previous videos - if any previous video has required assignments not completed, lock this video
-                    for (let j = 0; j < i; j++) {
-                        const previousVideo = videos[j];
-                        const completed = await assignmentService.hasCompletedVideoAssignments(userId, previousVideo.id);
-                        if (!completed) {
-                            isLocked = true;
-                            break; // Once we find one locked video, this one is locked
-                        }
-                    }
-                }
-
-                videosWithLockStatus.push({
-                    ...video,
-                    isLocked
-                });
-            }
-            return videosWithLockStatus;
+        if (lessonIsLocked) {
+            return videos.map((video) => ({
+                ...video,
+                isLocked: !this.isPreviewVideo(video),
+            }));
         }
 
-        return videos;
+        const assignmentService = require('./assignmentService');
+        const incomplete = await assignmentService.getVideosWithIncompleteRequiredWork(
+            userId,
+            videos.map((v) => v.id)
+        );
+
+        return videos.map((video, i) => {
+            if (this.isPreviewVideo(video)) {
+                return { ...video, isLocked: false };
+            }
+            let isLocked = false;
+            if (i > 0) {
+                for (let j = 0; j < i; j++) {
+                    if (incomplete.has(videos[j].id)) {
+                        isLocked = true;
+                        break;
+                    }
+                }
+            }
+            return { ...video, isLocked };
+        });
     }
 
     /**
@@ -385,7 +403,7 @@ class VideoService {
         });
     }
 
-    async getLessonVideoListItems(lessonId, userId = null, lessonIsLocked = false, isOwner = false) {
+    async getLessonVideoListItems(lessonId, userId = null, lessonIsLocked = false, isOwner = false, opts = {}) {
         const statusFilter = isOwner ? '' : `AND (v.status IS NULL OR v.status = 'active' OR v.status = 'processing')`;
         const result = await db.query(
             `SELECT v.id, v.title, v."order", v.duration_seconds, v.source_type, v.status, v.is_preview
@@ -394,7 +412,7 @@ class VideoService {
              ORDER BY v."order" ASC, v.created_at ASC`,
             [lessonId]
         );
-        let videos = result.rows.map((row) => ({
+        const videos = result.rows.map((row) => ({
             id: row.id,
             title: row.title,
             order: row.order,
@@ -404,30 +422,12 @@ class VideoService {
             isPreview: row.is_preview ?? false,
         }));
 
-        if (lessonIsLocked) {
-            return videos.map((video) => ({ ...video, isLocked: true }));
-        }
-
-        if (userId) {
-            const assignmentService = require('./assignmentService');
-            const withLocks = [];
-            for (let i = 0; i < videos.length; i++) {
-                let isLocked = false;
-                if (i > 0) {
-                    for (let j = 0; j < i; j++) {
-                        const completed = await assignmentService.hasCompletedVideoAssignments(userId, videos[j].id);
-                        if (!completed) {
-                            isLocked = true;
-                            break;
-                        }
-                    }
-                }
-                withLocks.push({ ...videos[i], isLocked });
-            }
-            return withLocks;
-        }
-
-        return videos;
+        return this.applyLessonVideoLocks(videos, {
+            userId,
+            lessonIsLocked,
+            isOwner,
+            previewOnly: opts.previewOnly === true || !userId,
+        });
     }
 
     /**
@@ -449,11 +449,12 @@ class VideoService {
 
         if (!userId) {
             if (!video.is_preview) throw new Error('Access denied');
-            return { isOwnerOrManager: false, enrolled: false, isPreviewOnly: true };
+            return { isOwnerOrManager: false, enrolled: false, isPreviewOnly: true, isLocked: false };
         }
 
-        const isOwnerOrManager = await this.isOwnerOrManager(userId, video.id);
-        let enrolled = isOwnerOrManager || (await this.checkPermission(userId, video.id));
+        const isOwnerOrManager = await this.isOwnerOrManager(userId, video.id, video);
+        const hasPermission = isOwnerOrManager ? true : await this.checkPermission(userId, video.id);
+        let enrolled = hasPermission;
         if (!enrolled && video.is_preview) enrolled = true;
         if (!enrolled) throw new Error('Access denied');
 
@@ -461,7 +462,7 @@ class VideoService {
             throw new Error('Access denied');
         }
 
-        if (!isOwnerOrManager && video.lesson_id) {
+        if (!isOwnerOrManager && video.lesson_id && !video.is_preview) {
             const courseLessonCheck = await db.query(
                 `SELECT 1 FROM lessons l
                  JOIN courses c ON l.course_id = c.id
@@ -473,19 +474,16 @@ class VideoService {
             }
         }
 
+        const isPreviewOnly = !isOwnerOrManager && !hasPermission && !!video.is_preview;
         let isLocked = false;
-        if (role === 'student') {
-            if (video.is_preview && !isOwnerOrManager && !(await this.checkPermission(userId, video.id))) {
-                isLocked = false;
-            } else {
-                isLocked = await this.isVideoLockedForStudent(userId, video.id);
-            }
+        if (role === 'student' && !isOwnerOrManager && !video.is_preview && !isPreviewOnly) {
+            isLocked = await this.isVideoLockedForStudent(userId, video.id);
         }
 
         return {
             isOwnerOrManager,
             enrolled,
-            isPreviewOnly: !isOwnerOrManager && !(await this.checkPermission(userId, video.id)) && !!video.is_preview,
+            isPreviewOnly,
             isLocked,
         };
     }
@@ -533,28 +531,19 @@ class VideoService {
     async isVideoLockedForStudent(userId, videoId) {
         const video = await this.getVideoById(videoId);
         if (!video || !video.lesson_id) return false;
+        if (video.is_preview) return false;
 
-        const assignmentService = require('./assignmentService');
         const lessonService = require('./lessonService');
-
-        // Get lesson info
         const lesson = await lessonService.getLessonById(video.lesson_id);
         if (!lesson) return false;
 
-        const courseService = require('./courseService');
-        const course = await courseService.getCourseByIdSimple(lesson.course_id);
-        const teacherId = course?.teacher_id ?? null;
-
-        // Check if lesson itself is locked (students only see active lessons)
-        const allLessons = await lessonService.getLessonsByCourse(lesson.course_id, userId, teacherId);
-        const currentLesson = allLessons.find(l => l.id === lesson.id);
-        if (currentLesson?.isLocked === true) {
-            return true;
-        }
-
-        // Check if video is locked within the lesson
-        const videos = await this.getVideosByLesson(video.lesson_id, userId, false);
-        const currentVideo = videos.find(v => v.id === videoId);
+        const lessonIsLocked = await lessonService.isLessonLockedForStudent(
+            lesson.course_id,
+            lesson.id,
+            userId
+        );
+        const videos = await this.getLessonVideoListItems(video.lesson_id, userId, lessonIsLocked, false);
+        const currentVideo = videos.find((v) => v.id === videoId);
         return currentVideo?.isLocked === true;
     }
 
@@ -639,54 +628,14 @@ class VideoService {
      * Retrieves the raw encryption key for a video.
      */
     async getVideoKey(userId, videoId) {
-        // Check access: User must be owner OR have permission
         const video = await this.getVideoById(videoId);
         if (!video) {
             throw new Error('Video not found');
         }
-
-        // Guest (no token): only preview videos allowed
-        if (!userId) {
-            if (!video.is_preview) {
-                throw new Error('Access denied');
-            }
-            // Skip permission checks — go straight to key retrieval
-            return keyStorage.getKey(videoId);
-        }
-
-        const isOwnerOrManager = await this.isOwnerOrManager(userId, videoId);
-
-        let hasAccess = false;
-        if (isOwnerOrManager) {
-            hasAccess = true;
-        } else {
-            hasAccess = await this.checkPermission(userId, videoId);
-        }
-        if (!hasAccess && video.is_preview) {
-            hasAccess = true;
-        }
-        if (!hasAccess) {
+        if (!userId && !video.is_preview) {
             throw new Error('Access denied');
         }
-
-        // Non-owners cannot access inactive videos
-        if (!isOwnerOrManager && video.status === 'inactive') {
-            throw new Error('Access denied');
-        }
-
-        // Non-owners: course and lesson must be active (draft/inactive hidden from students)
-        if (!isOwnerOrManager && video.lesson_id) {
-            const courseLessonCheck = await db.query(
-                `SELECT 1 FROM lessons l
-                 JOIN courses c ON l.course_id = c.id
-                 WHERE l.id = $1 AND (COALESCE(c.status, 'active') = 'active') AND (COALESCE(l.status, 'active') = 'active')`,
-                [video.lesson_id]
-            );
-            if (courseLessonCheck.rows.length === 0) {
-                throw new Error('Access denied');
-            }
-        }
-
+        // Access is enforced by streamAuthCache / watch-bootstrap before this is called.
         return keyStorage.getKey(videoId);
     }
 

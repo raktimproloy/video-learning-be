@@ -103,6 +103,25 @@ class LessonService {
     }
 
     /**
+     * Whether this lesson is locked for a student (previous lesson incomplete).
+     * Avoids scanning every lesson in the course.
+     */
+    async isLessonLockedForStudent(courseId, lessonId, userId) {
+        if (!courseId || !lessonId || !userId) return false;
+        const result = await db.query(
+            `SELECT id FROM lessons
+             WHERE course_id = $1 AND (COALESCE(status, 'active') = 'active')
+             ORDER BY "order" ASC, created_at ASC`,
+            [courseId]
+        );
+        const idx = result.rows.findIndex((row) => row.id === lessonId);
+        if (idx <= 0) return false;
+        const previousId = result.rows[idx - 1].id;
+        const assignmentService = require('./assignmentService');
+        return assignmentService.isNextLessonLocked(userId, courseId, previousId, lessonId);
+    }
+
+    /**
      * Check if a lesson can be set as preview. Preview is only allowed when the previous lesson (by order) has no required assignments.
      * @param {string} courseId
      * @param {number} order - Order of the lesson we want to set as preview
