@@ -401,13 +401,14 @@ class VideoController {
 
     async getKey(req, res) {
         try {
-            if (req.authTokenInvalid) {
-                return res.status(401).send('Authentication required');
-            }
-
             const vid = req.query.vid || req.query.id;
-            const userId = req.user?.id ?? null;
-            const role = req.user?.role ?? 'guest';
+            // Expired/invalid JWT: treat as guest so public preview still decrypts.
+            let userId = req.user?.id ?? null;
+            let role = req.user?.role ?? 'guest';
+            if (req.authTokenInvalid) {
+                userId = null;
+                role = 'guest';
+            }
             if (!vid) return res.status(400).json({ error: 'Missing video ID (vid or id)' });
 
             // For guests: only allow key for preview videos
@@ -440,14 +441,15 @@ class VideoController {
 
     async streamSegment(req, res) {
         try {
-            if (req.authTokenInvalid) {
-                return res.status(401).send('Authentication required');
-            }
-
             const videoId = req.params.videoId;
             const subpath = req.params.path || req.params[0] || 'master.m3u8';
-            const userId = req.user?.id ?? null;
-            const role = req.user?.role ?? 'guest';
+            // Expired/invalid JWT: fall back to guest (preview streams must still work).
+            let userId = req.user?.id ?? null;
+            let role = req.user?.role ?? 'guest';
+            if (req.authTokenInvalid) {
+                userId = null;
+                role = 'guest';
+            }
 
             const video = await videoService.getVideoById(videoId);
             if (!video) return res.status(404).send('Video not found');
@@ -465,7 +467,8 @@ class VideoController {
 
             const r2Key = `${video.r2_key}/${subpath}`;
             const apiStreamBase = `${buildPublicBaseUrl(req)}/v1/video/${videoId}/stream`;
-            const accessToken = extractAccessToken(req);
+            // Never forward an expired/invalid JWT into playlist key URLs.
+            const accessToken = req.authTokenInvalid ? null : extractAccessToken(req);
 
             // HLS playlists: proxy + rewrite key/child URLs (+ CDN/presign segments)
             if (subpath.endsWith('.m3u8')) {
