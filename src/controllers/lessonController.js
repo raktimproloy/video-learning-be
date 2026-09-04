@@ -1545,6 +1545,36 @@ class LessonController {
             const safeSub = subpath.replace(/\.\./g, '').replace(/^\/+/, '');
             const r2Key = `${r2Prefix}/${safeSub}`;
 
+            // Teacher realtime preview: always SRS origin (not delayed R2/CDN).
+            const wantSrsPreview = isTeacher && (req.query.origin === 'srs' || req.query.preview === '1');
+            if (wantSrsPreview && pathName && isActiveLive) {
+                const resource = req.query.mtx
+                    ? liveMediamtxProxyService.sanitizeResource(String(req.query.mtx))
+                    : liveMediamtxProxyService.MASTER_RESOURCE;
+                const srsApiBase = `${String(process.env.BASE_URL || 'https://api.shikkhabhumi.com').replace(/\/$/, '')}/v1/lessons/${lessonId}/live/playlist`;
+                try {
+                    if (liveMediamtxProxyService.isSegmentResource(resource)) {
+                        const seg = await liveMediamtxProxyService.getSegmentBody(pathName, resource);
+                        res.set('Content-Type', seg.contentType);
+                        res.set('Cache-Control', 'no-store');
+                        res.set('Access-Control-Allow-Origin', '*');
+                        return res.send(seg.body);
+                    }
+                    const body = await liveMediamtxProxyService.getPlaylistBody(
+                        pathName, resource, `${srsApiBase}?preview=1&origin=srs`, accessToken
+                    );
+                    res.set('Content-Type', 'application/vnd.apple.mpegurl');
+                    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+                    res.set('Access-Control-Allow-Origin', '*');
+                    return res.send(body);
+                } catch (err) {
+                    return res.status(404).json({
+                        error: 'Live preview is not ready yet. Keep OBS streaming.',
+                        detail: err.message,
+                    });
+                }
+            }
+
             // Students: R2/CDN only — never MediaMTX cold-start (stable smooth playback).
             if (studentR2Only && isActiveLive && !useCdn) {
                 if (safeSub.endsWith('.m3u8') || liveMediamtxProxyService.isSegmentResource(safeSub) || req.query.mtx) {

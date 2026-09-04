@@ -20,6 +20,22 @@ function sanitizeResource(resource) {
   return raw.replace(/\.\.\//g, '').replace(/\.\./g, '');
 }
 
+/**
+ * SRS playlists often emit absolute paths like /live/{key}/index.m3u8?hls_ctx=.
+ * Strip the pathName prefix so we fetch http://srs:8080/{pathName}/{file}.
+ */
+function resourceRelativeToPath(resource, pathName) {
+  const raw = sanitizeResource(resource);
+  const qIndex = raw.indexOf('?');
+  const query = qIndex === -1 ? '' : raw.slice(qIndex);
+  let file = qIndex === -1 ? raw : raw.slice(0, qIndex);
+  const pn = String(pathName || '').replace(/^\/+/, '').replace(/\/+$/, '');
+  if (pn && (file === pn || file.startsWith(`${pn}/`))) {
+    file = file.slice(pn.length).replace(/^\/+/, '');
+  }
+  return `${file || MASTER_RESOURCE}${query}`;
+}
+
 function isSegmentResource(resource) {
   return /\.(ts|m4s|mp4|aac)$/i.test(stripQuery(resource));
 }
@@ -38,7 +54,7 @@ function contentTypeForResource(resource) {
 }
 
 function localResourcePath(pathName, resource) {
-  const fileName = stripQuery(sanitizeResource(resource));
+  const fileName = stripQuery(resourceRelativeToPath(resource, pathName));
   return path.join(liveDelivery.mediamtxHlsDir, pathName, fileName);
 }
 
@@ -55,7 +71,7 @@ async function readLocalFile(pathName, resource) {
 
 async function fetchFromMediamtxHttp(pathName, resource) {
   const base = liveDelivery.mediamtxInternalUrl.replace(/\/$/, '');
-  const url = `${base}/${pathName}/${sanitizeResource(resource)}`;
+  const url = `${base}/${pathName}/${resourceRelativeToPath(resource, pathName)}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
   if (!res.ok) {
     const err = new Error(`MediaMTX fetch failed (${res.status})`);
@@ -66,13 +82,15 @@ async function fetchFromMediamtxHttp(pathName, resource) {
 }
 
 /** Point a MediaMTX resource (playlist or segment) back at this API via the `mtx` param. */
-function rewriteMtxResourceUri(resource, apiStreamBase, accessToken) {
-  const url = `${apiStreamBase}?mtx=${encodeURIComponent(sanitizeResource(resource))}`;
+function rewriteMtxResourceUri(resource, apiStreamBase, accessToken, pathName) {
+  const rel = resourceRelativeToPath(resource, pathName);
+  const sep = String(apiStreamBase).includes('?') ? '&' : '?';
+  const url = `${apiStreamBase}${sep}mtx=${encodeURIComponent(rel)}`;
   return hlsDeliveryService.withAccessToken(url, accessToken);
 }
 
 /** Point every child playlist / segment back at this API via the `mtx` param. */
-function rewriteMediamtxPlaylist(content, apiStreamBase, accessToken) {
+function rewriteMediamtxPlaylist(content, apiStreamBase, accessToken, pathName) {
   return String(content || '')
     .split('\n')
     .map((line) => {
@@ -82,18 +100,18 @@ function rewriteMediamtxPlaylist(content, apiStreamBase, accessToken) {
       if (trimmed.startsWith('#')) {
         return line.replace(/URI="([^"]+)"/gi, (_, uri) => {
           if (!isPlaylistResource(uri) && !isSegmentResource(uri)) return `URI="${uri}"`;
-          return `URI="${rewriteMtxResourceUri(uri, apiStreamBase, accessToken)}"`;
+          return `URI="${rewriteMtxResourceUri(uri, apiStreamBase, accessToken, pathName)}"`;
         });
       }
 
       if (!isPlaylistResource(trimmed) && !isSegmentResource(trimmed)) return line;
-      return rewriteMtxResourceUri(trimmed, apiStreamBase, accessToken);
+      return rewriteMtxResourceUri(trimmed, apiStreamBase, accessToken, pathName);
     })
     .join('\n');
 }
 
 async function readPlaylistText(pathName, resource) {
-  const safeResource = resource || MASTER_RESOURCE;
+  const safeResource = resourceRelativeToPath(resource || MASTER_RESOURCE, pathName);
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const localPath = await readLocalFile(pathName, safeResource);
     if (localPath) {
@@ -118,16 +136,16 @@ async function readPlaylistText(pathName, resource) {
 
 async function getPlaylistBody(pathName, resource, apiStreamBase, accessToken) {
   const text = await readPlaylistText(pathName, resource || MASTER_RESOURCE);
-  return rewriteMediamtxPlaylist(text, apiStreamBase, accessToken);
+  return rewriteMediamtxPlaylist(text, apiStreamBase, accessToken, pathName);
 }
 
 async function getSegmentBody(pathName, resource) {
-  const localPath = await readLocalFile(pathName, resource);
+  const localPath = await readLocalFile(pathName, resourceRelativeToPath(resource, pathName));
   if (localPath) {
     const body = await fs.promises.readFile(localPath);
     return { body, contentType: contentTypeForResource(resource) };
   }
-  const res = await fetchFromMediamtxHttp(pathName, resource);
+  const res = await fetchFromMediamtxHttp(pathName, resourceRelativeToPath(resource, pathName));
   const body = Buffer.from(await res.arrayBuffer());
   return { body, contentType: contentTypeForResource(resource) };
 }
