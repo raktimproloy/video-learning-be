@@ -255,7 +255,7 @@ async function handleOnHls(req, res) {
 
   const seq = Number(body.seq_no);
   const duration = Number(body.duration) || FRAGMENT_SECONDS;
-  const tsName = Number.isFinite(seq) && seq >= 0 ? `seg-${seq}.ts` : `seg-${Date.now()}.ts`;
+  const tsName = `seg-${Date.now()}.ts`;
 
   const tsPath = resolveHlsFile(body.file, body.cwd);
   if (!tsPath) {
@@ -308,7 +308,6 @@ async function handleOnHls(req, res) {
     if (recOk) {
       await uploadText(`${recordingPrefix}/index.m3u8`, recPl);
       await uploadText(`${recordingPrefix}/master.m3u8`, masterManifest());
-      await uploadText(`${recordingPrefix}/720p/playlist.m3u8`, recPl);
     }
 
     if (plOk) await maybeMarkPlaybackReady(stream, state);

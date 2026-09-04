@@ -787,8 +787,16 @@ async function finalizeSessionRecording(sessionId) {
   body += `#EXT-X-TARGETDURATION:${maxDur}\n`;
   body += '#EXT-X-PLAYLIST-TYPE:EVENT\n';
   body += `#EXT-X-MEDIA-SEQUENCE:${firstSeq}\n`;
+  let lastTimestamp = 0;
   for (const name of tsNames) {
     const d = durationByName.get(name) || segSeconds;
+    const currentTs = parseInt(String(name).match(/(\d+)/)?.[1] || '0', 10);
+    
+    if (lastTimestamp > 0 && (currentTs - lastTimestamp) > (segSeconds * 1000 + 5000)) {
+      body += '#EXT-X-DISCONTINUITY\n';
+    }
+    lastTimestamp = currentTs;
+
     body += `#EXTINF:${Number(d).toFixed(3)},\n${name}\n`;
   }
   body += '#EXT-X-ENDLIST\n';
@@ -802,7 +810,6 @@ async function finalizeSessionRecording(sessionId) {
   ].join('\n');
 
   await uploadText(`${r2Prefix}/index.m3u8`, body);
-  await uploadText(`${r2Prefix}/720p/playlist.m3u8`, body);
   await uploadText(`${r2Prefix}/master.m3u8`, master);
 
   console.log(

@@ -1435,7 +1435,7 @@ class LessonController {
                     });
                 }
                 await liveSessionService.markSaved(liveSession.id);
-                await new Promise((r) => setTimeout(r, 800));
+                await new Promise((r) => setTimeout(r, 2500));
                 const finalized = await liveSegmentUploader.finalizeSessionRecording(liveSession.id);
                 if (!finalized.ok) {
                     return res.status(400).json({

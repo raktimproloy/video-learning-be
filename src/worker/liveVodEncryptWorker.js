@@ -231,6 +231,40 @@ class LiveVodEncryptWorker {
 
       if (!video.r2_key) throw new Error('Video missing r2_key for VOD promote');
 
+      const uploadThumbnail = async () => {
+        if (!r2Storage.isConfigured || video.custom_thumbnail_r2_key) {
+          return;
+        }
+        try {
+          log('Generating thumbnail from first frame...');
+          const thumbPath = path.join(outputDir, 'thumbnail.jpg');
+          await new Promise((resolve, reject) => {
+            ffmpeg(inputPlaylist)
+              .inputOptions([
+                '-allowed_extensions', 'ALL',
+                '-protocol_whitelist', 'file,crypto,data',
+              ])
+              .seekInput(1)
+              .frames(1)
+              .output(thumbPath)
+              .outputOptions(['-vf', 'scale=iw*min(1\\,1280/iw):-2', '-q:v', '3'])
+              .on('end', resolve)
+              .on('error', reject)
+              .run();
+          });
+          if (fs.existsSync(thumbPath)) {
+            const thumbR2Key = `${video.r2_key}/thumbnail.jpg`;
+            await r2Storage.uploadFromPath(thumbPath, thumbR2Key, 'image/jpeg');
+            await db.query('UPDATE videos SET thumbnail_r2_key = $1 WHERE id = $2', [thumbR2Key, task.video_id]);
+            log('Thumbnail uploaded: %s', thumbR2Key);
+          }
+        } catch (thumbErr) {
+          console.warn(`[LiveVodEncrypt] [Task ${task.id}] Thumbnail generation failed (non-fatal):`, thumbErr.message);
+        }
+      };
+
+      await uploadThumbnail();
+
       const processingPrefix = `${video.r2_key}/.processing/${task.id}`;
       log('Uploading encrypted HLS to %s', processingPrefix);
       await r2Storage.uploadDirectory(outputDir, processingPrefix);
