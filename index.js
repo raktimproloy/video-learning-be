@@ -39,10 +39,10 @@ async function start() {
     }
 
     await new Promise((resolve, reject) => {
-        server.listen(port, '0.0.0.0', (err) => {
+        server.listen(port, (err) => {
             if (err) reject(err);
             else {
-                console.log(`Server running on 0.0.0.0:${port}`);
+                console.log(`Server running on port ${port}`);
                 resolve();
             }
         });

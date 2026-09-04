@@ -409,8 +409,13 @@ async function buildAndUploadPlaylists(sessionId, r2Prefix, allNames, hlsDir) {
   // Align audio to the same segment indices as published video (prevents A/V desync).
   let audioPl = null;
   if (audioSegs.length > 0 && audioInit) {
-    const indexSet = new Set(videoPl.indices.filter((i) => i >= 0));
-    const alignedAudio = audioSegs.filter((s) => indexSet.has(segmentIndex(s)));
+    const validIndices = videoPl.indices.filter((i) => i >= 0);
+    const minIdx = validIndices.length > 0 ? Math.min(...validIndices) : -1;
+    const maxIdx = validIndices.length > 0 ? Math.max(...validIndices) : -1;
+    const alignedAudio = audioSegs.filter((s) => {
+      const idx = segmentIndex(s);
+      return idx >= minIdx && idx <= maxIdx;
+    });
     if (alignedAudio.length > 0) {
       let maxDur = liveDelivery.segmentSeconds || 2;
       for (const seg of alignedAudio) maxDur = Math.max(maxDur, durationFor(sessionId, seg));
@@ -641,35 +646,26 @@ async function pollActiveSessions() {
 }
 
 function startLiveSegmentUploader() {
-  if (!r2Storage.isConfigured) {
-    console.warn('[LiveUploader] R2 not configured — live segment uploader disabled');
-    return;
-  }
-  const intervalMs = liveDelivery.uploaderPollMs;
-  console.log(
-    `[LiveUploader] Started (poll ${intervalMs}ms, upload concurrency ${UPLOAD_CONCURRENCY}, ` +
-    `session concurrency ${liveDelivery.uploaderSessionConcurrency}, hold-back target ${liveDelivery.holdBackTargetSeconds}s, window ${liveDelivery.playlistWindow})`
-  );
-  setInterval(pollActiveSessions, intervalMs);
-  pollActiveSessions();
+  console.log('[LiveUploader] Polling uploader disabled. Handled by SRS Webhooks.');
 }
 
 /**
  * Save-only: build EVENT + ENDLIST playlists from the append-only recording prefix.
- * Does NOT touch live/sessions sliding-window playlists used by students.
+ * Supports SRS MPEG-TS (seg-N.ts at root) and legacy MediaMTX fmp4 under 720p/.
  */
 async function finalizeSessionRecording(sessionId) {
   if (!r2Storage.isConfigured || !sessionId) {
     return { ok: false, reason: 'not_configured', segmentCount: 0 };
   }
   const r2Prefix = r2LiveStorage.getLiveRecordingPrefix(sessionId);
+
+  // --- Legacy MediaMTX fmp4 under 720p/ ---
   const dir = `${r2Prefix}/720p/`;
   let keys = [];
   try {
     keys = await r2Storage.listObjects(dir);
   } catch (err) {
     console.warn('[LiveUploader] finalize list failed:', sessionId, err.message);
-    return { ok: false, reason: 'list_failed', segmentCount: 0 };
   }
 
   const names = keys
@@ -681,56 +677,138 @@ async function finalizeSessionRecording(sessionId) {
   const videoSegs = names.filter(isVideoSegmentFile).sort(compareSegmentNames);
   const audioSegs = names.filter(isAudioSegmentFile).sort(compareSegmentNames);
 
-  if (videoSegs.length === 0) {
+  if (videoSegs.length > 0) {
+    const videoEntries = videoSegs.map((name) => ({
+      name,
+      duration: durationFor(sessionId, name),
+    }));
+    const videoPl = buildTrackPlaylistBody(sessionId, videoSegs, videoInit, {
+      entries: videoEntries,
+      includeAll: true,
+      endList: true,
+      forceEvent: true,
+    });
+    if (!videoPl) {
+      return { ok: false, reason: 'playlist_build_failed', segmentCount: 0 };
+    }
+
+    let audioBody = null;
+    if (audioSegs.length > 0 && audioInit) {
+      const validIndices = videoPl.indices.filter((i) => i >= 0);
+      const minIdx = validIndices.length > 0 ? Math.min(...validIndices) : -1;
+      const maxIdx = validIndices.length > 0 ? Math.max(...validIndices) : -1;
+      const alignedAudio = audioSegs.filter((s) => {
+        const idx = segmentIndex(s);
+        return idx >= minIdx && idx <= maxIdx;
+      });
+      if (alignedAudio.length > 0) {
+        let maxDur = liveDelivery.segmentSeconds || 2;
+        for (const seg of alignedAudio) maxDur = Math.max(maxDur, durationFor(sessionId, seg));
+        const firstIdx = segmentIndex(alignedAudio[0]);
+        let body = '#EXTM3U\n#EXT-X-VERSION:7\n';
+        body += `#EXT-X-TARGETDURATION:${Math.max(1, Math.ceil(maxDur))}\n`;
+        body += '#EXT-X-PLAYLIST-TYPE:EVENT\n';
+        body += `#EXT-X-MEDIA-SEQUENCE:${firstIdx >= 0 ? firstIdx : 0}\n`;
+        body += `#EXT-X-MAP:URI="${audioInit}"\n`;
+        for (const seg of alignedAudio) {
+          body += `#EXTINF:${durationFor(sessionId, seg).toFixed(5)},\n${seg}\n`;
+        }
+        body += '#EXT-X-ENDLIST\n';
+        audioBody = body;
+      }
+    }
+
+    const master = buildMasterPlaylist(!!audioBody);
+    await uploadText(`${r2Prefix}/720p/playlist.m3u8`, videoPl.body);
+    if (audioBody) await uploadText(`${r2Prefix}/720p/audio.m3u8`, audioBody);
+    await uploadText(`${r2Prefix}/master.m3u8`, master);
+
+    console.log(
+      `[LiveUploader] Finalized recording ${sessionId}: ${videoPl.publishableCount} video segments` +
+        (audioBody ? ' + audio' : '') +
+        ` @ ${r2Prefix}`
+    );
+    return { ok: true, reason: null, segmentCount: videoPl.publishableCount, prefix: r2Prefix };
+  }
+
+  // --- SRS MPEG-TS at recording root (seg-N.ts) ---
+  let rootKeys = [];
+  try {
+    rootKeys = await r2Storage.listObjects(`${r2Prefix}/`);
+  } catch (err) {
+    console.warn('[LiveUploader] finalize root list failed:', sessionId, err.message);
+    return { ok: false, reason: 'list_failed', segmentCount: 0 };
+  }
+
+  const tsNames = rootKeys
+    .map((k) => k.split('/').pop())
+    .filter((n) => /^seg-\d+\.ts$/i.test(n || ''))
+    .sort((a, b) => {
+      const na = parseInt(String(a).match(/(\d+)/)?.[1] || '0', 10);
+      const nb = parseInt(String(b).match(/(\d+)/)?.[1] || '0', 10);
+      return na - nb;
+    });
+
+  if (tsNames.length === 0) {
     return { ok: false, reason: 'no_segments', segmentCount: 0 };
   }
 
-  const videoEntries = videoSegs.map((name) => ({
-    name,
-    duration: durationFor(sessionId, name),
-  }));
-  const videoPl = buildTrackPlaylistBody(sessionId, videoSegs, videoInit, {
-    entries: videoEntries,
-    includeAll: true,
-    endList: true,
-    forceEvent: true,
-  });
-  if (!videoPl) {
-    return { ok: false, reason: 'playlist_build_failed', segmentCount: 0 };
+  const segSeconds = liveDelivery.segmentSeconds || 2;
+  let maxDur = Math.ceil(segSeconds);
+  // Prefer existing live recording playlist for real EXTINF values
+  let existingBody = null;
+  try {
+    if (await r2Storage.objectExists(`${r2Prefix}/index.m3u8`)) {
+      const hlsDeliveryService = require('../services/hlsDeliveryService');
+      existingBody = await hlsDeliveryService.readObjectAsString(`${r2Prefix}/index.m3u8`);
+    }
+  } catch (_) {
+    existingBody = null;
   }
 
-  let audioBody = null;
-  if (audioSegs.length > 0 && audioInit) {
-    const indexSet = new Set(videoPl.indices.filter((i) => i >= 0));
-    const alignedAudio = audioSegs.filter((s) => indexSet.has(segmentIndex(s)));
-    if (alignedAudio.length > 0) {
-      let maxDur = liveDelivery.segmentSeconds || 2;
-      for (const seg of alignedAudio) maxDur = Math.max(maxDur, durationFor(sessionId, seg));
-      const firstIdx = segmentIndex(alignedAudio[0]);
-      let body = '#EXTM3U\n#EXT-X-VERSION:7\n';
-      body += `#EXT-X-TARGETDURATION:${Math.max(1, Math.ceil(maxDur))}\n`;
-      body += '#EXT-X-PLAYLIST-TYPE:EVENT\n';
-      body += `#EXT-X-MEDIA-SEQUENCE:${firstIdx >= 0 ? firstIdx : 0}\n`;
-      body += `#EXT-X-MAP:URI="${audioInit}"\n`;
-      for (const seg of alignedAudio) {
-        body += `#EXTINF:${durationFor(sessionId, seg).toFixed(5)},\n${seg}\n`;
+  const durationByName = new Map();
+  if (existingBody) {
+    const lines = existingBody.split('\n');
+    for (let i = 0; i < lines.length; i += 1) {
+      const m = lines[i].match(/^#EXTINF:([\d.]+)/);
+      if (m && lines[i + 1]) {
+        const file = lines[i + 1].trim().split('/').pop();
+        const d = parseFloat(m[1]);
+        if (file && Number.isFinite(d)) {
+          durationByName.set(file, d);
+          maxDur = Math.max(maxDur, Math.ceil(d));
+        }
       }
-      body += '#EXT-X-ENDLIST\n';
-      audioBody = body;
     }
   }
 
-  const master = buildMasterPlaylist(!!audioBody);
-  await uploadText(`${r2Prefix}/720p/playlist.m3u8`, videoPl.body);
-  if (audioBody) await uploadText(`${r2Prefix}/720p/audio.m3u8`, audioBody);
+  const firstSeq = parseInt(String(tsNames[0]).match(/(\d+)/)?.[1] || '0', 10);
+  let body = '#EXTM3U\n#EXT-X-VERSION:3\n';
+  body += `#EXT-X-TARGETDURATION:${maxDur}\n`;
+  body += '#EXT-X-PLAYLIST-TYPE:EVENT\n';
+  body += `#EXT-X-MEDIA-SEQUENCE:${firstSeq}\n`;
+  for (const name of tsNames) {
+    const d = durationByName.get(name) || segSeconds;
+    body += `#EXTINF:${Number(d).toFixed(3)},\n${name}\n`;
+  }
+  body += '#EXT-X-ENDLIST\n';
+
+  const master = [
+    '#EXTM3U',
+    '#EXT-X-VERSION:3',
+    '#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=1920x1080',
+    'index.m3u8',
+    '',
+  ].join('\n');
+
+  await uploadText(`${r2Prefix}/index.m3u8`, body);
+  await uploadText(`${r2Prefix}/720p/playlist.m3u8`, body);
   await uploadText(`${r2Prefix}/master.m3u8`, master);
 
   console.log(
-    `[LiveUploader] Finalized recording ${sessionId}: ${videoPl.publishableCount} video segments` +
-      (audioBody ? ' + audio' : '') +
-      ` @ ${r2Prefix}`
+    `[LiveUploader] Finalized SRS recording ${sessionId}: ${tsNames.length} ts segments @ ${r2Prefix}`
   );
-  return { ok: true, reason: null, segmentCount: videoPl.publishableCount, prefix: r2Prefix };
+  return { ok: true, reason: null, segmentCount: tsNames.length, prefix: r2Prefix };
 }
 
 module.exports = {

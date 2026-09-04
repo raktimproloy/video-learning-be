@@ -20,7 +20,7 @@ function getLiveProcessingPrefix(sessionId, taskId) {
 }
 
 function getMediamtxPathName(streamKey) {
-  return `live_${streamKey}`;
+  return `live/${streamKey}`;
 }
 
 async function cleanupPrefixSafe(prefix) {

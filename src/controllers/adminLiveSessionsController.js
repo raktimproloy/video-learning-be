@@ -1,5 +1,5 @@
 const liveSessionService = require('../services/liveSessionService');
-
+const liveDiagnosticsService = require('../services/liveDiagnosticsService');
 class AdminLiveSessionsController {
     /** List all currently active live sessions with course, lesson, and teacher info. */
     async list(req, res) {
@@ -27,6 +27,17 @@ class AdminLiveSessionsController {
             res.json({ message: 'Live class stopped.', sessionId });
         } catch (error) {
             console.error('Admin stop live session error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    /** Get global live stream diagnostics (Teacher -> Server -> R2 flow) */
+    async getDiagnostics(req, res) {
+        try {
+            const report = liveDiagnosticsService.getGlobalReport();
+            res.json({ diagnostics: report });
+        } catch (error) {
+            console.error('Admin get live diagnostics error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     }

@@ -3,11 +3,11 @@ require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 const { startLiveSegmentUploader } = require('./liveSegmentUploader');
 
 /**
- * Dedicated live HLS → R2 mirror process (no FFmpeg video encoding).
- * Run separately from the main worker so multiple teacher lives stay smooth.
+ * Live HLS uploading is now handled via SRS webhooks in the main API server.
+ * This process is no longer required and will just sleep.
  */
-console.log('[LiveUploader] Dedicated live-uploader process starting...');
-startLiveSegmentUploader();
+console.log('[LiveUploader] Polling disabled. SRS webhooks handle uploads.');
+setInterval(() => {}, 60000);
 
 process.on('SIGTERM', () => {
   console.log('[LiveUploader] Received SIGTERM, shutting down...');

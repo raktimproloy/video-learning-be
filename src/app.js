@@ -127,14 +127,12 @@ app.use('/images', express.static(path.join(__dirname, '../public/images')));
 const lessonController = require('./controllers/lessonController');
 const liveDelivery = require('./config/liveDelivery');
 
-// Internal MediaMTX ingest auth (Docker network / VPS only)
-app.post('/v1/internal/live/ingest-auth', express.json(), (req, res, next) => {
-    const qSecret = req.query?.secret;
-    if (qSecret && qSecret !== liveDelivery.ingestAuthSecret) {
-        return res.status(401).json({ error: 'unauthorized' });
-    }
-    return lessonController.liveIngestAuth(req, res, next);
-});
+const srsWebhookService = require('./services/srsWebhookService');
+
+// Internal SRS Webhooks
+app.post('/v1/internal/live/on_publish', express.json(), srsWebhookService.handleOnPublish);
+app.post('/v1/internal/live/on_unpublish', express.json(), srsWebhookService.handleOnUnpublish);
+app.post('/v1/internal/live/on_hls', express.json(), srsWebhookService.handleOnHls);
 
 app.get('/v1/internal/live/diag', (req, res, next) => lessonController.getLiveDiagInternal(req, res, next));
 

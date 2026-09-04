@@ -1,5 +1,5 @@
 /**
- * R2 live ingest: WHIP stream keys, playback URLs, MediaMTX auth.
+ * R2 live ingest: OBS RTMP (SRS) stream keys + authenticated HLS playback.
  */
 const crypto = require('crypto');
 const db = require('../../db');
@@ -8,6 +8,16 @@ const r2LiveStorage = require('./r2LiveStorageService');
 
 function generateStreamKey() {
   return crypto.randomBytes(16).toString('hex');
+}
+
+function getRtmpServerUrl() {
+  return liveDelivery.rtmpPublicUrl || 'rtmp://127.0.0.1:1935/live';
+}
+
+function getPreviewFlvUrl(streamKey) {
+  if (!streamKey) return null;
+  const base = String(liveDelivery.srsHttpPublicUrl || 'http://127.0.0.1:8081').replace(/\/$/, '');
+  return `${base}/live/${streamKey}.flv`;
 }
 
 async function setSessionStreamKey(sessionId, streamKey) {
@@ -51,7 +61,7 @@ async function validateIngestAuth(body, headers = {}) {
   // When secret not provided (MediaMTX hook), allow only if path matches active session
 
   const path = body?.path || body?.name || '';
-  const match = String(path).match(/^live_(.+)$/);
+  const match = String(path).match(/^live\/(.+)$/);
   if (!match) return { ok: false, reason: 'invalid_path' };
 
   const streamKey = match[1];
@@ -83,10 +93,15 @@ async function getCredentials(lessonId, liveSessionId, uid, role, baseUrl) {
 
   if (role === 'publisher') {
     if (!streamKey) return null;
+    const rtmpServer = getRtmpServerUrl();
     return {
       provider: 'r2_live',
       sessionId: liveSessionId,
       streamKey,
+      rtmpServer,
+      rtmpUrl: `${rtmpServer}/${streamKey}`,
+      previewFlvUrl: getPreviewFlvUrl(streamKey),
+      // Legacy field kept for older teacher UI builds
       whipUrl: getWhipUrl(streamKey),
       pathName: r2LiveStorage.getMediamtxPathName(streamKey),
       playbackUrl: playlistUrl,
@@ -140,6 +155,8 @@ module.exports = {
   setSessionStreamKey,
   getSessionByStreamKey,
   getWhipUrl,
+  getRtmpServerUrl,
+  getPreviewFlvUrl,
   getPlaylistApiUrl,
   validateIngestAuth,
   getCredentials,

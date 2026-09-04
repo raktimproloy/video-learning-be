@@ -22,8 +22,8 @@ docker compose run --rm --no-deps api node run_migrations.js
 
 echo "==> Starting services..."
 docker compose up -d --remove-orphans
-# MediaMTX mounts mediamtx.yml read-only — recreate so config changes (e.g. hlsAlwaysRemux) apply.
-docker compose up -d --force-recreate mediamtx
+# Recreate SRS so srs.conf (RTMP + HTTP-FLV) always applies.
+docker compose up -d --force-recreate srs
 
 echo "==> Waiting for health..."
 sleep 5
@@ -41,13 +41,14 @@ else
   echo "WARN: health check failed — run: docker compose logs api"
 fi
 
-if docker compose ps mediamtx 2>/dev/null | grep -q "healthy\|Up"; then
-  echo "OK: MediaMTX (R2 live ingest) is running — bundled with backend stack"
+if docker compose ps srs 2>/dev/null | grep -q "healthy\|Up"; then
+  echo "OK: SRS (OBS RTMP ingest + FLV preview) is running"
 else
-  echo "WARN: MediaMTX not healthy — run: docker compose logs mediamtx"
+  echo "WARN: SRS not up — run: docker compose logs srs"
 fi
 
 docker compose ps
 echo ""
 echo "Deploy done. Point api.shikkhabhumi.com DNS to this VPS."
+echo "OBS Server: rtmp://<VPS_IP>:1935/live  (open TCP 1935 + 8081)"
 echo "Logs: docker compose logs -f api"

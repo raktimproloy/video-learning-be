@@ -1419,8 +1419,15 @@ class LessonController {
                     console.warn('[saveLiveRecording] final flush failed:', flushErr.message);
                 }
                 // Verify append-only recording has media BEFORE ending the live session.
-                const recKeys = await r2Storage.listObjects(`${liveSourcePrefix}/720p/`);
-                const hasRecMedia = recKeys.some((k) => /_video\d+_seg\d+\.(mp4|m4s|ts)$/i.test(k));
+                // SRS writes seg-N.ts at recording root; legacy MediaMTX wrote under 720p/.
+                const recKeysRoot = await r2Storage.listObjects(`${liveSourcePrefix}/`);
+                const recKeys720 = await r2Storage.listObjects(`${liveSourcePrefix}/720p/`);
+                const hasRecMedia = [...recKeysRoot, ...recKeys720].some(
+                  (k) =>
+                    /\/seg-\d+\.ts$/i.test(k) ||
+                    /_video\d+_seg\d+\.(mp4|m4s|ts)$/i.test(k) ||
+                    /\.ts$/i.test(k)
+                );
                 if (!hasRecMedia) {
                     return res.status(400).json({
                         error: 'No live HLS recording found. Stream for a few seconds before saving.',

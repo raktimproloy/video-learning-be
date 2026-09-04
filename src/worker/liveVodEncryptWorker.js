@@ -142,6 +142,7 @@ class LiveVodEncryptWorker {
       const audioPlaylistLocal = path.join(inputDir, '720p', 'audio.m3u8');
       let inputPlaylist = null;
       if (fs.existsSync(videoPlaylistLocal)) inputPlaylist = videoPlaylistLocal;
+      else if (fs.existsSync(path.join(inputDir, 'index.m3u8'))) inputPlaylist = path.join(inputDir, 'index.m3u8');
       else if (fs.existsSync(masterLocal)) inputPlaylist = masterLocal;
       else throw new Error('Live playlist not found after download from R2');
 

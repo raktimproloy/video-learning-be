@@ -6,7 +6,7 @@
 name: shikkhabhumi
 
 x-live-env: &live-env
-  MEDIAMTX_INTERNAL_URL: http://mediamtx:8888
+  MEDIAMTX_INTERNAL_URL: http://srs:8080
   MEDIAMTX_HLS_DIR: /var/mediamtx/hls
   LIVE_HLS_SEGMENT_SECONDS: ${LIVE_HLS_SEGMENT_SECONDS:-2}
   LIVE_HLS_PLAYLIST_WINDOW: ${LIVE_HLS_PLAYLIST_WINDOW:-20}
@@ -15,10 +15,13 @@ x-live-env: &live-env
   LIVE_CLIENT_START_BUFFER_SECONDS: ${LIVE_CLIENT_START_BUFFER_SECONDS:-3}
   LIVE_PLAYLIST_WRITE_MIN_MS: ${LIVE_PLAYLIST_WRITE_MIN_MS:-1000}
   LIVE_STATS_CACHE_MS: ${LIVE_STATS_CACHE_MS:-1500}
-  LIVE_HLS_PLAYLIST_TYPE: ${LIVE_HLS_PLAYLIST_TYPE:-window}
+  LIVE_HLS_PLAYLIST_TYPE: ${LIVE_HLS_PLAYLIST_TYPE:-event}
   LIVE_STUDENT_R2_ONLY: ${LIVE_STUDENT_R2_ONLY:-true}
   LIVE_CDN_MIN_SEGMENTS: ${LIVE_CDN_MIN_SEGMENTS:-3}
   LIVE_UPLOADER_SESSION_CONCURRENCY: ${LIVE_UPLOADER_SESSION_CONCURRENCY:-8}
+  LIVE_RTMP_URL: ${LIVE_RTMP_URL:-}
+  LIVE_RTMP_HOST: ${LIVE_RTMP_HOST:-}
+  LIVE_SRS_HTTP_URL: ${LIVE_SRS_HTTP_URL:-}
 
 services:
   api:
@@ -40,7 +43,7 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      mediamtx:
+      srs:
         condition: service_started
     networks:
       - backend
@@ -75,7 +78,7 @@ services:
     depends_on:
       api:
         condition: service_healthy
-      mediamtx:
+      srs:
         condition: service_started
     networks:
       - backend
@@ -106,7 +109,7 @@ services:
     depends_on:
       api:
         condition: service_healthy
-      mediamtx:
+      srs:
         condition: service_started
     networks:
       - backend
@@ -120,22 +123,22 @@ services:
         max-size: "20m"
         max-file: "5"
 
-  mediamtx:
-    image: bluenviron/mediamtx:latest-ffmpeg
-    container_name: shikkhabhumi-mediamtx
+  srs:
+    image: ossrs/srs:5
+    container_name: shikkhabhumi-srs
     restart: unless-stopped
     ports:
-      # WebRTC media (WHIP publish from browser) — required for local Docker
-      - "8189:8189/udp"
-      - "8189:8189/tcp"
-    environment:
-      MTX_WEBRTCADDITIONALHOSTS: ${MEDIAMTX_WEBRTC_HOST:-localhost,127.0.0.1}
+      # RTMP ingest (OBS)
+      - "1935:1935"
+      # SRS HTTP API/Server
+      - "1985:1985"
+      - "8081:8080"
     volumes:
-      - ./docker/mediamtx.yml:/mediamtx.yml:ro
+      - ./docker/srs.conf:/usr/local/srs/conf/srs.conf:ro
       - live_hls_data:/var/mediamtx/hls
+    command: ["./objs/srs", "-c", "conf/srs.conf"]
     networks:
       - backend
-    # Scratch-based image — no shell/wget; started = ready for WHIP/HLS
     logging:
       driver: json-file
       options:
@@ -170,7 +173,7 @@ services:
     depends_on:
       api:
         condition: service_healthy
-      mediamtx:
+      srs:
         condition: service_started
     networks:
       - backend

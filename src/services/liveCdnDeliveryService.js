@@ -10,15 +10,25 @@ const r2Storage = require('./r2StorageService');
 const r2LiveStorage = require('./r2LiveStorageService');
 const hlsDeliveryService = require('./hlsDeliveryService');
 
+function countSegmentLines(content) {
+  return String(content || '')
+    .split('\n')
+    .filter((l) => {
+      const t = l.trim();
+      return t && !t.startsWith('#') && /\.(mp4|m4s|ts)$/i.test(t);
+    }).length;
+}
+
 async function countMirroredMediaSegments(sessionId) {
   if (!r2Storage.isConfigured || !sessionId) return 0;
   try {
-    const prefix = `${r2LiveStorage.getLiveSessionPrefix(sessionId)}/720p/`;
-    const keys = await r2Storage.listObjects(prefix);
+    const prefix = r2LiveStorage.getLiveSessionPrefix(sessionId);
+    // SRS layout: live/sessions/{id}/seg-N.ts  (legacy MediaMTX also wrote under 720p/)
+    const keys = await r2Storage.listObjects(`${prefix}/`);
     return keys.filter((k) => {
       const name = k.split('/').pop() || k;
       if (/_init\.mp4$/i.test(name)) return false;
-      return /_video\d+_seg\d+\./i.test(name) || /\.(m4s|ts)$/i.test(name);
+      return /_video\d+_seg\d+\./i.test(name) || /^seg-\d+\.ts$/i.test(name) || /\.(m4s|ts)$/i.test(name);
     }).length;
   } catch (_) {
     return 0;
@@ -29,13 +39,15 @@ async function countPublishableSegmentsOnR2(sessionId) {
   if (!r2Storage.isConfigured || !sessionId) return 0;
   try {
     const prefix = r2LiveStorage.getLiveSessionPrefix(sessionId);
-    const playlistKey = `${prefix}/720p/playlist.m3u8`;
-    if (!(await r2Storage.objectExists(playlistKey))) return 0;
-    const content = await hlsDeliveryService.readObjectAsString(playlistKey);
-    return content.split('\n').filter((l) => {
-      const t = l.trim();
-      return t && !t.startsWith('#') && /\.(mp4|m4s|ts)$/i.test(t);
-    }).length;
+    // Prefer SRS index.m3u8; fall back to legacy MediaMTX 720p/playlist.m3u8
+    const candidates = [`${prefix}/index.m3u8`, `${prefix}/720p/playlist.m3u8`, `${prefix}/720p/index.m3u8`];
+    for (const playlistKey of candidates) {
+      if (!(await r2Storage.objectExists(playlistKey))) continue;
+      const content = await hlsDeliveryService.readObjectAsString(playlistKey);
+      const n = countSegmentLines(content);
+      if (n > 0) return n;
+    }
+    return 0;
   } catch (_) {
     return 0;
   }
