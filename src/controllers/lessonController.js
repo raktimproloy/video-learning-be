@@ -1537,7 +1537,8 @@ class LessonController {
                 ? r2LiveStorage.getMediamtxPathName(activeSession.ingest_stream_key)
                 : null;
             const useCdn = await liveCdnDeliveryService.shouldServeViaCdn(activeSession);
-            const r2Prefix = r2LiveStorage.getLiveSessionPrefix(activeSession.id);
+            const isEvent = liveDelivery.playlistType === 'event';
+            const r2Prefix = isEvent ? r2LiveStorage.getLiveRecordingPrefix(activeSession.id) : r2LiveStorage.getLiveSessionPrefix(activeSession.id);
             const isActiveLive = activeSession.status === 'active' && !!pathName;
             const studentR2Only = liveDelivery.studentR2Only && !isTeacher && req.query.preview !== '1';
 

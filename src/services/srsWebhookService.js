@@ -67,7 +67,7 @@ function buildMediaPlaylist(segments, { endList = false } = {}) {
     `#EXT-X-TARGETDURATION:${maxDur}`,
     `#EXT-X-MEDIA-SEQUENCE:${firstSeq}`,
   ];
-  if (endList) lines.push('#EXT-X-PLAYLIST-TYPE:EVENT');
+  if (endList || liveDelivery.playlistType === 'event') lines.push('#EXT-X-PLAYLIST-TYPE:EVENT');
   for (const seg of segments) {
     if (seg.discontinuity) lines.push('#EXT-X-DISCONTINUITY');
     lines.push(`#EXTINF:${Number(seg.duration || FRAGMENT_SECONDS).toFixed(3)},`);
@@ -294,7 +294,9 @@ async function handleOnHls(req, res) {
 
     if (!state.liveSegments.some((s) => s.name === tsName)) {
       state.liveSegments.push(entry);
-      while (state.liveSegments.length > PLAYLIST_WINDOW) state.liveSegments.shift();
+      if (liveDelivery.playlistType !== 'event') {
+        while (state.liveSegments.length > PLAYLIST_WINDOW) state.liveSegments.shift();
+      }
     }
     if (recOk && !state.recordingSegments.some((s) => s.name === tsName)) {
       state.recordingSegments.push({ ...entry, discontinuity: entry.discontinuity });
