@@ -59,23 +59,20 @@ module.exports = {
     }
   })(),
   /**
-   * Public SRS HTTP base for teacher near-realtime FLV preview.
-   * Docker maps SRS http_server 8080 → host 8081.
-   * Example: http://127.0.0.1:8081
+   * Public HTTP(S) base for teacher near-realtime FLV preview.
+   * Prefer API origin (nginx proxies /live/*.flv → SRS) so HTTPS sites are not mixed-content blocked.
+   * Local fallback: http://127.0.0.1:8080 (compose nginx) or :8081 (direct SRS map).
    */
   srsHttpPublicUrl: (() => {
     const explicit = (process.env.LIVE_SRS_HTTP_URL || process.env.SRS_HTTP_PUBLIC_URL || '').trim().replace(/\/$/, '');
     if (explicit) return explicit.replace('://localhost', '://127.0.0.1');
     try {
-      const base = process.env.MEDIAMTX_WHIP_PUBLIC_URL || process.env.BASE_URL || 'http://127.0.0.1:8080';
-      let host = new URL(base).hostname || '127.0.0.1';
-      if (host === 'localhost') host = '127.0.0.1';
-      // Default mapped SRS HTTP port in docker-compose
-      const port = process.env.LIVE_SRS_HTTP_PORT || '8081';
-      return `http://${host}:${port}`;
-    } catch (_) {
-      return 'http://127.0.0.1:8081';
-    }
+      const base = (process.env.BASE_URL || process.env.MEDIAMTX_WHIP_PUBLIC_URL || 'http://127.0.0.1:8080')
+        .trim()
+        .replace(/\/$/, '');
+      if (base) return base.replace('://localhost', '://127.0.0.1');
+    } catch (_) { /* fall through */ }
+    return 'http://127.0.0.1:8080';
   })(),
   streamKeySecret: process.env.LIVE_STREAM_KEY_SECRET || process.env.JWT_SECRET || 'live-stream-secret',
   ingestAuthSecret: process.env.LIVE_INGEST_AUTH_SECRET || process.env.JWT_SECRET || 'live-ingest-secret',

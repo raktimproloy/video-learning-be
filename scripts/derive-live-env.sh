@@ -53,7 +53,13 @@ upsert "MEDIAMTX_WHIP_PUBLIC_URL" "$BASE"
 upsert "MEDIAMTX_INTERNAL_URL" "http://srs:8080"
 upsert "MEDIAMTX_HLS_DIR" "/var/mediamtx/hls"
 upsert "LIVE_RTMP_URL" "rtmp://${RTMP_HOST}:1935/live"
-upsert "LIVE_SRS_HTTP_URL" "http://${RTMP_HOST}:8081"
+# Teacher FLV preview must be same scheme as the website (HTTPS via API nginx → SRS).
+# Direct http://IP:8081 is blocked as mixed content on https://shikkhabhumi.com.
+SRS_HTTP_PUBLIC="$BASE"
+if [[ "$HOST" == "localhost" || "$HOST" == "127.0.0.1" ]]; then
+  SRS_HTTP_PUBLIC="http://127.0.0.1:8080"
+fi
+upsert "LIVE_SRS_HTTP_URL" "$SRS_HTTP_PUBLIC"
 
 if [[ "$HOST" == "localhost" || "$HOST" == "127.0.0.1" ]]; then
   upsert "MEDIAMTX_WEBRTC_HOST" "localhost,127.0.0.1"
@@ -66,5 +72,5 @@ else
 fi
 
 echo "derive-live-env: LIVE_RTMP_URL=rtmp://${RTMP_HOST}:1935/live"
-echo "derive-live-env: LIVE_SRS_HTTP_URL=http://${RTMP_HOST}:8081"
+echo "derive-live-env: LIVE_SRS_HTTP_URL=${SRS_HTTP_PUBLIC}"
 echo "derive-live-env: MEDIAMTX_WHIP_PUBLIC_URL=$BASE"
