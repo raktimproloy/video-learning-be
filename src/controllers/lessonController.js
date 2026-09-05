@@ -1528,8 +1528,10 @@ class LessonController {
                 ? r2LiveStorage.getMediamtxPathName(activeSession.ingest_stream_key)
                 : null;
             const useCdn = await liveCdnDeliveryService.shouldServeViaCdn(activeSession);
-            const isEvent = liveDelivery.playlistType === 'event';
-            const r2Prefix = isEvent ? r2LiveStorage.getLiveRecordingPrefix(activeSession.id) : r2LiveStorage.getLiveSessionPrefix(activeSession.id);
+            // Segments are ALWAYS uploaded to live/sessions/{id}/ by SRS webhook, regardless of playlistType.
+            // playlistType=event only affects the sliding-window logic in srsWebhookService — it does NOT
+            // change the upload path. Using getLiveRecordingPrefix here caused proxy segment 404s.
+            const r2Prefix = r2LiveStorage.getLiveSessionPrefix(activeSession.id);
             const isActiveLive = activeSession.status === 'active' && !!pathName;
             const studentR2Only = liveDelivery.studentR2Only && !isTeacher && req.query.preview !== '1';
 
