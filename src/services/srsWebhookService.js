@@ -18,6 +18,8 @@ const r2LiveStorage = require('./r2LiveStorageService');
 const r2Storage = require('./r2StorageService');
 const liveDelivery = require('../config/liveDelivery');
 const { publishLiveEvent } = require('../utils/liveEventBus');
+const liveRecorderService = require('./liveRecorderService');
+
 
 /** streamKey → { sessionId, lessonId, segments: [{ name, duration, seq }], playbackReady } */
 const sessionState = new Map();
@@ -155,12 +157,9 @@ async function handleOnPublish(req, res) {
     }
 
     const r2LivePrefix = r2LiveStorage.getLiveSessionPrefix(session.id);
-    const recordingPrefix = r2LiveStorage.getLiveRecordingPrefix(session.id);
 
     const prior = sessionState.get(stream);
-    const resumeSegments =
-      prior?.sessionId === session.id ? prior.recordingSegments || [] : [];
-    const isResume = resumeSegments.length > 0 || !!session.playback_ready_at;
+    const isResume = (prior?.liveSegments?.length > 0) || !!session.playback_ready_at;
 
     // Seed playlists so early player polls never cache a 404.
     // On resume, keep existing R2 media playlist — blanking it would drop viewers.
@@ -169,20 +168,18 @@ async function handleOnPublish(req, res) {
       await uploadText(`${r2LivePrefix}/index.m3u8`, emptyManifest());
       await liveIngestService.clearPlaybackReady(session.id);
     }
-    await uploadText(`${recordingPrefix}/master.m3u8`, masterManifest());
-    if (!resumeSegments.length) {
-      await uploadText(`${recordingPrefix}/index.m3u8`, emptyManifest());
-    }
 
     await liveIngestService.markHlsReady(session.id);
+    
+    // Start FFmpeg direct-to-R2 recorder
+    liveRecorderService.startRecording(stream).catch(err => console.error('[SRS] Recorder start failed:', err));
 
     sessionState.set(stream, {
       sessionId: session.id,
       lessonId: session.lesson_id,
-      liveSegments: [],
-      recordingSegments: resumeSegments.slice(),
-      playbackReady: isResume || !!session.playback_ready_at,
-      pendingDiscontinuity: resumeSegments.length > 0,
+      liveSegments: isResume ? (prior?.liveSegments || []) : [],
+      playbackReady: isResume,
+      pendingDiscontinuity: isResume,
     });
 
     await emitReady(session.lesson_id, session.id, 'hls_ready');
@@ -205,6 +202,10 @@ async function handleOnUnpublish(req, res) {
   try {
     const stream = String(req.body?.stream || '').trim();
     if (!stream) return;
+    
+    // Stop FFmpeg recorder
+    liveRecorderService.stopRecording(stream).catch(err => console.error('[SRS] Recorder stop failed:', err));
+
     const state = sessionState.get(stream);
     if (!state) return;
 
@@ -246,7 +247,6 @@ async function handleOnHls(req, res) {
       sessionId: session.id,
       lessonId: session.lesson_id,
       liveSegments: [],
-      recordingSegments: [],
       playbackReady: !!session.playback_ready_at,
       pendingDiscontinuity: false,
     };
@@ -272,17 +272,11 @@ async function handleOnHls(req, res) {
   }
 
   const r2LivePrefix = r2LiveStorage.getLiveSessionPrefix(state.sessionId);
-  const recordingPrefix = r2LiveStorage.getLiveRecordingPrefix(state.sessionId);
 
   try {
     // Segment MUST land in R2 before any playlist that names it (prevents player 404 skips).
     const liveOk = await uploadBytes(`${r2LivePrefix}/${tsName}`, tsBuffer, 'video/mp2t');
     if (!liveOk) return;
-    const recOk = await uploadBytes(`${recordingPrefix}/${tsName}`, tsBuffer, 'video/mp2t');
-    if (!recOk) {
-      // Still publish live window — recording gap is logged; student path must not skip.
-      console.warn('[SRS] recording upload failed (live continues):', tsName);
-    }
 
     const entry = {
       name: tsName,
@@ -298,19 +292,11 @@ async function handleOnHls(req, res) {
         while (state.liveSegments.length > PLAYLIST_WINDOW) state.liveSegments.shift();
       }
     }
-    if (recOk && !state.recordingSegments.some((s) => s.name === tsName)) {
-      state.recordingSegments.push({ ...entry, discontinuity: entry.discontinuity });
-    }
 
     const livePl = buildMediaPlaylist(state.liveSegments);
-    const recPl = buildMediaPlaylist(state.recordingSegments, { endList: false });
 
     const plOk = await uploadText(`${r2LivePrefix}/index.m3u8`, livePl);
     await uploadText(`${r2LivePrefix}/master.m3u8`, masterManifest());
-    if (recOk) {
-      await uploadText(`${recordingPrefix}/index.m3u8`, recPl);
-      await uploadText(`${recordingPrefix}/master.m3u8`, masterManifest());
-    }
 
     if (plOk) await maybeMarkPlaybackReady(stream, state);
   } catch (err) {

@@ -38,6 +38,8 @@ services:
       RUN_LIVE_UPLOADER: "0"
       REDIS_URL: redis://redis:6379
       MEDIAMTX_WHIP_PUBLIC_URL: ${MEDIAMTX_WHIP_PUBLIC_URL:-${BASE_URL:-http://localhost:8080}}
+      SRS_RTMP_HOST: srs
+      SRS_RTMP_PORT: "1935"
       <<: *live-env
     env_file: .env
     depends_on:

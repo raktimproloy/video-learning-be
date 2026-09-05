@@ -1401,73 +1401,64 @@ class LessonController {
             const r2Prefix = useR2 ? r2Storage.getVideoKeyPrefix(ownerId, course.id, lessonId, videoId) : null;
             let liveSourcePrefix = null;
 
-            // r2_live: flush segments into live+recording prefixes, stop uploaders, finalize recording only.
-            // Live sliding-window playlists under live/sessions/ are never rewritten here.
-            if (isR2Live && useR2) {
-                const liveSegmentUploader = require('../worker/liveSegmentUploader');
-                liveSourcePrefix = r2LiveStorage.getLiveRecordingPrefix(liveSession.id);
-                try {
-                    if (liveSession.ingest_stream_key) {
-                        await liveSegmentUploader.processSession({
-                            id: liveSession.id,
-                            lesson_id: liveSession.lesson_id,
-                            ingest_stream_key: liveSession.ingest_stream_key,
-                            hls_ready_at: liveSession.hls_ready_at,
-                        });
-                    }
-                } catch (flushErr) {
-                    console.warn('[saveLiveRecording] final flush failed:', flushErr.message);
-                }
-                // Verify append-only recording has media BEFORE ending the live session.
-                // SRS writes seg-N.ts at recording root; legacy MediaMTX wrote under 720p/.
-                const recKeysRoot = await r2Storage.listObjects(`${liveSourcePrefix}/`);
-                const recKeys720 = await r2Storage.listObjects(`${liveSourcePrefix}/720p/`);
-                const hasRecMedia = [...recKeysRoot, ...recKeys720].some(
-                  (k) =>
-                    /\/seg-\d+\.ts$/i.test(k) ||
-                    /_video\d+_seg\d+\.(mp4|m4s|ts)$/i.test(k) ||
-                    /\.ts$/i.test(k)
-                );
-                if (!hasRecMedia) {
-                    return res.status(400).json({
-                        error: 'No live HLS recording found. Stream for a few seconds before saving.',
-                        code: 'no_recording',
-                    });
-                }
-                await liveSessionService.markSaved(liveSession.id);
-                await new Promise((r) => setTimeout(r, 2500));
-                const finalized = await liveSegmentUploader.finalizeSessionRecording(liveSession.id);
-                if (!finalized.ok) {
-                    return res.status(400).json({
-                        error: 'No live HLS recording found. Stream for a few seconds before saving.',
-                        code: finalized.reason || 'no_recording',
-                    });
-                }
-                if (finalized.prefix) liveSourcePrefix = finalized.prefix;
-            }
-
+            // Create the video record first, then branch on storage method
             const video = await adminService.createVideoWithId(
                 videoId,
                 title,
-                isR2Live && useR2 ? 'r2_live' : (useR2 ? 'r2_staging' : stagingVideoDir),
+                isR2Live && useR2 ? 'r2_staging' : (useR2 ? 'r2_staging' : stagingVideoDir),
                 ownerId,
                 lessonId,
                 liveOrder,
-                { storageProvider: useR2 ? 'r2' : 'local', r2Key: isR2Live && useR2 ? r2Prefix : null, description: liveDesc, notes, assignments }
+                { storageProvider: useR2 ? 'r2' : 'local', r2Key: null, description: liveDesc, notes, assignments }
             );
 
+            // r2_live: poll for the MP4 draft uploaded by liveRecorderService, then queue for encryption.
+            // Live sliding-window playlists under live/sessions/ are never rewritten here.
             if (isR2Live && useR2) {
-                // Encrypt from append-only recording prefix; keep until encrypt succeeds.
-                await adminService.updateVideoR2(video.id, r2Prefix);
+                await liveSessionService.markSaved(liveSession.id);
+
+                let liveDraft = null;
+                // Wait up to 15 seconds for the webhook to finish uploading the MP4 and creating the draft
+                for (let i = 0; i < 15; i++) {
+                    const draftsRes = await db.query(
+                        'SELECT * FROM recording_drafts WHERE lesson_id = $1 AND teacher_id = $2 AND status != $3 ORDER BY created_at DESC LIMIT 1',
+                        [lessonId, ownerId, 'published']
+                    );
+                    if (draftsRes.rows.length > 0) {
+                        liveDraft = draftsRes.rows[0];
+                        break;
+                    }
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+
+                if (!liveDraft) {
+                    return res.status(400).json({
+                        error: 'Recording is still being saved to the cloud. Please wait a moment or check your Video Editor Drafts later.',
+                        code: 'no_recording',
+                    });
+                }
+
+                const ext = path.extname(liveDraft.source_object_key || '') || '.mp4';
+                const finalStagingKey = `${r2Prefix}/staging/input${ext}`;
+                const stream = await r2Storage.getObjectStream(liveDraft.source_object_key);
+                await r2Storage.uploadStream(finalStagingKey, stream, liveDraft.mime_type || 'video/mp4');
+
+                await adminService.updateVideoR2(video.id, r2Prefix, liveDraft.size_bytes || null);
+
+                // Use standard multi-resolution VOD encryption for live recordings!
                 await adminService.createProcessingTask(
                     ownerId,
                     video.id,
                     'h264',
-                    ['720p'],
+                    ['360p', '720p', '1080p'],
                     28,
-                    false,
-                    'live_hls_encrypt',
-                    liveSourcePrefix
+                    false
+                );
+
+                // Mark draft as published
+                await db.query(
+                    'UPDATE recording_drafts SET status = $1, published_video_id = $2 WHERE id = $3',
+                    ['published', video.id, liveDraft.id]
                 );
             } else if (useR2) {
                 const r2StagingKey = `${r2Prefix}/staging/input.webm`;
