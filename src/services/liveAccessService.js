@@ -47,22 +47,28 @@ async function resolveLiveAccess(req, lessonId, { requireActiveSession = false, 
   const teacherId = courseMeta.teacher_id;
   const isTeacher = isTeacherWorkspaceUser(req) && teacherId === workspaceTeacherId(req);
 
-  if (req.user?.role === 'student') {
-    const enrolled = await liveStreamCache.cached(
-      `enrolled:${req.user.id}:${lesson.course_id}`,
-      liveStreamCache.TTL_MS.enrolled,
-      () => courseService.isEnrolled(req.user.id, lesson.course_id)
-    );
-    if (!enrolled) return { ok: false, status: 403, error: 'Purchase this course to watch the live stream.' };
-  } else if (!isTeacher) {
-    return { ok: false, status: 403, error: 'Access denied' };
-  }
-
   const activeSession = await liveStreamCache.cached(
     `activeSession:${lessonId}`,
     liveStreamCache.TTL_MS.activeSession,
     () => liveSessionService.getActiveByLesson(lessonId)
   );
+
+  const isPublic = activeSession && activeSession.is_public;
+
+  if (req.user?.role === 'guest') {
+    if (!isPublic) return { ok: false, status: 403, error: 'This live stream is not public.' };
+  } else if (req.user?.role === 'student') {
+    if (!isPublic) {
+      const enrolled = await liveStreamCache.cached(
+        `enrolled:${req.user.id}:${lesson.course_id}`,
+        liveStreamCache.TTL_MS.enrolled,
+        () => courseService.isEnrolled(req.user.id, lesson.course_id)
+      );
+      if (!enrolled) return { ok: false, status: 403, error: 'Purchase this course to watch the live stream.' };
+    }
+  } else if (!isTeacher) {
+    return { ok: false, status: 403, error: 'Access denied' };
+  }
 
   if (requireActiveSession) {
     if (!activeSession || activeSession.provider !== provider) {

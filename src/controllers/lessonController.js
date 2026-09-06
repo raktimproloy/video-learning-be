@@ -68,6 +68,24 @@ function isTeacherWorkspaceUser(req) {
     return req.user?.role === 'teacher' || req.user?.role === 'teacher_staff';
 }
 
+/**
+ * True when the request is an anonymous guest (token minted by the public
+ * live-join flow) AND the lesson's current live session is still flagged
+ * public. Such guests get the same live read/participate access as an enrolled
+ * student — but only for as long as the session stays public.
+ */
+async function isPublicLiveGuest(req, lesson) {
+    if (req.user?.role !== 'guest' || !lesson) return false;
+    const sessionId = lesson.current_live_session_id;
+    if (!sessionId) return false;
+    try {
+        const session = await liveSessionService.getById(sessionId);
+        return !!(session && session.is_public);
+    } catch (_) {
+        return false;
+    }
+}
+
 const STAGING_DIR = path.resolve(__dirname, '../../staging');
 const UPLOADS_LESSONS = path.resolve(__dirname, '../../uploads/lessons');
 
@@ -444,7 +462,7 @@ class LessonController {
                     if (!provider) {
                         return res.status(503).json({ error: 'No live provider is enabled. Enable at least one (Agora, 100ms, etc.) in admin settings.' });
                     }
-                    const { live_name, live_order, live_description } = req.body || {};
+                    const { live_name, live_order, live_description, is_public } = req.body || {};
                     const liveOrder = live_order != null ? parseInt(live_order, 10) : 0;
                     const liveName = (live_name && String(live_name).trim()) ? String(live_name).trim() : (lesson.title || 'Live');
                     // End any existing active session for this lesson so each "Go Live" creates a fresh session
@@ -454,6 +472,7 @@ class LessonController {
                         liveOrder,
                         liveDescription: (live_description && String(live_description).trim()) || null,
                         provider,
+                        isPublic: is_public === true || is_public === 'true',
                     });
                     const sessionData = {
                         live_session_name: liveName,
@@ -550,6 +569,11 @@ class LessonController {
                 const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
                 if (!enrolled) return res.status(403).json({ error: 'Purchase this course to watch the live stream.' });
                 if (!lesson.is_live) return res.status(404).json({ error: 'This lesson is not live.' });
+            } else if (userRole === 'guest') {
+                if (!(await isPublicLiveGuest(req, lesson))) {
+                    return res.status(403).json({ error: 'This live stream is not public.' });
+                }
+                if (!lesson.is_live) return res.status(404).json({ error: 'This lesson is not live.' });
             }
             const creds = await getLiveCredsForProvider(provider, id, uid, role, {
                 liveSessionId: activeSession?.id || lesson.current_live_session_id,
@@ -571,10 +595,13 @@ class LessonController {
             const course = await courseService.getCourseById(lesson.course_id, req.user?.id, req.user?.role);
             if (!course) return res.status(404).json({ error: 'Course not found' });
             const isTeacher = isTeacherWorkspaceUser(req) && course.teacher_id === workspaceTeacherId(req);
-            const isStudent = req.user.role === 'student';
+            const isGuest = await isPublicLiveGuest(req, lesson);
+            const isStudent = req.user.role === 'student' || isGuest;
             if (isStudent) {
-                const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
-                if (!enrolled) return res.status(403).json({ error: 'Access denied' });
+                if (!isGuest) {
+                    const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
+                    if (!enrolled) return res.status(403).json({ error: 'Access denied' });
+                }
             } else if (!isTeacher) return res.status(403).json({ error: 'Access denied' });
             const liveSessionId = querySessionId && String(querySessionId).trim()
                 ? String(querySessionId).trim()
@@ -596,10 +623,13 @@ class LessonController {
             const course = await courseService.getCourseById(lesson.course_id, req.user?.id, req.user?.role);
             if (!course) return res.status(404).json({ error: 'Course not found' });
             const isTeacher = isTeacherWorkspaceUser(req) && course.teacher_id === workspaceTeacherId(req);
-            const isStudent = req.user.role === 'student';
+            const isGuest = await isPublicLiveGuest(req, lesson);
+            const isStudent = req.user.role === 'student' || isGuest;
             if (isStudent) {
-                const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
-                if (!enrolled) return res.status(403).json({ error: 'Access denied' });
+                if (!isGuest) {
+                    const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
+                    if (!enrolled) return res.status(403).json({ error: 'Access denied' });
+                }
             } else if (!isTeacher) return res.status(403).json({ error: 'Access denied' });
             const liveSessionId = querySessionId && String(querySessionId).trim()
                 ? String(querySessionId).trim()
@@ -620,14 +650,17 @@ class LessonController {
             const course = await courseService.getCourseById(lesson.course_id, req.user?.id, req.user?.role);
             if (!course) return res.status(404).json({ error: 'Course not found' });
             const isTeacher = isTeacherWorkspaceUser(req) && course.teacher_id === workspaceTeacherId(req);
-            const isStudent = req.user.role === 'student';
+            const isGuest = await isPublicLiveGuest(req, lesson);
+            const isStudent = req.user.role === 'student' || isGuest;
             const onlyPublished = isStudent;
             const { liveSessionId: querySessionId } = req.query;
             const liveSessionId = (querySessionId && String(querySessionId).trim()) || lesson.current_live_session_id || null;
             const includeUnbound = false;
             if (isStudent) {
-                const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
-                if (!enrolled) return res.status(403).json({ error: 'Access denied' });
+                if (!isGuest) {
+                    const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
+                    if (!enrolled) return res.status(403).json({ error: 'Access denied' });
+                }
             } else if (!isTeacher) return res.status(403).json({ error: 'Access denied' });
             const exams = await liveExamService.listByLesson(lessonId, { onlyPublished, liveSessionId, includeUnbound });
             // For students, never send correct answers (correctOptionId); include published_at, visibility_countdown_seconds, my_submission
@@ -733,17 +766,20 @@ class LessonController {
 
     async submitLiveExam(req, res) {
         try {
-            if (req.user.role !== 'student') return res.status(403).json({ error: 'Students only' });
             const lessonId = req.params.id;
             const { examId } = req.params;
             const { answers, timeTakenMs } = req.body || {};
 
             const lesson = await lessonService.getLessonById(lessonId);
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
+            const isGuest = await isPublicLiveGuest(req, lesson);
+            if (req.user.role !== 'student' && !isGuest) return res.status(403).json({ error: 'Students only' });
             const course = await courseService.getCourseById(lesson.course_id, req.user?.id, req.user?.role);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
-            if (!enrolled) return res.status(403).json({ error: 'Access denied' });
+            if (!isGuest) {
+                const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
+                if (!enrolled) return res.status(403).json({ error: 'Access denied' });
+            }
 
             const result = await liveExamSubmissionService.createSubmission(
                 lessonId,
@@ -775,10 +811,13 @@ class LessonController {
             const course = await courseService.getCourseById(lesson.course_id, req.user?.id, req.user?.role);
             if (!course) return res.status(404).json({ error: 'Course not found' });
             const isTeacher = isTeacherWorkspaceUser(req) && course.teacher_id === workspaceTeacherId(req);
-            const isStudent = req.user.role === 'student';
+            const isGuest = await isPublicLiveGuest(req, lesson);
+            const isStudent = req.user.role === 'student' || isGuest;
             if (isStudent) {
-                const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
-                if (!enrolled) return res.status(403).json({ error: 'Access denied' });
+                if (!isGuest) {
+                    const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
+                    if (!enrolled) return res.status(403).json({ error: 'Access denied' });
+                }
             } else if (!isTeacher) {
                 return res.status(403).json({ error: 'Access denied' });
             }
@@ -837,11 +876,13 @@ class LessonController {
                     let hls_ready_at = null;
                     let cdn_ready = false;
                     let playback_ready = false;
+                    let is_public = false;
                     if (live_session_id) {
                         const session = await liveSessionService.getById(live_session_id);
                         broadcast_status = session?.broadcast_status || 'starting';
                         live_name = session?.live_name ?? null;
                         live_description = session?.live_description ?? null;
+                        is_public = session?.is_public || false;
                         if (session?.provider === 'r2_live') {
                             hls_ready_at = session.hls_ready_at || null;
                             const readiness = await liveCdnDeliveryService.getPlaybackReadiness(session);
@@ -864,6 +905,7 @@ class LessonController {
                         hls_ready_at,
                         cdn_ready,
                         playback_ready,
+                        is_public,
                         hold_back_seconds,
                         client_start_buffer_seconds: liveDelivery.clientStartBufferSeconds,
                     };
@@ -983,16 +1025,66 @@ class LessonController {
         }
     }
 
-    async liveWatchJoin(req, res) {
+    async publicLiveJoin(req, res) {
         try {
-            if (req.user.role !== 'student') return res.status(403).json({ error: 'Students only' });
             const lessonId = req.params.id;
             const lesson = await lessonService.getLessonById(lessonId);
             if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
+            if (!lesson.is_live) return res.status(400).json({ error: 'Lesson is not live' });
+
+            const liveSessionId = lesson.current_live_session_id || null;
+            if (!liveSessionId) return res.status(400).json({ error: 'No active live session' });
+
+            const liveSession = await liveSessionService.getById(liveSessionId);
+            if (!liveSession || !liveSession.is_public) {
+                return res.status(403).json({ error: 'This live stream is not public.' });
+            }
+
+            // Create temporary guest user
+            const guestId = require('crypto').randomUUID();
+            const guestEmail = `guest_${guestId}@guest.local`;
+            const guestName = 'Guest User';
+
+            // Insert a lightweight guest user row. password_hash stays NULL —
+            // guests never sign in with a password, only via the short-lived JWT below.
+            await db.query(
+                `INSERT INTO users (id, name, email, password_hash, role)
+                 VALUES ($1, $2, $3, NULL, 'guest')`,
+                [guestId, guestName, guestEmail]
+            );
+
+            // Generate JWT for the guest
+            const jwt = require('jsonwebtoken');
+            const token = jwt.sign(
+                { id: guestId, email: guestEmail, role: 'guest' },
+                process.env.JWT_SECRET || 'your_jwt_secret',
+                { expiresIn: '24h' }
+            );
+
+            res.json({
+                ok: true,
+                token,
+                user: { id: guestId, name: guestName, role: 'guest' }
+            });
+        } catch (error) {
+            console.error('Public live join error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async liveWatchJoin(req, res) {
+        try {
+            const lessonId = req.params.id;
+            const lesson = await lessonService.getLessonById(lessonId);
+            if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
+            const isGuest = await isPublicLiveGuest(req, lesson);
+            if (req.user.role !== 'student' && !isGuest) return res.status(403).json({ error: 'Students only' });
             const course = await courseService.getCourseById(lesson.course_id, req.user?.id, req.user?.role);
             if (!course) return res.status(404).json({ error: 'Course not found' });
-            const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
-            if (!enrolled) return res.status(403).json({ error: 'Access denied' });
+            if (!isGuest) {
+                const enrolled = await courseService.isEnrolled(req.user.id, lesson.course_id);
+                if (!enrolled) return res.status(403).json({ error: 'Access denied' });
+            }
             if (!lesson.is_live) return res.status(400).json({ error: 'Lesson is not live' });
             const liveSessionId = lesson.current_live_session_id || null;
             await liveWatchService.join(lessonId, req.user.id, liveSessionId);
@@ -1034,7 +1126,7 @@ class LessonController {
 
     async liveWatchLeave(req, res) {
         try {
-            if (req.user.role !== 'student') return res.status(403).json({ error: 'Students only' });
+            if (req.user.role !== 'student' && req.user.role !== 'guest') return res.status(403).json({ error: 'Students only' });
             const lessonId = req.params.id;
             await liveWatchService.leave(lessonId, req.user.id);
             const lesson = await lessonService.getLessonById(lessonId);
@@ -1072,7 +1164,7 @@ class LessonController {
 
     async liveWatchHeartbeat(req, res) {
         try {
-            if (req.user.role !== 'student') return res.status(403).json({ error: 'Students only' });
+            if (req.user.role !== 'student' && req.user.role !== 'guest') return res.status(403).json({ error: 'Students only' });
             const lessonId = req.params.id;
             await liveWatchService.heartbeat(lessonId, req.user.id);
             const access = await liveAccessService.resolveLiveAccess(req, lessonId);

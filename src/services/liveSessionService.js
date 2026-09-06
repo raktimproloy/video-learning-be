@@ -8,14 +8,14 @@ class LiveSessionService {
      * Returns the session (id will become video_id when saved).
      * broadcast_status starts as 'starting'. provider: 'agora' | '100ms' | 'aws_ivs' | 'youtube' | 'stream' | 'r2_live'.
      */
-    async create(lessonId, courseId, ownerId, { liveName, liveOrder, liveDescription, provider = 'agora' }) {
+    async create(lessonId, courseId, ownerId, { liveName, liveOrder, liveDescription, provider = 'agora', isPublic = false }) {
         const id = randomUUID();
         const prov = liveUsageService.PROVIDERS.includes(provider) ? provider : 'agora';
         const result = await db.query(
-            `INSERT INTO live_sessions (id, lesson_id, course_id, owner_id, live_name, live_order, live_description, status, broadcast_status, provider)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', 'starting', $8)
+            `INSERT INTO live_sessions (id, lesson_id, course_id, owner_id, live_name, live_order, live_description, status, broadcast_status, provider, is_public)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', 'starting', $8, $9)
              RETURNING *`,
-            [id, lessonId, courseId, ownerId, liveName ?? null, liveOrder ?? 0, liveDescription ?? null, prov]
+            [id, lessonId, courseId, ownerId, liveName ?? null, liveOrder ?? 0, liveDescription ?? null, prov, !!isPublic]
         );
         return result.rows[0];
     }

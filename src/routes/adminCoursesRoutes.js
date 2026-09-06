@@ -50,6 +50,7 @@ router.delete('/:id/reviews/:reviewId', adminCoursesController.deleteReview);
 router.put('/:id/videos/:videoId/view-count', adminCoursesController.setVideoViewCount);
 router.get('/:id/enrollments', adminCoursesController.getEnrollments);
 router.post('/:id/dummy-enrollments', adminCoursesController.addDummyEnrollments);
+router.delete('/:id/dummy-enrollments', adminCoursesController.removeDummyEnrollments);
 router.post('/:id/reviews', adminCoursesController.addReview);
 router.get('/:id/content', adminCoursesController.getContent);
 router.get('/:id', adminCoursesController.getById);

@@ -371,7 +371,10 @@ class CourseService {
     }
 
     async getCoursesByTeacher(teacherId, options = {}) {
-        const { onlyActive = false } = options;
+        const { onlyActive = false, realCounts = false } = options;
+        // realCounts: exclude admin-seeded dummy enrollments from purchase_count
+        // (teacher's own dashboard). Public callers keep the full count for social proof.
+        const enrollmentFilter = realCounts ? 'AND ce.is_dummy = false' : '';
         // Check if reviews table exists
         const tableCheck = await db.query(`
             SELECT EXISTS (
@@ -405,7 +408,7 @@ class CourseService {
                 (SELECT COUNT(*)::int FROM videos v 
                  JOIN lessons l ON v.lesson_id = l.id 
                  WHERE l.course_id = c.id) as total_videos,
-                (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = c.id) as purchase_count,
+                (SELECT COUNT(*)::int FROM course_enrollments ce WHERE ce.course_id = c.id ${enrollmentFilter}) as purchase_count,
                 ${reviewsRatingQuery} as rating,
                 ${reviewsCountQuery} as review_count
             FROM courses c
@@ -2165,7 +2168,8 @@ class CourseService {
         const countResult = await db.query(
             `SELECT COUNT(DISTINCT ce.user_id) as total
              FROM course_enrollments ce
-             JOIN courses c ON ce.course_id = c.id AND c.teacher_id = $1`,
+             JOIN courses c ON ce.course_id = c.id AND c.teacher_id = $1
+             WHERE ce.is_dummy = false`,
             [teacherId]
         );
         const total = parseInt(countResult.rows[0]?.total || '0', 10);
@@ -2187,6 +2191,7 @@ class CourseService {
              JOIN courses c ON ce.course_id = c.id AND c.teacher_id = $1
              JOIN users u ON ce.user_id = u.id
              LEFT JOIN student_profiles sp ON u.id = sp.user_id
+             WHERE ce.is_dummy = false
              GROUP BY u.id, u.email, sp.name, sp.profile_image_path
              ORDER BY first_enrolled_at DESC
              LIMIT $2 OFFSET $3`,
@@ -2259,6 +2264,7 @@ class CourseService {
                 COALESCE(ce.currency, c.currency) as currency
              FROM course_enrollments ce
              JOIN courses c ON ce.course_id = c.id AND c.teacher_id = $1
+             WHERE ce.is_dummy = false
              ORDER BY ce.enrolled_at DESC`,
             [teacherId]
         );
@@ -2358,7 +2364,8 @@ class CourseService {
         const countResult = await db.query(
             `SELECT (
                 (SELECT COUNT(*)::int FROM course_enrollments ce
-                 JOIN courses c ON ce.course_id = c.id AND c.teacher_id = $1)
+                 JOIN courses c ON ce.course_id = c.id AND c.teacher_id = $1
+                 WHERE ce.is_dummy = false)
                 +
                 (SELECT COUNT(*)::int FROM book_commissions WHERE teacher_id = $1)
              ) AS total`,
@@ -2385,6 +2392,7 @@ class CourseService {
                 JOIN courses c ON ce.course_id = c.id AND c.teacher_id = $1
                 JOIN users u ON ce.user_id = u.id
                 LEFT JOIN student_profiles sp ON u.id = sp.user_id
+                WHERE ce.is_dummy = false
 
                 UNION ALL
 
@@ -2523,7 +2531,8 @@ class CourseService {
             db.query(
                 `SELECT COUNT(DISTINCT ce.user_id)::int as n
                  FROM course_enrollments ce
-                 JOIN courses c ON c.id = ce.course_id AND c.teacher_id = $1`,
+                 JOIN courses c ON c.id = ce.course_id AND c.teacher_id = $1
+                 WHERE ce.is_dummy = false`,
                 [teacherId]
             ),
             db.query(
@@ -2536,7 +2545,8 @@ class CourseService {
                 `SELECT COALESCE(SUM(COALESCE(ce.amount_paid, c.discount_price, c.price, 0)::numeric), 0)::float as revenue
                  FROM course_enrollments ce
                  JOIN courses c ON c.id = ce.course_id AND c.teacher_id = $1
-                 WHERE ce.enrolled_at >= date_trunc('month', CURRENT_DATE)`,
+                 WHERE ce.is_dummy = false
+                   AND ce.enrolled_at >= date_trunc('month', CURRENT_DATE)`,
                 [teacherId]
             ),
             db.query(

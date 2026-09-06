@@ -281,7 +281,8 @@ class AdminCoursesService {
             [courseId]
         );
         const videosResult = await db.query(
-            `SELECT v.id, v.title, v.order, v.view_count, l.id as lesson_id, l.title as lesson_title, l."order" as lesson_order
+            `SELECT v.id, v.title, v.order, v.view_count, v.view_boost, v.is_live,
+                    l.id as lesson_id, l.title as lesson_title, l."order" as lesson_order
              FROM videos v
              JOIN lessons l ON v.lesson_id = l.id
              WHERE l.course_id = $1
@@ -289,23 +290,41 @@ class AdminCoursesService {
             [courseId]
         );
 
-        const videos = videosResult.rows.map((r) => ({
-            id: r.id,
-            title: r.title,
-            order: r.order,
-            viewCount: parseInt(r.view_count, 10) || 0,
-            lessonId: r.lesson_id,
-            lessonTitle: r.lesson_title,
-            lessonOrder: r.lesson_order,
-        }));
-        const totalViews = videos.reduce((sum, v) => sum + (v.viewCount || 0), 0);
+        const videos = videosResult.rows.map((r) => {
+            const real = parseInt(r.view_count, 10) || 0;
+            const boost = parseInt(r.view_boost, 10) || 0;
+            return {
+                id: r.id,
+                title: r.title,
+                order: r.order,
+                viewCount: real,
+                viewBoost: boost,
+                displayViewCount: real + boost,
+                isLive: !!r.is_live,
+                lessonId: r.lesson_id,
+                lessonTitle: r.lesson_title,
+                lessonOrder: r.lesson_order,
+            };
+        });
+        const totalViews = videos.reduce((sum, v) => sum + (v.displayViewCount || 0), 0);
+
+        const totalPurchase = parseInt(purchaseResult.rows[0]?.total, 10) || 0;
+        const dummyResult = await db.query(
+            'SELECT COUNT(*)::int as total FROM course_enrollments WHERE course_id = $1 AND is_dummy = true',
+            [courseId]
+        );
+        const dummyPurchaseCount = parseInt(dummyResult.rows[0]?.total, 10) || 0;
 
         return {
             courseId,
             rating: parseFloat(ratingResult.rows[0]?.avg_rating) || 0,
             reviewCount: parseInt(ratingResult.rows[0]?.total, 10) || 0,
             totalViews,
-            purchaseCount: parseInt(purchaseResult.rows[0]?.total, 10) || 0,
+            // purchaseCount = what the public sees (real + dummy). realPurchaseCount
+            // = what the teacher sees. dummyPurchaseCount = admin-seeded rows only.
+            purchaseCount: totalPurchase,
+            realPurchaseCount: Math.max(0, totalPurchase - dummyPurchaseCount),
+            dummyPurchaseCount,
             videos,
         };
     }
@@ -383,7 +402,7 @@ class AdminCoursesService {
      */
     async getVideoInCourse(courseId, videoId) {
         const result = await db.query(
-            `SELECT v.id, v.view_count, v.title
+            `SELECT v.id, v.view_count, v.view_boost, v.is_live, v.title
              FROM videos v
              JOIN lessons l ON v.lesson_id = l.id
              WHERE l.course_id = $1 AND v.id = $2`,
@@ -393,17 +412,22 @@ class AdminCoursesService {
     }
 
     /**
-     * Set view_count for a video. Admin only. Video must belong to course.
+     * Set the admin view boost for a RECORDED video. The real view_count is left
+     * untouched (so this is fully reversible — set boost to 0). Rejected for live
+     * videos. Returns null if the video is not in the course; throws for live.
      */
-    async setVideoViewCount(courseId, videoId, viewCount) {
+    async setVideoViewBoost(courseId, videoId, boost) {
         const video = await this.getVideoInCourse(courseId, videoId);
         if (!video) return null;
-        const count = Math.max(0, parseInt(viewCount, 10) || 0);
-        await db.query(
-            'UPDATE videos SET view_count = $1 WHERE id = $2',
-            [count, videoId]
-        );
-        return { id: videoId, viewCount: count };
+        if (video.is_live) {
+            const err = new Error('View boost is only allowed on recorded videos, not live sessions.');
+            err.code = 'LIVE_VIDEO';
+            throw err;
+        }
+        const b = Math.max(0, parseInt(boost, 10) || 0);
+        await db.query('UPDATE videos SET view_boost = $1 WHERE id = $2', [b, videoId]);
+        const real = Math.max(0, parseInt(video.view_count, 10) || 0);
+        return { id: videoId, viewCount: real, viewBoost: b, displayViewCount: real + b };
     }
 
     /**
@@ -420,7 +444,7 @@ class AdminCoursesService {
         const total = parseInt(countResult.rows[0]?.total, 10) || 0;
 
         const result = await db.query(
-            `SELECT ce.course_id, ce.user_id, ce.enrolled_at, ce.amount_paid, ce.currency,
+            `SELECT ce.course_id, ce.user_id, ce.enrolled_at, ce.amount_paid, ce.currency, ce.is_dummy,
                     u.email as user_email, COALESCE(sp.name, u.email) as user_name
              FROM course_enrollments ce
              JOIN users u ON ce.user_id = u.id
@@ -440,6 +464,7 @@ class AdminCoursesService {
             currency: r.currency || null,
             userEmail: r.user_email,
             userName: r.user_name || r.user_email,
+            isDummy: !!r.is_dummy,
         }));
 
         return { enrollments, total };
@@ -475,7 +500,9 @@ class AdminCoursesService {
                 const userId = insertUser.rows[0]?.id;
                 if (!userId) continue;
                 const insertEnroll = await client.query(
-                    `INSERT INTO course_enrollments (user_id, course_id) VALUES ($1, $2) ON CONFLICT (user_id, course_id) DO NOTHING`,
+                    `INSERT INTO course_enrollments (user_id, course_id, is_dummy, amount_paid)
+                     VALUES ($1, $2, true, 0)
+                     ON CONFLICT (user_id, course_id) DO NOTHING`,
                     [userId, courseId]
                 );
                 if (insertEnroll.rowCount > 0) added++;
@@ -489,6 +516,49 @@ class AdminCoursesService {
         }
 
         return { added };
+    }
+
+    /**
+     * Remove every admin-seeded dummy enrollment for a course (and the throwaway
+     * user rows created for them, unless they are referenced elsewhere e.g. a
+     * seeded review). Real student enrollments are never touched.
+     */
+    async removeDummyEnrollments(courseId) {
+        const courseExists = await db.query('SELECT id FROM courses WHERE id = $1', [courseId]);
+        if (!courseExists.rows[0]) return null;
+
+        const client = await db.pool.connect();
+        try {
+            await client.query('BEGIN');
+            const del = await client.query(
+                `DELETE FROM course_enrollments
+                 WHERE course_id = $1 AND is_dummy = true
+                 RETURNING user_id`,
+                [courseId]
+            );
+            const userIds = del.rows.map((r) => r.user_id);
+            let removedUsers = 0;
+            if (userIds.length) {
+                // Only delete the seed user if it has no remaining enrollments and no reviews.
+                const cleanup = await client.query(
+                    `DELETE FROM users u
+                     WHERE u.id = ANY($1::uuid[])
+                       AND u.email LIKE 'dummy-%@admin-seed.local'
+                       AND NOT EXISTS (SELECT 1 FROM course_enrollments ce WHERE ce.user_id = u.id)
+                       AND NOT EXISTS (SELECT 1 FROM reviews r WHERE r.user_id = u.id)
+                     RETURNING u.id`,
+                    [userIds]
+                );
+                removedUsers = cleanup.rowCount;
+            }
+            await client.query('COMMIT');
+            return { removed: del.rowCount, removedUsers };
+        } catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        } finally {
+            client.release();
+        }
     }
 
     /**
@@ -532,7 +602,9 @@ class AdminCoursesService {
                 [userId, studentName]
             );
             await client.query(
-                `INSERT INTO course_enrollments (user_id, course_id) VALUES ($1, $2) ON CONFLICT (user_id, course_id) DO NOTHING`,
+                `INSERT INTO course_enrollments (user_id, course_id, is_dummy, amount_paid)
+                 VALUES ($1, $2, true, 0)
+                 ON CONFLICT (user_id, course_id) DO NOTHING`,
                 [userId, courseId]
             );
             const insertReview = await client.query(

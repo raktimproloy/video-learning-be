@@ -204,6 +204,10 @@ class VideoService {
                 assignments: Array.isArray(assignments) ? assignments : [],
                 hasRequiredAssignment: !!hasRequired,
                 viewCount: row.view_count != null ? parseInt(row.view_count, 10) : 0,
+                viewBoost: row.view_boost != null ? parseInt(row.view_boost, 10) : 0,
+                displayViewCount:
+                    (row.view_count != null ? parseInt(row.view_count, 10) : 0) +
+                    (row.view_boost != null ? parseInt(row.view_boost, 10) : 0),
                 has_custom_thumbnail: !!row.custom_thumbnail_r2_key,
                 status: videoStatus,
             };

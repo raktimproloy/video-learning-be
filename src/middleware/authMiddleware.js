@@ -25,6 +25,15 @@ const verifyToken = async (req, res, next) => {
         return res.status(401).json({ error: 'Invalid or expired token' });
     }
 
+    // Guest tokens are minted by the public live-join flow for anonymous viewers
+    // of a public live session. They are ephemeral (24h, no device-session
+    // tracking) and carry no jti, so accept them here; the live routes still
+    // gate them on the session actually being public.
+    if (decoded.role === 'guest') {
+        req.user = decoded;
+        return next();
+    }
+
     // Tokens issued before device-session tracking was added have no jti —
     // treat them as revoked so the user simply logs in again (one-time only).
     if (!decoded.jti) {

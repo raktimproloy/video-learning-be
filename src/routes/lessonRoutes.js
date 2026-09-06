@@ -63,6 +63,7 @@ router.post('/:id/live/limit-reached', authMiddleware, requireTeacherPermission(
 router.put('/:id/live/session', authMiddleware, lessonController.updateLiveSession);
 router.put('/:id/live', authMiddleware, requireTeacherPermission('courses'), lessonController.setLiveAndGetToken);
 router.post('/:id/live/save-recording', authMiddleware, uploadRecording, lessonController.saveLiveRecording);
+router.post('/:id/live/public/join', lessonController.publicLiveJoin);
 router.post('/:id/live/watch/join', authMiddleware, lessonController.liveWatchJoin);
 router.post('/:id/live/watch/leave', authMiddleware, lessonController.liveWatchLeave);
 router.post('/:id/live/watch/heartbeat', authMiddleware, lessonController.liveWatchHeartbeat);
@@ -73,7 +74,7 @@ router.post('/:id/live/prelive/materials/note', authMiddleware, uploadLiveMateri
 router.post('/:id/live/prelive/materials/assignment', authMiddleware, uploadLiveMaterial, lessonController.uploadPreliveAssignmentFile);
 router.post('/:id/live/exams', authMiddleware, requireTeacherPermission('courses'), lessonController.saveLiveExam);
 router.put('/:id/live/exams/:examId/status', authMiddleware, requireTeacherPermission('courses'), lessonController.setLiveExamStatus);
-router.post('/:id/live/exams/:examId/submit', authMiddleware, requireRole(['student']), lessonController.submitLiveExam);
+router.post('/:id/live/exams/:examId/submit', authMiddleware, requireRole(['student', 'guest']), lessonController.submitLiveExam);
 router.get('/:id/live/exams/:examId/leaderboard', authMiddleware, lessonController.getLiveExamLeaderboard);
 router.get('/:id/exams', authMiddleware, examController.listForLesson);
 router.post('/:id/exams', authMiddleware, requireTeacherPermission('courses'), examController.createForLesson);

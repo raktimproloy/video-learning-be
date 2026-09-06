@@ -465,7 +465,7 @@ class CourseController {
             if (!isTeacherActor(req)) {
                 return res.status(403).json({ error: 'Access denied. Teachers only.' });
             }
-            const courses = await courseService.getCoursesByTeacher(workspaceTeacherId(req));
+            const courses = await courseService.getCoursesByTeacher(workspaceTeacherId(req), { realCounts: true });
             const enriched = enrichCourseMediaUrls(courses, req);
             res.json(enriched);
         } catch (error) {

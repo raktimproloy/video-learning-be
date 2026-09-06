@@ -439,18 +439,38 @@ class AdminCoursesController {
     async setVideoViewCount(req, res) {
         try {
             const { id: courseId, videoId } = req.params;
-            const viewCount = req.body.viewCount != null ? req.body.viewCount : req.body.view_count;
-            const num = parseInt(viewCount, 10);
+            // Accept viewBoost (preferred) or legacy viewCount/view_count — all mean
+            // "admin padding added on top of the real recorded-video view count".
+            const raw = req.body.viewBoost != null
+                ? req.body.viewBoost
+                : (req.body.viewCount != null ? req.body.viewCount : req.body.view_count);
+            const num = parseInt(raw, 10);
             if (Number.isNaN(num) || num < 0) {
-                return res.status(400).json({ error: 'viewCount must be a non-negative number' });
+                return res.status(400).json({ error: 'viewBoost must be a non-negative number' });
             }
-            const result = await adminCoursesService.setVideoViewCount(courseId, videoId, num);
+            const result = await adminCoursesService.setVideoViewBoost(courseId, videoId, num);
             if (!result) {
                 return res.status(404).json({ error: 'Video not found or does not belong to this course' });
             }
             res.json(result);
         } catch (error) {
-            console.error('Admin set video view count error:', error);
+            if (error.code === 'LIVE_VIDEO') {
+                return res.status(400).json({ error: error.message });
+            }
+            console.error('Admin set video view boost error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async removeDummyEnrollments(req, res) {
+        try {
+            const result = await adminCoursesService.removeDummyEnrollments(req.params.id);
+            if (!result) {
+                return res.status(404).json({ error: 'Course not found' });
+            }
+            res.json(result);
+        } catch (error) {
+            console.error('Admin remove dummy enrollments error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     }
