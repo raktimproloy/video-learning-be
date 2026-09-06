@@ -142,6 +142,18 @@ router.post('/:id/intro-video',
     upload.single('introVideo'),
     courseController.uploadIntroVideo
 );
+// Large intro videos: direct-to-R2 multipart (bypasses the CDN 100MB body cap).
+// Part upload / complete / abort reuse /teacher/videos/r2-multipart/*.
+router.post('/:id/intro-video/r2-multipart/init',
+    authMiddleware,
+    requireTeacherPermission('courses'),
+    courseController.initIntroVideoMultipart
+);
+router.post('/:id/intro-video/finalize',
+    authMiddleware,
+    requireTeacherPermission('courses'),
+    courseController.finalizeIntroVideo
+);
 router.post('/:id/request-live', authMiddleware, requireTeacherPermission('courses'), courseController.requestLive);
 router.delete('/:id', authMiddleware, requireTeacherPermission('courses'), courseController.deleteCourse);
 

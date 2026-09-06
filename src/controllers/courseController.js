@@ -460,6 +460,94 @@ class CourseController {
         }
     }
 
+    /**
+     * Start a direct-to-R2 multipart upload for a course intro video.
+     * The browser PUTs parts straight to R2 (reusing /teacher/videos/r2-multipart/
+     * part-url|complete|abort), so large files never pass through Cloudflare's
+     * 100 MB request-body cap — same path lesson videos already use.
+     */
+    async initIntroVideoMultipart(req, res) {
+        try {
+            if (!r2Storage.isConfigured) {
+                return res.status(400).json({ error: 'R2 is not configured on server.' });
+            }
+            const courseId = req.params.id;
+            const { file_name, file_type } = req.body || {};
+            if (!file_name) {
+                return res.status(400).json({ error: 'file_name is required.' });
+            }
+            const existingCourse = await courseService.getCourseById(courseId, req.user.id);
+            if (!existingCourse) {
+                return res.status(404).json({ error: 'Course not found' });
+            }
+            if (String(existingCourse.teacher_id) !== String(workspaceTeacherId(req))) {
+                return res.status(403).json({ error: 'Not authorized' });
+            }
+            const ext = path.extname(String(file_name) || '').toLowerCase() || '.mp4';
+            const prefix = r2Storage.getCourseMediaKeyPrefix(workspaceTeacherId(req), courseId, 'introVideo');
+            const objectKey = `${prefix}/intro-${Date.now()}${ext}`;
+            const uploadId = await r2Storage.createMultipartUpload(objectKey, file_type || 'video/mp4');
+            return res.status(200).json({
+                uploadId,
+                objectKey,
+                r2Prefix: prefix,
+                partSize: 10 * 1024 * 1024,
+            });
+        } catch (error) {
+            console.error('Init intro video multipart error:', error);
+            return res.status(500).json({ error: 'Failed to initialize intro video upload.' });
+        }
+    }
+
+    /**
+     * Finalize a multipart intro-video upload: point the course at the uploaded
+     * object and remove the previous intro video.
+     */
+    async finalizeIntroVideo(req, res) {
+        try {
+            const courseId = req.params.id;
+            const { objectKey } = req.body || {};
+            if (!objectKey) {
+                return res.status(400).json({ error: 'objectKey is required.' });
+            }
+            const existingCourse = await courseService.getCourseById(courseId, req.user.id);
+            if (!existingCourse) {
+                return res.status(404).json({ error: 'Course not found' });
+            }
+            if (String(existingCourse.teacher_id) !== String(workspaceTeacherId(req))) {
+                return res.status(403).json({ error: 'Not authorized' });
+            }
+            // The key must live under THIS course's intro-video prefix.
+            const prefix = r2Storage.getCourseMediaKeyPrefix(workspaceTeacherId(req), courseId, 'introVideo');
+            if (!String(objectKey).startsWith(`${prefix}/`)) {
+                return res.status(400).json({ error: 'Invalid object key for this course.' });
+            }
+            // Remove the previous intro video (best effort).
+            if (
+                existingCourse.intro_video_path &&
+                existingCourse.intro_video_path !== objectKey &&
+                r2Storage.isConfigured &&
+                existingCourse.intro_video_path.startsWith('teachers/')
+            ) {
+                try {
+                    await r2Storage.deleteObject(existingCourse.intro_video_path);
+                } catch (err) {
+                    console.error('Error deleting old intro video from R2:', err);
+                }
+            }
+            const updated = await courseService.updateCourse(courseId, { introVideoPath: objectKey });
+            const enriched = enrichCourseMediaUrls([updated], req)[0];
+            return res.status(200).json({
+                courseId: enriched.id,
+                intro_video_path: enriched.intro_video_path,
+                intro_video_url: enriched.intro_video_url || null,
+            });
+        } catch (error) {
+            console.error('Finalize intro video error:', error);
+            return res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
     async getMyCourses(req, res) {
         try {
             if (!isTeacherActor(req)) {
