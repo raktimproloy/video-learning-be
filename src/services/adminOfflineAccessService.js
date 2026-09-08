@@ -32,7 +32,9 @@ class AdminOfflineAccessService {
                    c.price as base_price,
                    c.discount_price as current_discount_price,
                    (SELECT COUNT(*) FROM course_enrollments ce WHERE ce.course_id = c.id) as total_course_students,
-                   (SELECT COUNT(*) FROM teacher_offline_student_accesses sa WHERE sa.purchase_id = p.id) as assigned_count
+                   (SELECT COUNT(*) FROM teacher_offline_student_accesses sa WHERE sa.purchase_id = p.id) as assigned_count,
+                   (SELECT COUNT(*) FROM teacher_offline_access_invites i WHERE i.purchase_id = p.id AND i.status = 'active') as active_invite_count,
+                   (SELECT COUNT(*) FROM teacher_offline_access_invites i WHERE i.purchase_id = p.id AND i.status = 'claimed') as claimed_invite_count
             FROM teacher_offline_access_purchases p
             JOIN courses c ON c.id = p.course_id
             JOIN users u ON u.id = p.teacher_id
@@ -55,6 +57,42 @@ class AdminOfflineAccessService {
             })),
             total: parseInt(countQuery.rows[0].count) || 0
         };
+    }
+
+    /**
+     * Admin directly grants a teacher N offline-access slots for a course — no payment.
+     * Creates an already-accepted, active purchase row that the teacher can then
+     * distribute via email assignment or invite links, exactly like a paid purchase.
+     */
+    async grantAccess(adminId, { teacherId, courseId, studentCount }) {
+        const count = parseInt(studentCount, 10);
+        if (!teacherId || !courseId) throw new Error('teacherId and courseId are required.');
+        if (Number.isNaN(count) || count <= 0) throw new Error('Student count must be a positive number.');
+        if (count > 100000) throw new Error('Student count is too large.');
+
+        const teacher = await db.query(
+            `SELECT u.id FROM users u
+             LEFT JOIN teacher_profiles tp ON tp.user_id = u.id
+             WHERE u.id = $1 AND (u.role = 'teacher' OR tp.user_id IS NOT NULL)`,
+            [teacherId]
+        );
+        if (!teacher.rows[0]) throw new Error('Teacher not found.');
+
+        const course = await db.query('SELECT id, price, discount_price FROM courses WHERE id = $1', [courseId]);
+        if (!course.rows[0]) throw new Error('Course not found.');
+        const priceAtTime =
+            parseFloat(course.rows[0].discount_price ?? course.rows[0].price ?? 0) || 0;
+
+        const result = await db.query(
+            `INSERT INTO teacher_offline_access_purchases (
+                teacher_id, course_id, student_count, course_price_at_time,
+                fee_per_student, total_amount, currency, payment_method,
+                status, is_active, reviewed_by, reviewed_at
+            ) VALUES ($1, $2, $3, $4, 0, 0, 'BDT', 'admin_grant', 'accepted', true, $5, NOW())
+            RETURNING *`,
+            [teacherId, courseId, count, priceAtTime, adminId]
+        );
+        return result.rows[0];
     }
 
     async acceptPurchase(purchaseId, adminId) {
@@ -144,7 +182,7 @@ class AdminOfflineAccessService {
 
     async listAssignedStudents(purchaseId) {
         const result = await db.query(`
-            SELECT sa.id, sa.assigned_at, u.name, u.email 
+            SELECT sa.id, sa.assigned_at, sa.source, u.name, u.email
             FROM teacher_offline_student_accesses sa
             JOIN users u ON u.id = sa.student_user_id
             WHERE sa.purchase_id = $1

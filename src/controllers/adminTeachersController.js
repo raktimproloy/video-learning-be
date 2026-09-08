@@ -7,7 +7,7 @@ class AdminTeachersController {
             const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 10));
             const q = req.query.q || null;
 
-            const { teachers, total } = await adminTeachersService.list(skip, limit);
+            const { teachers, total } = await adminTeachersService.list(skip, limit, q);
             res.json({ teachers, total });
         } catch (error) {
             console.error('Admin teachers list error:', error);

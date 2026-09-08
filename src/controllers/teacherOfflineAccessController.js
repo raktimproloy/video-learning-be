@@ -1,4 +1,5 @@
 const teacherOfflineAccessService = require('../services/teacherOfflineAccessService');
+const { resolveCourseMediaUrl, resolveCourseThumbnailUrl, resolveProfileImageUrl } = require('../utils/courseMediaUrl');
 
 function teacherId(req) {
     return req.effectiveTeacherId || req.user.id;
@@ -108,6 +109,110 @@ class TeacherOfflineAccessController {
         } catch (error) {
             console.error('Assign student error:', error);
             res.status(400).json({ error: error.message || 'Failed to assign student' });
+        }
+    }
+
+    // ── Invite links ──────────────────────────────────────────────────────
+
+    async generateInvite(req, res) {
+        try {
+            const { purchaseId } = req.body;
+            if (!purchaseId) return res.status(400).json({ error: 'purchaseId is required.' });
+            const invite = await teacherOfflineAccessService.generateInvite(purchaseId, teacherId(req), req.user.id);
+            res.status(201).json(invite);
+        } catch (error) {
+            console.error('Generate invite error:', error);
+            res.status(400).json({ error: error.message || 'Failed to generate invite link' });
+        }
+    }
+
+    async getInvites(req, res) {
+        try {
+            const invites = await teacherOfflineAccessService.listInvitesByTeacher(
+                teacherId(req),
+                req.query.purchaseId || null
+            );
+            res.json(invites);
+        } catch (error) {
+            console.error('Get invites error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async revokeInvite(req, res) {
+        try {
+            await teacherOfflineAccessService.revokeInvite(req.params.id, teacherId(req));
+            res.json({ success: true });
+        } catch (error) {
+            console.error('Revoke invite error:', error);
+            res.status(400).json({ error: error.message || 'Failed to revoke invite link' });
+        }
+    }
+
+    // ── Public claim landing ─────────────────────────────────────────────
+
+    async getPublicInvite(req, res) {
+        try {
+            const info = await teacherOfflineAccessService.getInviteByToken(req.params.token, req.user?.id || null);
+            if (!info) return res.status(404).json({ error: 'This invite link is not valid.' });
+
+            const thumbnailUrl = resolveCourseThumbnailUrl(info);
+            const introVideoUrl = resolveCourseMediaUrl(info.intro_video_path);
+
+            res.json({
+                invite: {
+                    status: info.status,
+                    available: info.available,
+                    claimed_by_me: info.claimed_by_me,
+                    claimed_at: info.claimed_at,
+                },
+                course: {
+                    id: info.course_id,
+                    title: info.title,
+                    short_description: info.short_description,
+                    full_description: info.full_description,
+                    level: info.level,
+                    language: info.language,
+                    price: info.price,
+                    discount_price: info.discount_price,
+                    currency: info.currency,
+                    lesson_count: parseInt(info.lesson_count) || 0,
+                    thumbnail_url: thumbnailUrl || null,
+                    intro_video_url: introVideoUrl || null,
+                },
+                teacher: {
+                    id: info.teacher_id,
+                    name: info.teacher_name || null,
+                    email: info.teacher_email || null,
+                    bio: info.teacher_bio || null,
+                    institute_name: info.teacher_institute_name || null,
+                    avatar_url: resolveProfileImageUrl(info.teacher_profile_image_path),
+                    is_verified: !!info.teacher_is_verified,
+                    course_count: parseInt(info.teacher_course_count) || 0,
+                    student_count: parseInt(info.teacher_student_count) || 0,
+                    rating: info.teacher_rating != null ? Number(Number(info.teacher_rating).toFixed(1)) : 0,
+                },
+                // kept for backward compatibility
+                teacher_name: info.teacher_name || null,
+            });
+        } catch (error) {
+            console.error('Get public invite error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async claimInvite(req, res) {
+        try {
+            const result = await teacherOfflineAccessService.claimInvite(req.params.token, req.user.id);
+            res.json(result);
+        } catch (error) {
+            const code = error.code || 'ERROR';
+            const status = code === 'ALREADY_ENROLLED' || code === 'ALREADY_CLAIMED_BY_ME' ? 409
+                : code === 'ALREADY_CLAIMED' ? 409
+                : code === 'INVALID' ? 404
+                : 400;
+            if (status >= 500) console.error('Claim invite error:', error);
+            res.status(status).json({ error: error.message || 'Failed to claim course', code, courseId: error.courseId || null });
         }
     }
 }

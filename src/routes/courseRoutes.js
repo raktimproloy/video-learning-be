@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const courseController = require('../controllers/courseController');
 const teacherPaymentController = require('../controllers/teacherPaymentController');
+const teacherOfflineAccessController = require('../controllers/teacherOfflineAccessController');
 const authMiddleware = require('../middleware/authMiddleware');
 const optionalAuth = require('../middleware/optionalAuthMiddleware');
 const { requireRole } = require('../middleware/roleMiddleware');
@@ -86,6 +87,10 @@ router.get('/home-analytics', optionalAuth, courseController.getHomeAnalytics);
 router.get('/popular', optionalAuth, courseController.getPopularCourses);
 router.get('/search', optionalAuth, courseController.searchCourses);
 router.get('/by-invite/:code', courseController.getCourseByInviteCode);
+
+// Teacher offline-access invite links — public claim landing (must precede '/:id')
+router.get('/offline-access/invite/:token', optionalAuth, teacherOfflineAccessController.getPublicInvite);
+router.post('/offline-access/invite/:token/claim', authMiddleware, requireRole(['student', 'teacher']), teacherOfflineAccessController.claimInvite);
 router.get('/:id/meta', courseController.getCourseMeta);
 router.get('/:id/details', optionalAuth, courseController.getCourseDetails);
 router.post('/:id/quote', optionalAuth, courseController.quotePurchase);
@@ -113,11 +118,13 @@ router.get('/teacher/withdraw-requests/:id', authMiddleware, requireTeacherPermi
 router.post('/teacher/withdraw', authMiddleware, requireTeacherPermission('payments'), courseController.requestWithdraw);
 
 // Teacher offline access routes
-const teacherOfflineAccessController = require('../controllers/teacherOfflineAccessController');
 router.get('/teacher/offline-access/calculate', authMiddleware, requireTeacherPermission('students'), teacherOfflineAccessController.calculateFee);
 router.post('/teacher/offline-access/purchase', authMiddleware, requireTeacherPermission('students'), teacherOfflineAccessController.createPurchase);
 router.get('/teacher/offline-access/purchases', authMiddleware, requireTeacherPermission('students'), teacherOfflineAccessController.getPurchases);
 router.post('/teacher/offline-access/assign', authMiddleware, requireTeacherPermission('students'), teacherOfflineAccessController.assignStudent);
+router.post('/teacher/offline-access/invites', authMiddleware, requireTeacherPermission('students'), teacherOfflineAccessController.generateInvite);
+router.get('/teacher/offline-access/invites', authMiddleware, requireTeacherPermission('students'), teacherOfflineAccessController.getInvites);
+router.delete('/teacher/offline-access/invites/:id', authMiddleware, requireTeacherPermission('students'), teacherOfflineAccessController.revokeInvite);
 router.post('/', 
     authMiddleware, 
     requireTeacherPermission('courses'), 

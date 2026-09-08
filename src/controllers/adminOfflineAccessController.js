@@ -17,6 +17,21 @@ class AdminOfflineAccessController {
         }
     }
 
+    async grantAccess(req, res) {
+        try {
+            const { teacherId, courseId, studentCount } = req.body || {};
+            const purchase = await adminOfflineAccessService.grantAccess(req.user.id, {
+                teacherId,
+                courseId,
+                studentCount,
+            });
+            res.status(201).json({ message: 'Access granted', purchase });
+        } catch (error) {
+            console.error('Grant offline access error:', error);
+            res.status(400).json({ error: error.message || 'Failed to grant access' });
+        }
+    }
+
     async acceptPurchase(req, res) {
         try {
             const result = await adminOfflineAccessService.acceptPurchase(req.params.id, req.user.id);

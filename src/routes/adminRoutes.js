@@ -186,6 +186,7 @@ router.get(
 // Admin offline access routes
 const adminOfflineAccessController = require('../controllers/adminOfflineAccessController');
 router.get('/offline-access', adminOfflineAccessController.listPurchases);
+router.post('/offline-access/grant', adminOfflineAccessController.grantAccess);
 router.post('/offline-access/:id/accept', adminOfflineAccessController.acceptPurchase);
 router.post('/offline-access/:id/reject', adminOfflineAccessController.rejectPurchase);
 router.patch('/offline-access/:id/toggle-active', adminOfflineAccessController.toggleActive);

@@ -22,12 +22,18 @@ function bump(map, key) {
 }
 
 class AdminTeachersService {
-    async list(skip = 0, limit = 10) {
+    async list(skip = 0, limit = 10, q = null) {
         // Teacher rating from teacher_reviews (students review teacher directly)
         const avgRatingQuery = `(SELECT COALESCE(AVG(tr.rating), 0)::numeric(3,2) FROM teacher_reviews tr WHERE tr.teacher_id = u.id)`;
 
+        const search = (typeof q === 'string' && q.trim()) ? q.trim() : null;
+        const searchClause = search
+            ? ` AND (u.email ILIKE $3 OR COALESCE(tp.name, u.email) ILIKE $3 OR tp.institute_name ILIKE $3)`
+            : '';
+        const listParams = search ? [limit, skip, `%${search}%`] : [limit, skip];
+
         const result = await db.query(
-            `SELECT 
+            `SELECT
                 u.id,
                 u.email,
                 u.created_at,
@@ -42,17 +48,18 @@ class AdminTeachersService {
                 ${avgRatingQuery} as avg_rating
              FROM users u
              LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
-             WHERE (u.role = 'teacher' OR tp.user_id IS NOT NULL)
+             WHERE (u.role = 'teacher' OR tp.user_id IS NOT NULL)${searchClause}
              ORDER BY u.created_at DESC
              LIMIT $1 OFFSET $2`,
-            [limit, skip]
+            listParams
         );
 
         const countResult = await db.query(
             `SELECT COUNT(*)::int as total
              FROM users u
              LEFT JOIN teacher_profiles tp ON u.id = tp.user_id
-             WHERE (u.role = 'teacher' OR tp.user_id IS NOT NULL)`
+             WHERE (u.role = 'teacher' OR tp.user_id IS NOT NULL)${search ? ' AND (u.email ILIKE $1 OR COALESCE(tp.name, u.email) ILIKE $1 OR tp.institute_name ILIKE $1)' : ''}`,
+            search ? [`%${search}%`] : []
         );
         const total = countResult.rows[0]?.total || 0;
 
