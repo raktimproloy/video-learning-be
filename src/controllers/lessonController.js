@@ -481,6 +481,19 @@ class LessonController {
                         current_live_session_id: liveSession.id
                     };
                     const updatedLesson = await lessonService.updateLiveStatus(id, true, sessionData);
+
+                    // Fire-and-forget push to every enrolled student that the class is live.
+                    try {
+                        require('../services/fcmService')
+                            .sendLiveStartedPush({
+                                id,
+                                course_id: lesson.course_id,
+                                title: lesson.title,
+                                live_name: liveName,
+                            })
+                            .catch(() => {});
+                    } catch (_) { /* fcm not configured */ }
+
                     const uid = Math.abs(req.user.id.split('').reduce((a, c) => ((a << 5) - a) + c.charCodeAt(0), 0)) % 2147483647;
                     const role = req.user.role === 'teacher' ? 'publisher' : 'subscriber';
                     let creds = await getLiveCredsForProvider(provider, id, uid, role, { liveSessionId: liveSession.id });
@@ -962,7 +975,9 @@ class LessonController {
             }
             if (broadcast_status === 'live') {
                 await lessonService.setLiveBroadcastStartedAt(lessonId);
-                // Push notification is sent when session is created (setLiveAndGetToken / quick-action "Start Live Stream"), not here.
+                // The "live started" push fires once in setLiveAndGetToken (session
+                // creation); broadcast_status can toggle live/paused repeatedly, so
+                // it must not re-notify here.
             }
             const live_session_id = updated.id;
             const live_started_at = await lessonService.getLiveStartedAt(lessonId);

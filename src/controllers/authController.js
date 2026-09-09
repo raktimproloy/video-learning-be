@@ -11,6 +11,15 @@ const { isStaffEmailAddress, staffEmailBlockedMessage } = require('../utils/staf
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+// Optional: native mobile OAuth client ids. The mobile app signs in with the
+// *web* client id as `webClientId`, so its ID token's `aud` is GOOGLE_CLIENT_ID
+// already — these are only needed if a token minted for a native client id is
+// ever verified directly. Safe to leave unset.
+const GOOGLE_MOBILE_CLIENT_IDS = [
+    process.env.GOOGLE_ANDROID_CLIENT_ID,
+    process.env.GOOGLE_IOS_CLIENT_ID,
+].filter(Boolean);
+const GOOGLE_TOKEN_AUDIENCE = [GOOGLE_CLIENT_ID, ...GOOGLE_MOBILE_CLIENT_IDS];
 const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
 const PENDING_SESSION_TOKEN_TTL_SECONDS = parseInt(process.env.PENDING_SESSION_TOKEN_TTL_SECONDS || '300', 10);
 
@@ -433,32 +442,46 @@ class AuthController {
      * then finds or creates the user and returns JWT + user. No client-supplied identity is trusted.
      */
     async postGoogleAuth(req, res) {
-        if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+        if (!GOOGLE_CLIENT_ID) {
             return res.status(503).json({ error: 'Google sign-in is not configured' });
         }
-        const { code, redirectUri } = req.body || {};
-        if (!code || typeof redirectUri !== 'string' || !redirectUri.trim()) {
-            return res.status(400).json({ error: 'code and redirectUri are required' });
+        const { code, redirectUri, idToken: clientIdToken } = req.body || {};
+        // Two entry points:
+        //  - native mobile app  → sends `idToken` straight from Google Play Services
+        //  - website             → sends `code` + `redirectUri` (auth-code flow)
+        const usingIdToken = typeof clientIdToken === 'string' && clientIdToken.trim().length > 0;
+        if (!usingIdToken) {
+            if (!GOOGLE_CLIENT_SECRET) {
+                return res.status(503).json({ error: 'Google sign-in is not configured' });
+            }
+            if (!code || typeof redirectUri !== 'string' || !redirectUri.trim()) {
+                return res.status(400).json({ error: 'code and redirectUri, or idToken, are required' });
+            }
         }
 
         try {
-            // 1. Exchange authorization code for tokens (id_token + access_token)
-            const tokenRes = await axios.post(
-                'https://oauth2.googleapis.com/token',
-                new URLSearchParams({
-                    code: code.trim(),
-                    client_id: GOOGLE_CLIENT_ID,
-                    client_secret: GOOGLE_CLIENT_SECRET,
-                    redirect_uri: redirectUri.trim(),
-                    grant_type: 'authorization_code',
-                }),
-                { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-            );
+            let idToken;
+            if (usingIdToken) {
+                idToken = clientIdToken.trim();
+            } else {
+                // 1. Exchange authorization code for tokens (id_token + access_token)
+                const tokenRes = await axios.post(
+                    'https://oauth2.googleapis.com/token',
+                    new URLSearchParams({
+                        code: code.trim(),
+                        client_id: GOOGLE_CLIENT_ID,
+                        client_secret: GOOGLE_CLIENT_SECRET,
+                        redirect_uri: redirectUri.trim(),
+                        grant_type: 'authorization_code',
+                    }),
+                    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+                );
 
-            const idToken = tokenRes.data?.id_token;
-            if (!idToken) {
-                console.error('Google token response missing id_token');
-                return res.status(401).json({ error: 'Google sign-in failed: invalid response' });
+                idToken = tokenRes.data?.id_token;
+                if (!idToken) {
+                    console.error('Google token response missing id_token');
+                    return res.status(401).json({ error: 'Google sign-in failed: invalid response' });
+                }
             }
 
             // 2. Verify ID token (signature, audience, expiration) — do not trust client data
@@ -467,7 +490,7 @@ class AuthController {
             try {
                 ticket = await oauth2Client.verifyIdToken({
                     idToken,
-                    audience: GOOGLE_CLIENT_ID,
+                    audience: GOOGLE_TOKEN_AUDIENCE,
                 });
             } catch (verifyErr) {
                 console.error('Google ID token verification failed:', verifyErr.message);

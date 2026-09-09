@@ -75,17 +75,29 @@ async function sendMulticast(tokens, payload) {
 
     try {
         const messaging = admin.messaging();
+        // All `data` values must be strings for FCM.
+        const data = {};
+        for (const [k, val] of Object.entries(payload.data || {})) {
+            if (val != null) data[k] = String(val);
+        }
+        const channelId = payload.channelId || 'default';
         const response = await messaging.sendEachForMulticast({
             tokens,
             notification: payload.notification,
-            data: payload.data,
+            data,
             android: {
                 priority: 'high',
+                notification: {
+                    channelId,
+                    sound: 'default',
+                    ...(channelId === 'live' ? { color: '#EF4444' } : {}),
+                },
             },
             apns: {
                 headers: {
                     'apns-priority': '10',
                 },
+                payload: { aps: { sound: 'default' } },
             },
             webpush: {
                 headers: {
@@ -164,12 +176,13 @@ async function sendCourseAnnouncementPush(announcement) {
             .join(' - ');
 
         await sendMulticast(tokens, {
+            channelId: 'announcements',
             // FCM Admin Notification only supports title/body/image
             notification: {
                 title: notificationTitle,
                 body: notificationBody,
             },
-            // Pass icon and extra fields via data; service worker uses these
+            // Pass icon and extra fields via data; service worker / app use these
             data: {
                 type: 'course_announcement',
                 courseId: String(announcement.course_id),
@@ -178,10 +191,56 @@ async function sendCourseAnnouncementPush(announcement) {
                 announcementTitle: String(announcement.title || ''),
                 announcementBody: String(announcement.body || ''),
                 icon: '/images/logo/favIcon.png',
+                url: `/course/${announcement.course_id}`,
             },
         });
     } catch (err) {
         console.error('[FCM] Failed to send course announcement push:', err);
+    }
+}
+
+/**
+ * Notify every enrolled student that a live class just started.
+ * `lesson` fields expected: `id`, `course_id`, `title`, optional `live_name`.
+ * Does not throw – errors are logged only.
+ */
+async function sendLiveStartedPush(lesson) {
+    try {
+        if (!lesson || !lesson.course_id) return;
+
+        const enrolled = await db.query(
+            `SELECT DISTINCT user_id FROM course_enrollments WHERE course_id = $1`,
+            [lesson.course_id]
+        );
+        const userIds = enrolled.rows.map((r) => r.user_id).filter(Boolean);
+        if (userIds.length === 0) return;
+
+        const tokens = await getTokensForUsers(userIds);
+        if (tokens.length === 0) return;
+
+        const courseRes = await db.query(`SELECT title FROM courses WHERE id = $1`, [
+            lesson.course_id,
+        ]);
+        const courseTitle = courseRes.rows[0]?.title || 'Your course';
+        const liveName = lesson.live_name || lesson.title || 'Live class';
+
+        await sendMulticast(tokens, {
+            channelId: 'live',
+            notification: {
+                title: '🔴 লাইভ ক্লাস শুরু হয়েছে',
+                body: `${courseTitle} — ${liveName}`,
+            },
+            data: {
+                type: 'live_started',
+                lessonId: String(lesson.id),
+                courseId: String(lesson.course_id),
+                courseTitle: String(courseTitle),
+                liveName: String(liveName),
+                url: `/live/${lesson.id}`,
+            },
+        });
+    } catch (err) {
+        console.error('[FCM] Failed to send live-started push:', err);
     }
 }
 
@@ -190,5 +249,6 @@ module.exports = {
     isEnabled,
     registerToken,
     sendCourseAnnouncementPush,
+    sendLiveStartedPush,
 };
 
