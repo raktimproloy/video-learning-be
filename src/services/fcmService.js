@@ -46,6 +46,14 @@ async function registerToken(userId, token) {
     if (!token || !userId) return;
 
     try {
+        // A token identifies one device/install, not an account — reassign
+        // rather than accumulate, so a previous user on a shared/handed-down
+        // device (or one who just logged out) stops receiving push meant for
+        // whoever is actually signed in on it now.
+        await db.query(
+            `DELETE FROM user_fcm_tokens WHERE token = $1 AND user_id != $2`,
+            [token, userId]
+        );
         await db.query(
             `INSERT INTO user_fcm_tokens (user_id, token)
              VALUES ($1, $2)
