@@ -79,20 +79,26 @@ async function issueSession(user, req) {
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
     await sessionService.create({ userId: user.id, jti, deviceId: deviceId || jti, req, expiresAt });
 
+    // Multi-device abuse warning/suspend is a student-only protection (accounts
+    // shared/resold across many devices). Teachers routinely run class from a
+    // laptop, a phone, and a tablet at once — that isn't abuse, so they're
+    // exempt from this check entirely (teacher_staff/admin likewise).
     let warning = null;
-    try {
-        const evaluation = await moderationService.evaluateDeviceAbuse(user.id);
-        if (evaluation?.action === 'warning') {
-            warning = evaluation.message;
-        } else if (evaluation?.action === 'suspended') {
-            // Suspended as a direct result of this very login — reject it immediately.
-            return {
-                status: 403,
-                body: { error: 'ACCOUNT_SUSPENDED', reason: evaluation.message },
-            };
+    if (user.role === 'student') {
+        try {
+            const evaluation = await moderationService.evaluateDeviceAbuse(user.id);
+            if (evaluation?.action === 'warning') {
+                warning = evaluation.message;
+            } else if (evaluation?.action === 'suspended') {
+                // Suspended as a direct result of this very login — reject it immediately.
+                return {
+                    status: 403,
+                    body: { error: 'ACCOUNT_SUSPENDED', reason: evaluation.message },
+                };
+            }
+        } catch (evalErr) {
+            console.error('Device abuse evaluation error:', evalErr);
         }
-    } catch (evalErr) {
-        console.error('Device abuse evaluation error:', evalErr);
     }
 
     return { status: 200, body: { token, warning } };

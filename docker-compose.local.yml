@@ -1,0 +1,35 @@
+# Local dev override for docker-compose.yml.
+#
+# Problem it solves: the SRS live-media container publishes host port 8081, which
+# on a dev machine is taken by Expo/Metro. That makes `docker compose up` fail
+# ("ports are not available: 0.0.0.0:8081"), so SRS never starts and every live
+# stream fails to connect. Here SRS's HTTP port moves to 8091 on the host
+# (container-internal stays 8080, so nginx's `proxy_pass http://srs:8080` is
+# unaffected). RTMP 1935 / SRS-API 1985 are untouched.
+#
+# nginx still fronts host :8080 (from the base file) → /v1, /socket.io, /live all
+# work through it, which is what the app needs for live playback.
+#
+# Use:
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+services:
+  srs:
+    # `!override` replaces the base list instead of appending to it (Compose merges
+    # `ports` by concatenation otherwise, so 8081 would still be bound).
+    ports: !override
+      - "1935:1935"
+      - "1985:1985"
+      - "8091:8080"
+
+  api:
+    # Local dev on a LAN. Without this the HLS playlist for the phone gets segment
+    # URLs built against production (getLivePlaylistApiBase → FRONTEND_URL branch
+    # when NODE_ENV=production and no Origin/Referer), so every .ts 404s on
+    # shikkhabhumi.com and the player sits on "Waiting for the stream…".
+    #   NODE_ENV != production  → falls through to the BASE_URL/v1/... branch
+    #   BASE_URL = PC LAN IP    → segment + playlist URLs the phone can actually reach
+    environment:
+      NODE_ENV: development
+      BASE_URL: http://192.168.1.102:8080
+      MEDIAMTX_WHIP_PUBLIC_URL: http://192.168.1.102:8080
+      LIVE_SRS_HTTP_URL: http://192.168.1.102:8080

@@ -25,8 +25,10 @@ function sqlActiveInstituteSlug(teacherIdExpr = 'courses.teacher_id') {
     return require('./teacherInstituteService').getMainInstituteFieldExpr(teacherIdExpr, 'slug');
 }
 
-let homeSectionsCache = null;
-let homeSectionsCacheExpiry = 0;
+// Keyed by limitVal — a request for a smaller limit (e.g. a `?limit=1` health
+// probe) must never overwrite the cached rows for every other limit, or every
+// caller (web + app) sees that smaller page until the cache expires.
+const homeSectionsCacheByLimit = new Map(); // limitVal -> { sections, expiry }
 const HOME_SECTIONS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
 class CourseService {
@@ -647,8 +649,9 @@ class CourseService {
      */
     async getHomeSections(userId = null, limitPerSection = 8) {
         const now = Date.now();
-        if (!homeSectionsCache || now > homeSectionsCacheExpiry) {
-            const limitVal = Math.min(Math.max(parseInt(limitPerSection, 10) || 8, 1), 20);
+        const limitVal = Math.min(Math.max(parseInt(limitPerSection, 10) || 8, 1), 20);
+        const cacheEntry = homeSectionsCacheByLimit.get(limitVal);
+        if (!cacheEntry || now > cacheEntry.expiry) {
 
             const reviewsTableCheck = await db.query(`
                 SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'reviews')
@@ -755,8 +758,10 @@ class CourseService {
             const externalAcademic = [];
             const externalSkill = [];
 
-            homeSectionsCache = { live, academic, skill, external, externalAcademic, externalSkill };
-            homeSectionsCacheExpiry = now + HOME_SECTIONS_CACHE_TTL;
+            homeSectionsCacheByLimit.set(limitVal, {
+                sections: { live, academic, skill, external, externalAcademic, externalSkill },
+                expiry: now + HOME_SECTIONS_CACHE_TTL,
+            });
         }
 
         const clone = (sections) => ({
@@ -768,7 +773,7 @@ class CourseService {
             externalSkill: [...sections.externalSkill]
         });
 
-        const cachedSections = clone(homeSectionsCache);
+        const cachedSections = clone(homeSectionsCacheByLimit.get(limitVal).sections);
         cachedSections.external = [];
         cachedSections.externalAcademic = [];
         cachedSections.externalSkill = [];

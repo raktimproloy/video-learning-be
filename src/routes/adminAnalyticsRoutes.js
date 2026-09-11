@@ -9,4 +9,7 @@ router.use(verifyAdmin);
 // Fetch admin analytics
 router.get('/', adminAnalyticsController.getAnalyticsData);
 
+// One user's own page-view trail (student/teacher detail page "Recent Activity")
+router.get('/user/:userId', adminAnalyticsController.getUserActivity);
+
 module.exports = router;
