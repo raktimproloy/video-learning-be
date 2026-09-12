@@ -69,7 +69,13 @@ function buildMediaPlaylist(segments, { endList = false } = {}) {
     `#EXT-X-TARGETDURATION:${maxDur}`,
     `#EXT-X-MEDIA-SEQUENCE:${firstSeq}`,
   ];
-  if (endList || liveDelivery.playlistType === 'event') lines.push('#EXT-X-PLAYLIST-TYPE:EVENT');
+  // EVENT means "segments are only ever appended, never removed" per the HLS
+  // spec — only true once the stream has actually ended (endList). Tagging an
+  // actively-trimmed sliding-window live playlist as EVENT is spec-non-compliant
+  // and was the bug: `liveDelivery.playlistType` used to also gate the segment
+  // trim (see the `while` loop above), so real broadcasts ran untrimmed for as
+  // long as they stayed live.
+  if (endList) lines.push('#EXT-X-PLAYLIST-TYPE:EVENT');
   for (const seg of segments) {
     if (seg.discontinuity) lines.push('#EXT-X-DISCONTINUITY');
     lines.push(`#EXTINF:${Number(seg.duration || FRAGMENT_SECONDS).toFixed(3)},`);
@@ -288,9 +294,12 @@ async function handleOnHls(req, res) {
 
     if (!state.liveSegments.some((s) => s.name === tsName)) {
       state.liveSegments.push(entry);
-      if (liveDelivery.playlistType !== 'event') {
-        while (state.liveSegments.length > PLAYLIST_WINDOW) state.liveSegments.shift();
-      }
+      // Always slide the window for the live-facing playlist — VOD is recorded
+      // separately by liveRecorderService (direct ffmpeg→R2), so nothing else
+      // needs this array's full history. Left unbounded, a long session grows
+      // index.m3u8 into a huge non-live-looking playlist that stalls mobile
+      // HLS players (ExoPlayer/Media3) trying to resolve the live edge.
+      while (state.liveSegments.length > PLAYLIST_WINDOW) state.liveSegments.shift();
     }
 
     const livePl = buildMediaPlaylist(state.liveSegments);
