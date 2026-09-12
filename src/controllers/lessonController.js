@@ -56,10 +56,16 @@ function getLivePlaylistApiBase(req, lessonId) {
     if (origin) {
         return `${origin}/api-backend/lessons/${lessonId}/live/playlist`;
     }
-    const frontend = process.env.FRONTEND_URL ? String(process.env.FRONTEND_URL).replace(/\/$/, '') : null;
-    if (frontend && process.env.NODE_ENV === 'production') {
-        return `${frontend}/api-backend/lessons/${lessonId}/live/playlist`;
-    }
+    // No Origin/Referer/X-Forwarded-Host resolved to a known browser origin —
+    // this is a non-browser client (mobile app via expo-video/ExoPlayer, curl,
+    // etc.) that has no CORS concerns, so it should hit this API directly
+    // rather than bounce through the frontend's same-origin `/api-backend`
+    // proxy. Bouncing through the frontend used to be gated on NODE_ENV, which
+    // meant every origin-less request in production (i.e. every mobile
+    // request) got a `https://<frontend>/api-backend/...` URL baked into the
+    // live playlist — confirmed via device testing to fail on Android with
+    // "CLEARTEXT communication ... not permitted" for reasons specific to that
+    // extra hop. Going straight to BASE_URL sidesteps it entirely.
     const base = String(process.env.BASE_URL || 'http://localhost:8080').replace(/\/$/, '');
     return `${base}/v1/lessons/${lessonId}/live/playlist`;
 }
