@@ -218,6 +218,30 @@ function getBookKeyPrefix(teacherId, courseId, bookId) {
 }
 
 /**
+ * R2 key prefix for app release APKs.
+ * Example: app-releases/1.0.3-1699999999999.apk
+ */
+function getAppReleaseKeyPrefix() {
+  return 'app-releases';
+}
+
+/**
+ * Upload a signed release APK to R2. Stored as-is (no processing).
+ * @param {Buffer} fileBuffer
+ * @param {string} versionName
+ * @returns {Promise<string>} R2 key
+ */
+async function uploadAppRelease(fileBuffer, versionName) {
+  if (!r2Config.isConfigured) {
+    throw new Error('R2 is not configured');
+  }
+  const safeVersion = String(versionName || 'release').replace(/[^a-zA-Z0-9._-]/g, '');
+  const key = `${getAppReleaseKeyPrefix()}/${safeVersion}-${Date.now()}.apk`;
+  await uploadFile(key, fileBuffer, 'application/vnd.android.package-archive');
+  return key;
+}
+
+/**
  * Upload an exam image (question/passage/option/solution) to R2.
  */
 async function uploadExamMedia(teacherId, courseId, examId, fileBuffer, originalFilename, type = 'images') {
@@ -637,6 +661,8 @@ module.exports = {
   getVideoMediaKeyPrefix,
   getExamMediaKeyPrefix,
   getBookKeyPrefix,
+  getAppReleaseKeyPrefix,
+  uploadAppRelease,
   uploadLessonMedia,
   uploadVideoMedia,
   uploadExamMedia,

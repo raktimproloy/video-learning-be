@@ -9,7 +9,7 @@ const cache = require('../utils/ttlCache');
  */
 async function getSettings(req, res) {
     try {
-        const body = await cache.getOrSet('public:settings:v4', 10 * 60 * 1000, async () => {
+        const body = await cache.getOrSet('public:settings:v5', 10 * 60 * 1000, async () => {
             const [publicCounts, platformSettings] = await Promise.all([
                 adminCategoryService.getPublicListingCourseCountByCategoryId(),
                 adminSettingsService.getAllForPublic(),
@@ -31,6 +31,16 @@ async function getSettings(req, res) {
                 discounts: platformSettings.discounts,
                 live: platformSettings.live || { liveClassEnabled: true, agoraEnabled: true, streamEnabled: false, hundredMsEnabled: true, awsIvsEnabled: false, youtubeEnabled: true },
                 appUpdateGate: platformSettings.appUpdateGate || { enabled: false, title: '', description: '', link: '' },
+                appRelease: platformSettings.appRelease
+                    ? {
+                        versionName: platformSettings.appRelease.versionName,
+                        versionCode: platformSettings.appRelease.versionCode,
+                        fileSizeBytes: platformSettings.appRelease.fileSizeBytes,
+                        sha256Checksum: platformSettings.appRelease.sha256Checksum,
+                        changelog: platformSettings.appRelease.changelog,
+                        releasedAt: platformSettings.appRelease.createdAt,
+                    }
+                    : null,
             };
         });
 

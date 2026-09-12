@@ -282,10 +282,74 @@ module.exports = {
             // The public /v1/settings response is cached for 10 minutes — drop it
             // so a toggle here takes effect on the next app check, not up to 10
             // minutes later.
-            cache.delete('public:settings:v4');
+            cache.delete('public:settings:v5');
             res.json(gate);
         } catch (error) {
             console.error('Update app update gate error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    },
+
+    /** GET /admin/settings/app-releases — release history, newest first */
+    async listAppReleases(req, res) {
+        try {
+            const releases = await adminSettingsService.listAppReleases();
+            res.json({ releases });
+        } catch (error) {
+            console.error('List app releases error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    },
+
+    /** POST /admin/settings/app-releases — upload a new APK (multipart, field name "apk") */
+    async createAppRelease(req, res) {
+        try {
+            const adminId = getAdminId(req);
+            if (!req.file) return res.status(400).json({ error: 'APK file is required' });
+            const { versionName, versionCode, changelog } = req.body || {};
+            const release = await adminSettingsService.createAppRelease(adminId, {
+                versionName,
+                versionCode,
+                changelog,
+                fileBuffer: req.file.buffer,
+            });
+            res.status(201).json(release);
+        } catch (error) {
+            if (['Version name is required', 'Version code must be a positive integer', 'APK file is required'].includes(error.message)
+                || error.message.startsWith('Version code must be greater than')) {
+                return res.status(400).json({ error: error.message });
+            }
+            console.error('Create app release error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    },
+
+    /** PATCH /admin/settings/app-releases/:id/publish — make this release the live download */
+    async publishAppRelease(req, res) {
+        try {
+            const release = await adminSettingsService.publishAppRelease(req.params.id);
+            if (!release) return res.status(404).json({ error: 'Release not found' });
+            // Public /v1/settings caches appRelease — drop it so the download
+            // page and force-update gate see the new version immediately.
+            cache.delete('public:settings:v5');
+            res.json(release);
+        } catch (error) {
+            console.error('Publish app release error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    },
+
+    /** DELETE /admin/settings/app-releases/:id — remove a non-live release */
+    async deleteAppRelease(req, res) {
+        try {
+            const deleted = await adminSettingsService.deleteAppRelease(req.params.id);
+            if (!deleted) return res.status(404).json({ error: 'Release not found' });
+            res.json({ message: 'Release deleted' });
+        } catch (error) {
+            if (error.message === 'Cannot delete the currently published release') {
+                return res.status(400).json({ error: error.message });
+            }
+            console.error('Delete app release error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     },

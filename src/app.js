@@ -43,6 +43,7 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const bundleRoutes = require('./routes/bundleRoutes');
 const progressRoutes = require('./routes/progressRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
+const appRoutes = require('./routes/appRoutes');
 const couponRoutes = require('./routes/couponRoutes');
 const meRoutes = require('./routes/meRoutes');
 const teacherDiscoveryRoutes = require('./routes/teacherDiscoveryRoutes');
@@ -138,6 +139,7 @@ app.get('/v1/internal/live/diag', (req, res, next) => lessonController.getLiveDi
 
 // Routes
 app.use('/v1/settings', settingsRoutes);
+app.use('/v1/app', appRoutes);
 app.use('/v1/auth', authRoutes);
 app.use('/v1/reference', referenceRoutes);
 app.use('/v1/video', videoRoutes);

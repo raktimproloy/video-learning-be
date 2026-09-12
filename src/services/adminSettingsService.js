@@ -1,4 +1,6 @@
 const db = require('../../db');
+const crypto = require('crypto');
+const r2StorageService = require('./r2StorageService');
 
 function normalizeCode(code) {
     return String(code || '').trim().toUpperCase();
@@ -403,12 +405,13 @@ class AdminSettingsService {
 
     /** Get all settings for public API (categories, share, coupons, discounts, live) */
     async getAllForPublic() {
-        const [shareRes, couponRes, discountRes, liveRes, updateGateRes] = await Promise.all([
+        const [shareRes, couponRes, discountRes, liveRes, updateGateRes, appReleaseRes] = await Promise.all([
             this.getShareSettings(),
             db.query(`SELECT * FROM admin_coupons WHERE status = 'active' ORDER BY created_at DESC`),
             db.query(`SELECT * FROM admin_discounts WHERE status = 'active' ORDER BY created_at DESC`),
             this.getLiveSettings(),
             this.getAppUpdateGate(),
+            this.getCurrentAppRelease(),
         ]);
         return {
             share: shareRes || { ourStudentPercent: 0, teacherStudentPercent: 0, liveCoursesPercent: 0, referencePercent: 10, referenceTeacherPercent: 40 },
@@ -416,6 +419,7 @@ class AdminSettingsService {
             discounts: discountRes.rows.map(this.mapDiscountRow),
             live: liveRes || { liveClassEnabled: true, agoraEnabled: true, streamEnabled: false, hundredMsEnabled: true, awsIvsEnabled: false, youtubeEnabled: true, r2LiveEnabled: false },
             appUpdateGate: updateGateRes,
+            appRelease: appReleaseRes,
         };
     }
 
@@ -523,6 +527,93 @@ class AdminSettingsService {
             description: row.description || '',
             link: row.link || '',
         } : null;
+    }
+
+    /** List all APK releases, newest first. */
+    async listAppReleases() {
+        const result = await db.query(`SELECT * FROM app_releases ORDER BY created_at DESC`);
+        return result.rows.map(this.mapAppReleaseRow);
+    }
+
+    /** The release currently live on the public download page (or null if none published yet). */
+    async getCurrentAppRelease() {
+        const result = await db.query(`SELECT * FROM app_releases WHERE is_current = true LIMIT 1`);
+        const row = result.rows[0];
+        return row ? this.mapAppReleaseRow(row) : null;
+    }
+
+    /**
+     * Upload a new APK release. Size + SHA-256 are computed here from the
+     * actual bytes — never trust admin-entered values for these. Does not
+     * automatically go live; call publishAppRelease to do that.
+     */
+    async createAppRelease(adminId, { versionName, versionCode, changelog, fileBuffer }) {
+        if (!versionName || !String(versionName).trim()) throw new Error('Version name is required');
+        const code = parseInt(versionCode, 10);
+        if (!Number.isFinite(code) || code <= 0) throw new Error('Version code must be a positive integer');
+        if (!fileBuffer || !fileBuffer.length) throw new Error('APK file is required');
+
+        const latest = await db.query(`SELECT MAX(version_code) AS max_code FROM app_releases`);
+        const maxCode = latest.rows[0]?.max_code != null ? parseInt(latest.rows[0].max_code, 10) : 0;
+        if (code <= maxCode) {
+            throw new Error(`Version code must be greater than the latest release (${maxCode})`);
+        }
+
+        const sha256 = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+        const fileKey = await r2StorageService.uploadAppRelease(fileBuffer, versionName);
+
+        const result = await db.query(
+            `INSERT INTO app_releases (version_name, version_code, file_key, file_size_bytes, sha256_checksum, changelog, created_by_admin_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING *`,
+            [String(versionName).trim(), code, fileKey, fileBuffer.length, sha256, String(changelog || '').trim(), adminId]
+        );
+        return this.mapAppReleaseRow(result.rows[0]);
+    }
+
+    /** Mark one release as the current/live one; unpublishes any previous current release. */
+    async publishAppRelease(id) {
+        const client = await db.pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(`UPDATE app_releases SET is_current = false WHERE is_current = true`);
+            const result = await client.query(
+                `UPDATE app_releases SET is_current = true WHERE id = $1 RETURNING *`,
+                [id]
+            );
+            await client.query('COMMIT');
+            return result.rows[0] ? this.mapAppReleaseRow(result.rows[0]) : null;
+        } catch (err) {
+            await client.query('ROLLBACK');
+            throw err;
+        } finally {
+            client.release();
+        }
+    }
+
+    /** Delete a release (and its R2 file). Refuses to delete the currently-live release. */
+    async deleteAppRelease(id) {
+        const existing = await db.query(`SELECT * FROM app_releases WHERE id = $1`, [id]);
+        const row = existing.rows[0];
+        if (!row) return false;
+        if (row.is_current) throw new Error('Cannot delete the currently published release');
+        await r2StorageService.deleteObject(row.file_key).catch(() => { /* best-effort cleanup */ });
+        const result = await db.query(`DELETE FROM app_releases WHERE id = $1 RETURNING id`, [id]);
+        return result.rowCount > 0;
+    }
+
+    mapAppReleaseRow(row) {
+        return {
+            id: row.id,
+            versionName: row.version_name,
+            versionCode: parseInt(row.version_code, 10),
+            fileKey: row.file_key,
+            fileSizeBytes: parseInt(row.file_size_bytes, 10),
+            sha256Checksum: row.sha256_checksum,
+            changelog: row.changelog || '',
+            isCurrent: !!row.is_current,
+            createdAt: row.created_at,
+        };
     }
 
     /** Usage stats: how many teachers and students use each live provider (by live_sessions.provider). */
