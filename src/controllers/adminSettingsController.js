@@ -1,5 +1,7 @@
 const adminSettingsService = require('../services/adminSettingsService');
 const liveUsageService = require('../services/liveUsageService');
+const fcmService = require('../services/fcmService');
+const cache = require('../utils/ttlCache');
 
 function getAdminId(req) {
     return req.user?.id || req.admin?.id;
@@ -251,6 +253,59 @@ module.exports = {
             res.json(settings);
         } catch (error) {
             console.error('Update live settings error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    },
+
+    /** GET /admin/settings/app-update-gate — force-update modal config */
+    async getAppUpdateGate(req, res) {
+        try {
+            const gate = await adminSettingsService.getAppUpdateGate();
+            res.json(gate);
+        } catch (error) {
+            console.error('Get app update gate error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    },
+
+    /** PUT /admin/settings/app-update-gate — toggle + edit the force-update modal */
+    async updateAppUpdateGate(req, res) {
+        try {
+            const adminId = getAdminId(req);
+            const { enabled, title, description, link } = req.body || {};
+            const gate = await adminSettingsService.updateAppUpdateGate(adminId, {
+                enabled,
+                title,
+                description,
+                link,
+            });
+            // The public /v1/settings response is cached for 10 minutes — drop it
+            // so a toggle here takes effect on the next app check, not up to 10
+            // minutes later.
+            cache.delete('public:settings:v4');
+            res.json(gate);
+        } catch (error) {
+            console.error('Update app update gate error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    },
+
+    /** POST /admin/settings/notifications/broadcast — push to every device (or a role subset) */
+    async sendNotificationBroadcast(req, res) {
+        try {
+            const { title, body, link, audience } = req.body || {};
+            if (!title || typeof title !== 'string' || !title.trim()) {
+                return res.status(400).json({ error: 'Title is required' });
+            }
+            const result = await fcmService.sendAdminBroadcastPush({
+                title: title.trim(),
+                body: typeof body === 'string' ? body.trim() : '',
+                link: typeof link === 'string' ? link.trim() : '',
+                audience: ['students', 'teachers'].includes(audience) ? audience : 'all',
+            });
+            res.json(result);
+        } catch (error) {
+            console.error('Send notification broadcast error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     },

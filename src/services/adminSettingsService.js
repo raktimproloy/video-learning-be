@@ -403,17 +403,19 @@ class AdminSettingsService {
 
     /** Get all settings for public API (categories, share, coupons, discounts, live) */
     async getAllForPublic() {
-        const [shareRes, couponRes, discountRes, liveRes] = await Promise.all([
+        const [shareRes, couponRes, discountRes, liveRes, updateGateRes] = await Promise.all([
             this.getShareSettings(),
             db.query(`SELECT * FROM admin_coupons WHERE status = 'active' ORDER BY created_at DESC`),
             db.query(`SELECT * FROM admin_discounts WHERE status = 'active' ORDER BY created_at DESC`),
             this.getLiveSettings(),
+            this.getAppUpdateGate(),
         ]);
         return {
             share: shareRes || { ourStudentPercent: 0, teacherStudentPercent: 0, liveCoursesPercent: 0, referencePercent: 10, referenceTeacherPercent: 40 },
             coupons: couponRes.rows.map(this.mapCouponRow),
             discounts: discountRes.rows.map(this.mapDiscountRow),
             live: liveRes || { liveClassEnabled: true, agoraEnabled: true, streamEnabled: false, hundredMsEnabled: true, awsIvsEnabled: false, youtubeEnabled: true, r2LiveEnabled: false },
+            appUpdateGate: updateGateRes,
         };
     }
 
@@ -476,6 +478,50 @@ class AdminSettingsService {
             youtubeEnabled: !!row.youtube_enabled,
             r2LiveEnabled: !!row.r2_live_enabled,
             liveClassDurationMinutes: row.live_class_duration_minutes != null ? parseInt(row.live_class_duration_minutes, 10) : 60,
+        } : null;
+    }
+
+    /** Force-update gate (single row) — a blocking modal shown app-wide on mobile until admin disables it. */
+    async getAppUpdateGate() {
+        const result = await db.query(
+            `SELECT * FROM app_update_gate_settings WHERE id = '00000000-0000-0000-0000-000000000003'`
+        );
+        const row = result.rows[0];
+        if (!row) return { enabled: false, title: '', description: '', link: '' };
+        return {
+            enabled: !!row.enabled,
+            title: row.title || '',
+            description: row.description || '',
+            link: row.link || '',
+        };
+    }
+
+    async updateAppUpdateGate(adminId, data) {
+        const { enabled, title, description, link } = data;
+        const result = await db.query(
+            `UPDATE app_update_gate_settings SET
+                enabled = COALESCE($1, enabled),
+                title = COALESCE($2, title),
+                description = COALESCE($3, description),
+                link = COALESCE($4, link),
+                updated_by_admin_id = $5,
+                updated_at = NOW()
+             WHERE id = '00000000-0000-0000-0000-000000000003'
+             RETURNING *`,
+            [
+                enabled != null ? !!enabled : null,
+                title != null ? String(title) : null,
+                description != null ? String(description) : null,
+                link != null ? String(link) : null,
+                adminId,
+            ]
+        );
+        const row = result.rows[0];
+        return row ? {
+            enabled: !!row.enabled,
+            title: row.title || '',
+            description: row.description || '',
+            link: row.link || '',
         } : null;
     }
 

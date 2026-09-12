@@ -252,11 +252,55 @@ async function sendLiveStartedPush(lesson) {
     }
 }
 
+/** Tokens for every registered user, optionally restricted to a set of roles. */
+async function getTokensForAudience(audience) {
+    if (audience === 'students') {
+        const result = await db.query(
+            `SELECT t.token FROM user_fcm_tokens t
+             JOIN users u ON u.id = t.user_id
+             WHERE u.role = 'student'`
+        );
+        return result.rows.map((r) => r.token);
+    }
+    if (audience === 'teachers') {
+        const result = await db.query(
+            `SELECT t.token FROM user_fcm_tokens t
+             JOIN users u ON u.id = t.user_id
+             WHERE u.role IN ('teacher', 'teacher_staff')`
+        );
+        return result.rows.map((r) => r.token);
+    }
+    const result = await db.query(`SELECT token FROM user_fcm_tokens`);
+    return result.rows.map((r) => r.token);
+}
+
+/**
+ * Admin-triggered broadcast push — every registered device (or a role subset).
+ * Returns how many tokens it was sent to. Does not throw on individual send
+ * failures (sendMulticast already logs + prunes invalid tokens); only DB
+ * lookup errors propagate.
+ */
+async function sendAdminBroadcastPush({ title, body, link, audience = 'all' }) {
+    const tokens = await getTokensForAudience(audience);
+    if (tokens.length === 0) return { sentTo: 0 };
+
+    await sendMulticast(tokens, {
+        channelId: 'default',
+        notification: { title, body },
+        data: {
+            type: 'admin_broadcast',
+            ...(link ? { url: String(link) } : {}),
+        },
+    });
+    return { sentTo: tokens.length };
+}
+
 module.exports = {
     initFirebaseAdmin,
     isEnabled,
     registerToken,
     sendCourseAnnouncementPush,
     sendLiveStartedPush,
+    sendAdminBroadcastPush,
 };
 

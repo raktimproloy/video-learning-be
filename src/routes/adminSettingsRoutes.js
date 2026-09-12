@@ -17,6 +17,13 @@ router.put('/book-share', adminSettingsController.updateBookShareSettings);
 router.get('/live', adminSettingsController.getLiveSettings);
 router.put('/live', adminSettingsController.updateLiveSettings);
 
+// Force-update gate (blocking modal shown app-wide on mobile)
+router.get('/app-update-gate', adminSettingsController.getAppUpdateGate);
+router.put('/app-update-gate', adminSettingsController.updateAppUpdateGate);
+
+// Push notification broadcast (all devices, or a role subset)
+router.post('/notifications/broadcast', adminSettingsController.sendNotificationBroadcast);
+
 // Live usage: packages (free minute caps) and usage report
 router.get('/live-usage/packages', adminSettingsController.getLiveUsagePackages);
 router.put('/live-usage/packages/:provider', adminSettingsController.updateLiveUsagePackage);
